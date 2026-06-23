@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pi-studio</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Browser preview mock: inject window.api when not running in Electron -->
+    <script>
+      if (!window.api) {
+        window.api = {
+          win: { minimize: () => {}, maximize: () => {}, close: () => {} },
+          app: { version: () => Promise.resolve('0.1.0-preview') },
+          settings: {
+            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', recentWorkspaces: [] }),
+            save: () => Promise.resolve({ ok: true }),
+          },
+          workspace: {
+            list: () => Promise.resolve([]),
+            pickDirectory: () => Promise.resolve(null),
+            open: () => Promise.resolve({ error: 'mock: not running in Electron' }),
+            remove: () => Promise.resolve([]),
+          },
+          pi: {
+            prompt: () => Promise.resolve(),
+            steer: () => Promise.resolve(),
+            followUp: () => Promise.resolve(),
+            abort: () => Promise.resolve(),
+            bash: () => Promise.resolve(),
+            newSession: () => Promise.resolve({ cancelled: false }),
+            getState: () => Promise.resolve(null),
+            getMessages: () => Promise.resolve([]),
+            getAvailableModels: () => Promise.resolve([]),
+            setModel: () => Promise.resolve(),
+            onEvent: () => () => {},
+          },
+          update: { onAvailable: () => () => {}, onDownloaded: () => () => {}, onError: () => () => {}, install: () => {} },
+        };
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

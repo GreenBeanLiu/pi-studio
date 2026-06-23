@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+release/
+*.tsbuildinfo
+.claude/
+preview-start.sh
+vite.preview.config.mjs
+vite.preview.config.ts
