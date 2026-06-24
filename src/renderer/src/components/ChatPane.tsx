@@ -209,6 +209,17 @@ const useStyles = createStyles(({ token, css }) => ({
     white-space: pre-wrap;
   `,
 
+  errorText: css`
+    font-size: 13px;
+    color: ${token.colorError};
+    background: ${token.colorErrorBg};
+    border: 1px solid ${token.colorErrorBorder};
+    border-radius: ${token.borderRadius}px;
+    padding: 8px 12px;
+    white-space: pre-wrap;
+    margin-top: 4px;
+  `,
+
   typingBubble: css`
     display: flex;
     align-items: center;
@@ -641,6 +652,9 @@ function MessageBubble({
               }
               return null
             })}
+            {msg.role === 'assistant' && msg.errorMessage && (
+              <div className={styles.errorText}>{msg.errorMessage}</div>
+            )}
           </div>
         )}
       </div>

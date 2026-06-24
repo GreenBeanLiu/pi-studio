@@ -1,6 +1,6 @@
 import { safeStorage, app } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 
 export type PiProvider = 'anthropic' | 'openai'
 
@@ -14,6 +14,7 @@ type SettingsData = {
   provider: PiProvider
   apiKey: string
   model: string
+  baseUrl: string
   recentWorkspaces: Workspace[]
 }
 
@@ -21,6 +22,7 @@ const DEFAULTS: SettingsData = {
   provider: 'anthropic',
   apiKey: '',
   model: '',
+  baseUrl: '',
   recentWorkspaces: [],
 }
 
@@ -62,13 +64,16 @@ export function loadSettings(): SettingsData {
     provider: (raw.provider as PiProvider) ?? DEFAULTS.provider,
     apiKey,
     model: (raw.model as string) ?? DEFAULTS.model,
+    baseUrl: (raw.baseUrl as string) ?? DEFAULTS.baseUrl,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
   }
 }
 
-export function saveSettings(settings: Pick<SettingsData, 'provider' | 'apiKey' | 'model'>): void {
+export function saveSettings(
+  settings: Pick<SettingsData, 'provider' | 'apiKey' | 'model' | 'baseUrl'>,
+): void {
   const raw = readRaw()
 
   if (safeStorage.isEncryptionAvailable() && settings.apiKey) {
@@ -81,6 +86,7 @@ export function saveSettings(settings: Pick<SettingsData, 'provider' | 'apiKey' 
 
   raw.provider = settings.provider
   raw.model = settings.model
+  raw.baseUrl = settings.baseUrl
 
   writeRaw(raw)
 }
@@ -109,4 +115,36 @@ export function removeRecentWorkspace(path: string): Workspace[] {
 /** Provider env var name pi's RpcClient subprocess needs for auth. */
 export function apiKeyEnvVar(provider: PiProvider): string {
   return provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'
+}
+
+/**
+ * pi's config (auth.json, models.json) normally lives at ~/.pi/agent — global
+ * and shared with any other `pi` CLI install the user has. Point the spawned
+ * subprocess at an app-private directory instead via PI_CODING_AGENT_DIR, so
+ * pi-studio's third-party-gateway override below never leaks into / conflicts
+ * with the user's own pi setup.
+ */
+export function agentConfigDir(): string {
+  return join(app.getPath('userData'), 'pi-agent')
+}
+
+/**
+ * Built-in providers support an "override-only" models.json entry — just a
+ * baseUrl, no custom model list — that redirects every built-in model id for
+ * that provider through a different (e.g. third-party OpenAI-compatible)
+ * endpoint. Auth still comes from the provider's normal env var.
+ */
+export function writeModelsOverride(provider: PiProvider, baseUrl: string): void {
+  const dir = agentConfigDir()
+  mkdirSync(dir, { recursive: true })
+  const modelsPath = join(dir, 'models.json')
+  if (!baseUrl.trim()) {
+    writeFileSync(modelsPath, JSON.stringify({ providers: {} }, null, 2), 'utf-8')
+    return
+  }
+  writeFileSync(
+    modelsPath,
+    JSON.stringify({ providers: { [provider]: { baseUrl: baseUrl.trim() } } }, null, 2),
+    'utf-8',
+  )
 }

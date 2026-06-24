@@ -8,6 +8,7 @@ type Settings = {
   provider: PiProvider
   apiKey: string
   model: string
+  baseUrl: string
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -120,7 +121,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '' })
+  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '' })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -187,6 +188,20 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               }
             />
           </div>
+
+          {settings.provider === 'openai' && (
+            <div className={styles.section}>
+              <span className={styles.label}>
+                API Base URL
+                <span className={styles.labelHint}>第三方兼容 OpenAI 接口时填，留空用官方</span>
+              </span>
+              <Input
+                value={settings.baseUrl}
+                onChange={(e) => patch({ baseUrl: e.target.value })}
+                placeholder="https://api.openai.com"
+              />
+            </div>
+          )}
 
           <div className={styles.section}>
             <span className={styles.label}>

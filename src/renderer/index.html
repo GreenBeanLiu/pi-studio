@@ -14,7 +14,7 @@
           win: { minimize: () => {}, maximize: () => {}, close: () => {} },
           app: { version: () => Promise.resolve('0.1.0-preview') },
           settings: {
-            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', recentWorkspaces: [] }),
+            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),
           },
           workspace: {

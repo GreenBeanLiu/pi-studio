@@ -5,6 +5,8 @@ import {
   addRecentWorkspace,
   removeRecentWorkspace,
   apiKeyEnvVar,
+  agentConfigDir,
+  writeModelsOverride,
   type PiProvider,
 } from './settings'
 import { piClientManager } from './pi-client'
@@ -17,7 +19,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle(
     'settings:save',
-    (_e, settings: { provider: PiProvider; apiKey: string; model: string }) => {
+    (_e, settings: { provider: PiProvider; apiKey: string; model: string; baseUrl: string }) => {
       saveSettings(settings)
       return { ok: true }
     },
@@ -43,10 +45,17 @@ export function registerIpcHandlers(): void {
       return { error: '请先在设置中填写 API Key' }
     }
 
+    writeModelsOverride(settings.provider, settings.baseUrl)
+
     try {
       await piClientManager.startWorkspace(
         workspacePath,
-        { [apiKeyEnvVar(settings.provider)]: settings.apiKey },
+        {
+          [apiKeyEnvVar(settings.provider)]: settings.apiKey,
+          PI_CODING_AGENT_DIR: agentConfigDir(),
+        },
+        settings.provider,
+        settings.model || undefined,
         (agentEvent) => {
           win?.webContents.send('pi:event', agentEvent)
         },

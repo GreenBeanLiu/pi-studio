@@ -1,3 +1,5 @@
+import { existsSync } from 'fs'
+import { join } from 'path'
 import type { RpcClient as RpcClientType } from '@earendil-works/pi-coding-agent'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 
@@ -15,6 +17,22 @@ async function loadRpcClient(): Promise<typeof RpcClientType> {
   return mod.RpcClient
 }
 
+// RpcClient's default cliPath is the *relative* string "dist/cli.js",
+// resolved against the spawned process's `cwd` — which for us is the user's
+// workspace directory, not pi-coding-agent's own install location. Has to be
+// passed explicitly as an absolute path. `require.resolve()` can't be used
+// here either (same exports-map problem as the dynamic import above), so we
+// walk the plain node_modules search paths instead — that mechanism doesn't
+// consult the package's "exports" map at all.
+function resolvePiCliPath(): string {
+  const searchPaths = require.resolve.paths('@earendil-works/pi-coding-agent') ?? []
+  for (const base of searchPaths) {
+    const candidate = join(base, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
+    if (existsSync(candidate)) return candidate
+  }
+  throw new Error('Could not locate @earendil-works/pi-coding-agent/dist/cli.js')
+}
+
 /**
  * Owns the single active RpcClient (one `pi` CLI subprocess running RPC mode)
  * for the currently open workspace. Switching workspaces stops the old
@@ -30,12 +48,14 @@ class PiClientManager {
   async startWorkspace(
     cwd: string,
     env: Record<string, string>,
+    provider: string | undefined,
+    model: string | undefined,
     onEvent: PiEventListener,
   ): Promise<void> {
     await this.stop()
 
     const RpcClient = await loadRpcClient()
-    const client = new RpcClient({ cwd, env })
+    const client = new RpcClient({ cwd, env, provider, model, cliPath: resolvePiCliPath() })
     await client.start()
 
     this.client = client

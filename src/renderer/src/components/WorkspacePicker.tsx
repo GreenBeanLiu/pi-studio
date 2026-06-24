@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Modal, Button, Alert } from 'antd'
+import { Modal, Button, Alert, Input } from 'antd'
 import { FolderOpen, Folder, X, Check } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
@@ -158,6 +159,7 @@ export default function WorkspacePicker({
   onClose,
 }: Props) {
   const { styles, cx } = useStyles()
+  const [manualPath, setManualPath] = useState('')
 
   return (
     <Modal
@@ -177,6 +179,15 @@ export default function WorkspacePicker({
           <FolderOpen size={22} />
           <span className={styles.pickLabel}>{opening ? '打开中…' : '选择项目目录'}</span>
         </button>
+
+        <Input.Search
+          placeholder="或直接输入目录路径"
+          value={manualPath}
+          onChange={(e) => setManualPath(e.target.value)}
+          onSearch={(v) => v.trim() && onOpen(v.trim())}
+          enterButton="打开"
+          disabled={opening}
+        />
 
         {recentWorkspaces.length > 0 && (
           <div>

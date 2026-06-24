@@ -41,16 +41,13 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [recentWorkspaces, setRecentWorkspaces] = useState<Workspace[]>([])
   const [showSettings, setShowSettings] = useState(false)
-  const [showWorkspacePicker, setShowWorkspacePicker] = useState(false)
+  const [showWorkspacePicker, setShowWorkspacePicker] = useState(true)
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' })
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [opening, setOpening] = useState(false)
 
   useEffect(() => {
-    api.workspace.list().then((list) => {
-      setRecentWorkspaces(list)
-      if (list.length === 0) setShowWorkspacePicker(true)
-    })
+    api.workspace.list().then(setRecentWorkspaces)
 
     const offAvail = api.update.onAvailable(({ version }) =>
       setUpdate({ status: 'available', version }),
@@ -112,7 +109,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       </div>
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {(showWorkspacePicker || !workspace) && (
+      {showWorkspacePicker && (
         <WorkspacePicker
           recentWorkspaces={recentWorkspaces}
           currentPath={workspace?.path ?? null}
@@ -124,7 +121,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           }}
           onOpen={openWorkspace}
           onRemove={removeWorkspace}
-          onClose={workspace ? () => setShowWorkspacePicker(false) : undefined}
+          onClose={() => setShowWorkspacePicker(false)}
         />
       )}
     </div>
