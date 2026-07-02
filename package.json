@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Windows desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
@@ -44,6 +44,7 @@
   "build": {
     "appId": "cc.glanger.pi-studio",
     "productName": "pi-studio",
+    "asar": false,
     "directories": {
       "output": "dist"
     },
