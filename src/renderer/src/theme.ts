@@ -1,6 +1,7 @@
-import { theme } from 'antd'
+import { theme, type MappingAlgorithm } from 'antd'
 
-const { darkAlgorithm, defaultAlgorithm } = theme
+const darkAlgorithm: MappingAlgorithm = theme.darkAlgorithm
+const defaultAlgorithm: MappingAlgorithm = theme.defaultAlgorithm
 
 type AppTheme = {
   algorithm: typeof darkAlgorithm | typeof defaultAlgorithm

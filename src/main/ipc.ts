@@ -12,6 +12,15 @@ import {
 import { piClientManager } from './pi-client'
 
 export function registerIpcHandlers(): void {
+  // ── Window controls ──────────────────────────────────────────────
+  ipcMain.on('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
+  ipcMain.on('win:maximize', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return
+    win.isMaximized() ? win.unmaximize() : win.maximize()
+  })
+  ipcMain.on('win:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
+
   // ── App ──────────────────────────────────────────────────────────
   ipcMain.handle('app:version', () => app.getVersion())
 
@@ -57,7 +66,7 @@ export function registerIpcHandlers(): void {
         settings.provider,
         settings.model || undefined,
         (agentEvent) => {
-          win?.webContents.send('pi:event', agentEvent)
+          if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
         },
       )
     } catch (err) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
 import { Markdown } from '@lobehub/ui'
 import { SendHorizontal, ArrowDown, Square, SquarePen, FolderOpen } from 'lucide-react'
@@ -365,8 +365,17 @@ export default function ChatPane({ workspace }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Index of the message currently being streamed (set by message_start),
+  // so update/end events replace the right slot even if other messages
+  // (e.g. tool results) land in between.
+  const streamingIndexRef = useRef<number | null>(null)
 
   useEffect(() => {
+    // Switching workspaces kills the old agent subprocess, so its agent_end
+    // never arrives — reset streaming state here or the input stays disabled.
+    setSending(false)
+    setError(null)
+    streamingIndexRef.current = null
     if (!workspace) {
       setMessages([])
       setToolExecutions({})
@@ -385,13 +394,22 @@ export default function ChatPane({ workspace }: Props) {
           setSending(false)
           break
         case 'message_start':
-          setMessages((prev) => [...prev, { ...event.message }])
+          setMessages((prev) => {
+            streamingIndexRef.current = prev.length
+            return [...prev, { ...event.message }]
+          })
           break
         case 'message_update':
         case 'message_end':
           setMessages((prev) => {
-            if (prev.length === 0) return [{ ...event.message }]
-            return [...prev.slice(0, -1), { ...event.message }]
+            const idx = streamingIndexRef.current
+            if (idx === null || idx >= prev.length) {
+              streamingIndexRef.current = prev.length
+              return [...prev, { ...event.message }]
+            }
+            const next = prev.slice()
+            next[idx] = { ...event.message }
+            return next
           })
           break
         case 'tool_execution_start':
@@ -432,7 +450,8 @@ export default function ChatPane({ workspace }: Props) {
     if (!el) return
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
     if (isNearBottom || sending) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      // 'auto' while streaming: smooth-scrolling on every token tick jitters
+      bottomRef.current?.scrollIntoView({ behavior: sending ? 'auto' : 'smooth' })
     }
   }, [messages, sending])
 
@@ -462,6 +481,7 @@ export default function ChatPane({ workspace }: Props) {
     await api.pi.newSession()
     setMessages([])
     setToolExecutions({})
+    streamingIndexRef.current = null
   }
 
   const isEmpty = messages.length === 0
@@ -606,7 +626,9 @@ export default function ChatPane({ workspace }: Props) {
 type StylesType = ReturnType<typeof useStyles>['styles']
 type CxType = ReturnType<typeof useStyles>['cx']
 
-function MessageBubble({
+// memo: during streaming only the message being updated changes reference,
+// so earlier bubbles skip re-rendering (and re-parsing their Markdown).
+const MessageBubble = memo(function MessageBubble({
   msg,
   toolExecutions,
   styles,
@@ -660,4 +682,4 @@ function MessageBubble({
       </div>
     </div>
   )
-}
+})

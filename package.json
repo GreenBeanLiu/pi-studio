@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Windows desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
@@ -11,16 +11,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.10",
-    "@electron-toolkit/tsconfig": "^2.0.0",
-    "@lobehub/ui": "^5.14.2",
-    "antd": "^6.4.3",
-    "antd-style": "^4.1.0",
-    "electron-store": "^8.2.0",
-    "electron-updater": "^6.8.3",
-    "geist": "^1.7.2",
-    "lucide-react": "^1.16.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "electron-updater": "^6.8.3"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "^0.79.10",
@@ -28,15 +19,22 @@
     "@electron-toolkit/eslint-config-prettier": "^2.0.0",
     "@electron-toolkit/eslint-config-ts": "^2.0.0",
     "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^3.0.0",
+    "@lobehub/ui": "^5.14.2",
     "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^20.14.8",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "antd": "^6.4.3",
+    "antd-style": "^4.1.0",
     "electron": "^42.2.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.5.2",
     "vite": "^5.3.1"
@@ -48,6 +46,13 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "out/**",
+      "!**/*.map",
+      "!node_modules/**/*.d.ts",
+      "!node_modules/**/*.{md,markdown,txt}",
+      "!node_modules/**/{LICENSE,LICENSE.*,license,CHANGELOG.md,README.md}"
+    ],
     "win": {
       "target": "nsis"
     },

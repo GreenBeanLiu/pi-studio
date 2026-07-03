@@ -5,34 +5,48 @@ import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc'
 import { piClientManager } from './pi-client'
 
-function setupAutoUpdater(win: BrowserWindow): void {
+const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(channel, payload)
+  }
+}
+
+// App-level (not per-window): autoUpdater listeners and the update:install
+// handler must only ever be registered once, so this can't live in
+// createWindow.
+function setupAutoUpdater(): void {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.logger = null // suppress default logger noise
 
   autoUpdater.on('update-available', (info) => {
-    win.webContents.send('update:available', { version: info.version })
+    broadcast('update:available', { version: info.version })
   })
 
   autoUpdater.on('update-downloaded', (info) => {
-    win.webContents.send('update:downloaded', { version: info.version })
+    broadcast('update:downloaded', { version: info.version })
   })
 
   autoUpdater.on('error', (err) => {
     // Surface the error to the renderer so the user can see it
-    win.webContents.send('update:error', { message: err.message ?? String(err) })
+    broadcast('update:error', { message: err.message ?? String(err) })
   })
 
   ipcMain.on('update:install', () => {
     autoUpdater.quitAndInstall()
   })
 
-  // 启动后 3 秒再检查，避免影响启动速度
-  setTimeout(() => {
+  const check = (): void => {
     autoUpdater.checkForUpdates().catch((err) => {
-      win.webContents.send('update:error', { message: err.message ?? String(err) })
+      broadcast('update:error', { message: err.message ?? String(err) })
     })
-  }, 3000)
+  }
+
+  // 启动后 3 秒再检查，避免影响启动速度；之后每 4 小时查一次
+  setTimeout(check, 3000)
+  setInterval(check, UPDATE_CHECK_INTERVAL_MS)
 }
 
 function createWindow(): void {
@@ -59,17 +73,10 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  ipcMain.on('win:minimize', () => mainWindow.minimize())
-  ipcMain.on('win:maximize', () => {
-    mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize()
-  })
-  ipcMain.on('win:close', () => mainWindow.close())
-
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-    setupAutoUpdater(mainWindow)
   }
 }
 
@@ -81,6 +88,7 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
+  if (!is.dev) setupAutoUpdater()
   createWindow()
 
   app.on('activate', () => {
