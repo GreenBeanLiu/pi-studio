@@ -1,4 +1,7 @@
 import { ipcMain, BrowserWindow, app, dialog } from 'electron'
+import { dirname } from 'path'
+import type { ImageContent } from '@earendil-works/pi-ai'
+import { listSessions, deleteSession } from './pi-sessions'
 import {
   loadSettings,
   saveSettings,
@@ -20,6 +23,13 @@ export function registerIpcHandlers(): void {
     win.isMaximized() ? win.unmaximize() : win.maximize()
   })
   ipcMain.on('win:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
+  // Taskbar flash for "agent finished while unfocused"; cleared on focus.
+  ipcMain.on('win:flash', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win || win.isDestroyed() || win.isFocused()) return
+    win.flashFrame(true)
+    win.once('focus', () => win.flashFrame(false))
+  })
 
   // ── App ──────────────────────────────────────────────────────────
   ipcMain.handle('app:version', () => app.getVersion())
@@ -81,10 +91,36 @@ export function registerIpcHandlers(): void {
     return removeRecentWorkspace(workspacePath)
   })
 
+  // ── Sessions ─────────────────────────────────────────────────────
+  ipcMain.handle('sessions:list', async () => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return []
+    const state = await piClientManager.getState()
+    if (!state.sessionFile) return []
+    return listSessions(dirname(state.sessionFile), cwd)
+  })
+  ipcMain.handle('sessions:switch', (_e, sessionPath: string) =>
+    piClientManager.switchSession(sessionPath),
+  )
+  ipcMain.handle('sessions:rename', (_e, name: string) => piClientManager.setSessionName(name))
+  ipcMain.handle('sessions:delete', async (_e, sessionPath: string) => {
+    // Never delete the file the running agent is writing to
+    const state = await piClientManager.getState()
+    if (state.sessionFile === sessionPath) return { error: '不能删除当前会话' }
+    deleteSession(sessionPath)
+    return { ok: true }
+  })
+
   // ── Pi agent session ─────────────────────────────────────────────
-  ipcMain.handle('pi:prompt', (_e, message: string) => piClientManager.prompt(message))
-  ipcMain.handle('pi:steer', (_e, message: string) => piClientManager.steer(message))
-  ipcMain.handle('pi:followUp', (_e, message: string) => piClientManager.followUp(message))
+  ipcMain.handle('pi:prompt', (_e, message: string, images?: ImageContent[]) =>
+    piClientManager.prompt(message, images),
+  )
+  ipcMain.handle('pi:steer', (_e, message: string, images?: ImageContent[]) =>
+    piClientManager.steer(message, images),
+  )
+  ipcMain.handle('pi:followUp', (_e, message: string, images?: ImageContent[]) =>
+    piClientManager.followUp(message, images),
+  )
   ipcMain.handle('pi:abort', () => piClientManager.abort())
   ipcMain.handle('pi:bash', (_e, command: string) => piClientManager.bash(command))
   ipcMain.handle('pi:newSession', () => piClientManager.newSession())

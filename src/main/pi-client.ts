@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import type { RpcClient as RpcClientType } from '@earendil-works/pi-coding-agent'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
+import type { ImageContent } from '@earendil-works/pi-ai'
 
 export type PiEventListener = (event: AgentEvent) => void
 
@@ -82,16 +83,16 @@ class PiClientManager {
     return this.client
   }
 
-  prompt(message: string): Promise<void> {
-    return this.require().prompt(message)
+  prompt(message: string, images?: ImageContent[]): Promise<void> {
+    return this.require().prompt(message, images)
   }
 
-  steer(message: string): Promise<void> {
-    return this.require().steer(message)
+  steer(message: string, images?: ImageContent[]): Promise<void> {
+    return this.require().steer(message, images)
   }
 
-  followUp(message: string): Promise<void> {
-    return this.require().followUp(message)
+  followUp(message: string, images?: ImageContent[]): Promise<void> {
+    return this.require().followUp(message, images)
   }
 
   abort(): Promise<void> {
@@ -120,6 +121,14 @@ class PiClientManager {
 
   setModel(provider: string, modelId: string): ReturnType<RpcClient['setModel']> {
     return this.require().setModel(provider, modelId)
+  }
+
+  switchSession(sessionPath: string): ReturnType<RpcClient['switchSession']> {
+    return this.require().switchSession(sessionPath)
+  }
+
+  setSessionName(name: string): ReturnType<RpcClient['setSessionName']> {
+    return this.require().setSessionName(name)
   }
 }
 

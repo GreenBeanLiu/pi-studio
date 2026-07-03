@@ -7,6 +7,7 @@ const api = {
     minimize: () => ipcRenderer.send('win:minimize'),
     maximize: () => ipcRenderer.send('win:maximize'),
     close: () => ipcRenderer.send('win:close'),
+    flash: () => ipcRenderer.send('win:flash'),
   },
 
   app: {
@@ -25,10 +26,19 @@ const api = {
     remove: (path: string) => ipcRenderer.invoke('workspace:remove', path),
   },
 
+  sessions: {
+    list: () => ipcRenderer.invoke('sessions:list'),
+    switch: (sessionPath: string) => ipcRenderer.invoke('sessions:switch', sessionPath),
+    rename: (name: string) => ipcRenderer.invoke('sessions:rename', name),
+    delete: (sessionPath: string) => ipcRenderer.invoke('sessions:delete', sessionPath),
+  },
+
   pi: {
-    prompt: (message: string) => ipcRenderer.invoke('pi:prompt', message),
-    steer: (message: string) => ipcRenderer.invoke('pi:steer', message),
-    followUp: (message: string) => ipcRenderer.invoke('pi:followUp', message),
+    prompt: (message: string, images?: unknown[]) =>
+      ipcRenderer.invoke('pi:prompt', message, images),
+    steer: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:steer', message, images),
+    followUp: (message: string, images?: unknown[]) =>
+      ipcRenderer.invoke('pi:followUp', message, images),
     abort: () => ipcRenderer.invoke('pi:abort'),
     bash: (command: string) => ipcRenderer.invoke('pi:bash', command),
     newSession: () => ipcRenderer.invoke('pi:newSession'),

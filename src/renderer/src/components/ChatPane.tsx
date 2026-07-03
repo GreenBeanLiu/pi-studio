@@ -1,8 +1,14 @@
 import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
 import { Markdown } from '@lobehub/ui'
-import { SendHorizontal, ArrowDown, Square, SquarePen, FolderOpen } from 'lucide-react'
-import { api, type Workspace, type AgentEvent, type AgentMessage } from '../lib/api'
+import { SendHorizontal, ArrowDown, Square, FolderOpen, X } from 'lucide-react'
+import {
+  api,
+  type Workspace,
+  type AgentEvent,
+  type AgentMessage,
+  type ImageContent,
+} from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
 type Props = {
@@ -16,43 +22,6 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-direction: column;
     min-width: 0;
     background: ${token.colorBgBase};
-  `,
-
-  toolbar: css`
-    height: 40px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding: 0 16px;
-    border-bottom: 1px solid ${token.colorBorderSecondary};
-    gap: 8px;
-  `,
-
-  newSessionBtn: css`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: ${token.borderRadiusSM}px;
-    border: 1px solid ${token.colorBorder};
-    background: transparent;
-    color: ${token.colorTextSecondary};
-    cursor: pointer;
-    outline: none;
-    font-family: ${token.fontFamily};
-    transition: all ${token.motionDurationFast};
-
-    &:hover {
-      border-color: ${token.colorPrimaryBorder};
-      color: ${token.colorText};
-    }
-
-    &:disabled {
-      cursor: not-allowed;
-      opacity: 0.4;
-    }
   `,
 
   errorBanner: css`
@@ -324,6 +293,47 @@ const useStyles = createStyles(({ token, css }) => ({
     vertical-align: middle;
   `,
 
+  imageStrip: css`
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  `,
+
+  imageThumb: css`
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: ${token.borderRadiusSM}px;
+    border: 1px solid ${token.colorBorder};
+    overflow: hidden;
+    flex-shrink: 0;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+  `,
+
+  imageRemove: css`
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+  `,
+
   scrollBottomBtn: css`
     position: absolute;
     bottom: 20px;
@@ -358,6 +368,7 @@ export default function ChatPane({ workspace }: Props) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
   const [input, setInput] = useState('')
+  const [images, setImages] = useState<ImageContent[]>([])
   const [sending, setSending] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
@@ -384,6 +395,11 @@ export default function ChatPane({ workspace }: Props) {
     api.pi.getMessages().then(setMessages).catch(() => {})
   }, [workspace?.path])
 
+  // For the completion notification — the event subscription effect runs once,
+  // so it reads the current workspace through a ref.
+  const workspaceRef = useRef(workspace)
+  workspaceRef.current = workspace
+
   useEffect(() => {
     const off = api.pi.onEvent((event: AgentEvent) => {
       switch (event.type) {
@@ -392,6 +408,17 @@ export default function ChatPane({ workspace }: Props) {
           break
         case 'agent_end':
           setSending(false)
+          if (!document.hasFocus()) {
+            api.win.flash()
+            try {
+              new Notification('任务完成', {
+                body: workspaceRef.current ? `${workspaceRef.current.name} 的 agent 已完成` : 'agent 已完成',
+                silent: false,
+              })
+            } catch {
+              // Notification unavailable — taskbar flash already covers it
+            }
+          }
           break
         case 'message_start':
           setMessages((prev) => {
@@ -455,46 +482,63 @@ export default function ChatPane({ workspace }: Props) {
     }
   }, [messages, sending])
 
-  const sendMessage = useCallback(async () => {
-    const text = input.trim()
-    if (!text || sending || !workspace) return
-    setInput('')
-    setError(null)
-    setSending(true)
-    try {
-      await api.pi.prompt(text)
-    } catch (err) {
-      setError((err as Error).message ?? '发送失败')
-      setSending(false)
-    }
-  }, [input, sending, workspace])
+  // While the agent runs, Enter queues a follow-up and Ctrl+Enter steers
+  // (interrupts); when idle both are a plain prompt.
+  const sendMessage = useCallback(
+    async (mode: 'queue' | 'steer' = 'queue') => {
+      const text = input.trim()
+      if ((!text && images.length === 0) || !workspace) return
+      const imgs = images.length > 0 ? images : undefined
+      setInput('')
+      setImages([])
+      setError(null)
+      try {
+        if (!sending) {
+          setSending(true)
+          await api.pi.prompt(text, imgs)
+        } else if (mode === 'steer') {
+          await api.pi.steer(text, imgs)
+        } else {
+          await api.pi.followUp(text, imgs)
+        }
+      } catch (err) {
+        setError((err as Error).message ?? '发送失败')
+        if (!sending) setSending(false)
+      }
+    },
+    [input, images, sending, workspace],
+  )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      sendMessage()
+      sendMessage(e.ctrlKey || e.metaKey ? 'steer' : 'queue')
     }
   }
 
-  async function handleNewSession() {
-    if (!workspace || sending) return
-    await api.pi.newSession()
-    setMessages([])
-    setToolExecutions({})
-    streamingIndexRef.current = null
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imageFiles = items
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null)
+    if (imageFiles.length === 0) return
+    e.preventDefault()
+    for (const file of imageFiles) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+        setImages((prev) => [...prev, { type: 'image', data: base64, mimeType: file.type }])
+      }
+      reader.readAsDataURL(file)
+    }
   }
 
   const isEmpty = messages.length === 0
 
   return (
     <div className={styles.pane}>
-      <div className={styles.toolbar}>
-        <button className={styles.newSessionBtn} onClick={handleNewSession} disabled={!workspace || sending}>
-          <SquarePen size={12} />
-          新建会话
-        </button>
-      </div>
-
       {error && (
         <div className={styles.errorBanner}>
           <span style={{ flex: 1 }}>{error}</span>
@@ -575,21 +619,43 @@ export default function ChatPane({ workspace }: Props) {
 
       <div className={styles.inputArea}>
         <div className={styles.inputAreaInner}>
+          {images.length > 0 && (
+            <div className={styles.imageStrip}>
+              {images.map((img, i) => (
+                <div key={i} className={styles.imageThumb}>
+                  <img src={`data:${img.mimeType};base64,${img.data}`} alt="" />
+                  <button
+                    className={styles.imageRemove}
+                    onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className={cx(styles.inputBox, inputFocused && styles.inputBoxFocused)}>
             <textarea
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
-              placeholder={workspace ? '向 agent 描述任务…' : '请先打开一个工作区'}
+              placeholder={
+                !workspace
+                  ? '请先打开一个工作区'
+                  : sending
+                    ? 'Agent 运行中，输入将排队执行…'
+                    : '向 agent 描述任务…（可直接粘贴截图）'
+              }
               rows={1}
               style={{ fieldSizing: 'content' } as React.CSSProperties}
               className={styles.inputTextarea}
-              disabled={!workspace || sending}
+              disabled={!workspace}
             />
-            {sending ? (
+            {sending && (
               <button
                 onClick={() => api.pi.abort()}
                 className={styles.sendBtn}
@@ -598,24 +664,37 @@ export default function ChatPane({ workspace }: Props) {
               >
                 <Square size={12} fill="currentColor" />
               </button>
-            ) : (
-              <button
-                onClick={sendMessage}
-                disabled={!input.trim() || !workspace}
-                className={styles.sendBtn}
-                style={{
-                  background: input.trim() ? token.colorPrimary : token.colorFillSecondary,
-                  color: input.trim() ? '#ffffff' : token.colorTextTertiary,
-                }}
-              >
-                <SendHorizontal size={14} />
-              </button>
             )}
+            <button
+              onClick={() => sendMessage('queue')}
+              disabled={(!input.trim() && images.length === 0) || !workspace}
+              className={styles.sendBtn}
+              title={sending ? '排队（跑完后执行）' : '发送'}
+              style={{
+                background:
+                  input.trim() || images.length > 0 ? token.colorPrimary : token.colorFillSecondary,
+                color: input.trim() || images.length > 0 ? '#ffffff' : token.colorTextTertiary,
+              }}
+            >
+              <SendHorizontal size={14} />
+            </button>
           </div>
           <p className={styles.inputHint} style={{ opacity: inputFocused ? 1 : 0 }}>
-            <span className={styles.kbdKey}>Enter</span> 发送
-            <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
-            <span className={styles.kbdKey}>Shift+Enter</span> 换行
+            {sending ? (
+              <>
+                <span className={styles.kbdKey}>Enter</span> 排队
+                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
+                <span className={styles.kbdKey}>Ctrl+Enter</span> 立即插话
+                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
+                <span className={styles.kbdKey}>Shift+Enter</span> 换行
+              </>
+            ) : (
+              <>
+                <span className={styles.kbdKey}>Enter</span> 发送
+                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
+                <span className={styles.kbdKey}>Shift+Enter</span> 换行
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -652,6 +731,21 @@ const MessageBubble = memo(function MessageBubble({
       <div className={cx(styles.msgContent, isUser && styles.msgContentUser)}>
         {isUser ? (
           <div className={cx(styles.msgBubble, styles.msgBubbleUser)}>
+            {Array.isArray(msg.content) &&
+              msg.content.some((c) => (c as { type: string }).type === 'image') && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {(msg.content as Array<{ type: string; data?: string; mimeType?: string }>)
+                    .filter((c) => c.type === 'image' && c.data)
+                    .map((c, j) => (
+                      <img
+                        key={j}
+                        src={`data:${c.mimeType};base64,${c.data}`}
+                        alt=""
+                        style={{ maxWidth: 160, maxHeight: 120, borderRadius: 6, display: 'block' }}
+                      />
+                    ))}
+                </div>
+              )}
             {textOf(msg.content as never)}
           </div>
         ) : (

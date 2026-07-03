@@ -5,6 +5,7 @@ import type {
   ToolResultMessage,
   TextContent,
   ThinkingContent,
+  ImageContent,
   ToolCall,
 } from '@earendil-works/pi-ai/base'
 
@@ -16,6 +17,7 @@ declare global {
         minimize: () => void
         maximize: () => void
         close: () => void
+        flash: () => void
       }
       app: {
         version: () => Promise<string>
@@ -36,10 +38,16 @@ declare global {
         open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
         remove: (path: string) => Promise<Workspace[]>
       }
+      sessions: {
+        list: () => Promise<SessionInfo[]>
+        switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
+        rename: (name: string) => Promise<void>
+        delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
+      }
       pi: {
-        prompt: (message: string) => Promise<void>
-        steer: (message: string) => Promise<void>
-        followUp: (message: string) => Promise<void>
+        prompt: (message: string, images?: ImageContent[]) => Promise<void>
+        steer: (message: string, images?: ImageContent[]) => Promise<void>
+        followUp: (message: string, images?: ImageContent[]) => Promise<void>
         abort: () => Promise<void>
         bash: (command: string) => Promise<unknown>
         newSession: () => Promise<{ cancelled: boolean }>
@@ -86,6 +94,16 @@ export type ModelInfo = {
   reasoning: boolean
 }
 
+export type SessionInfo = {
+  path: string
+  id: string
+  cwd: string
+  name?: string
+  firstMessage: string
+  messageCount: number
+  modified: string
+}
+
 export type {
   AgentEvent,
   AgentMessage,
@@ -94,6 +112,7 @@ export type {
   ToolResultMessage,
   TextContent,
   ThinkingContent,
+  ImageContent,
   ToolCall,
 }
 

@@ -3,6 +3,7 @@ import { createStyles } from 'antd-style'
 import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
 import ChatPane from './components/ChatPane'
+import SessionSidebar from './components/SessionSidebar'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
 import WorkspacePicker from './components/WorkspacePicker'
@@ -45,6 +46,8 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' })
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [opening, setOpening] = useState(false)
+  // Bumped when the active session changes; remounts ChatPane so it reloads messages.
+  const [sessionEpoch, setSessionEpoch] = useState(0)
 
   useEffect(() => {
     api.workspace.list().then(setRecentWorkspaces)
@@ -103,8 +106,14 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           onSettings={() => setShowSettings(true)}
           onToggleTheme={onToggleTheme}
         />
+        {workspace && (
+          <SessionSidebar
+            workspace={workspace}
+            onSessionChanged={() => setSessionEpoch((n) => n + 1)}
+          />
+        )}
         <DesktopLayoutContainer>
-          <ChatPane workspace={workspace} />
+          <ChatPane key={`${workspace?.path ?? ''}#${sessionEpoch}`} workspace={workspace} />
         </DesktopLayoutContainer>
       </div>
 
