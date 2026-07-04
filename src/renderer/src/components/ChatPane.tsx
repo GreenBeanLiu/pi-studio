@@ -37,6 +37,11 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     flex-direction: column;
     min-width: 0;
+    /* min-height:0 is essential: without it a flex item won't shrink below
+       its content height, so a long conversation makes this pane grow past
+       the overflow:hidden shell — clipping the input box off the bottom and
+       leaving nothing for the messages area to scroll. */
+    min-height: 0;
     background: ${token.colorBgBase};
   `,
 
