@@ -189,13 +189,19 @@ body {
 }
 
 /* ============================================================
-   Scrollbar — LobeHub style: thin, on hover only
+   Scrollbar — visible enough to grab (the original 4px/22% LobeHub
+   style read as "no scrollbar at all" on light backgrounds)
    ============================================================ */
-* { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.22) transparent; }
-::-webkit-scrollbar { width: 4px; height: 4px; }
+* { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.45) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.22); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.40); }
+::-webkit-scrollbar-thumb {
+  background: rgba(128,128,128,0.45);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.65); background-clip: content-box; border: 2px solid transparent; }
 
 /* ============================================================
    Animations (empty state)
