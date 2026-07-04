@@ -205,11 +205,23 @@ const useStyles = createStyles(({ token, css }) => ({
     margin-top: 4px;
   `,
 
-  typingBubble: css`
+  runStatus: css`
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 0;
+    gap: 7px;
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    padding: 0 4px 8px;
+    user-select: none;
+  `,
+
+  runStatusDot: css`
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+    background: ${token.colorPrimary};
+    animation: typing-dot 1.4s ease-in-out infinite;
   `,
 
   inputArea: css`
@@ -438,6 +450,10 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+  // Follow the stream only while the user is at the bottom; scrolling up
+  // pauses following so reading history isn't fought by auto-scroll.
+  const [autoFollow, setAutoFollow] = useState(true)
+  const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -556,14 +572,24 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   }, [])
 
   useEffect(() => {
-    const el = messagesRef.current
-    if (!el) return
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-    if (isNearBottom || sending) {
-      // 'auto' while streaming: smooth-scrolling on every token tick jitters
-      bottomRef.current?.scrollIntoView({ behavior: sending ? 'auto' : 'smooth' })
+    if (autoFollow) {
+      // 'auto': smooth-scrolling on every token tick jitters
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' })
     }
-  }, [messages, sending])
+  }, [messages, autoFollow])
+
+  // Elapsed-time ticker for the run status strip
+  useEffect(() => {
+    if (!sending) return
+    setElapsed(0)
+    const timer = setInterval(() => setElapsed((e) => e + 1), 1000)
+    return () => clearInterval(timer)
+  }, [sending])
+
+  const runningTool = useMemo(() => {
+    const running = Object.values(toolExecutions).filter((t) => t.status === 'running')
+    return running.length > 0 ? running[running.length - 1].toolName : null
+  }, [toolExecutions])
 
   // While the agent runs, Enter queues a follow-up and Ctrl+Enter steers
   // (interrupts); when idle both are a plain prompt.
@@ -723,7 +749,9 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           ref={messagesRef}
           onScroll={(e) => {
             const el = e.currentTarget
-            setShowScrollBtn(el.scrollHeight - el.scrollTop - el.clientHeight > 200)
+            const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+            setShowScrollBtn(dist > 200)
+            setAutoFollow(dist < 120)
           }}
         >
           <div className={styles.messagesInner}>
@@ -756,28 +784,6 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               ))
             )}
 
-            {sending && !isEmpty && messages[messages.length - 1]?.role !== 'assistant' && (
-              <div className={styles.msgRow}>
-                <div className={cx(styles.avatarBox, styles.agentAvatar)}>π</div>
-                <div className={styles.typingBubble}>
-                  {[0, 160, 320].map((delay) => (
-                    <span
-                      key={delay}
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        display: 'inline-block',
-                        backgroundColor: token.colorPrimary,
-                        animation: 'typing-dot 1.4s ease-in-out infinite',
-                        animationDelay: `${delay}ms`,
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div ref={bottomRef} />
           </div>
         </div>
@@ -796,6 +802,20 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 
       <div className={styles.inputArea}>
         <div className={styles.inputAreaInner}>
+          {sending && (
+            <div className={styles.runStatus}>
+              {[0, 160, 320].map((delay) => (
+                <span
+                  key={delay}
+                  className={styles.runStatusDot}
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+              <span>
+                {runningTool ? `正在执行 ${runningTool}` : '思考中'} · 已运行 {elapsed}s
+              </span>
+            </div>
+          )}
           {slashFilter !== null && slashMatches.length === 0 && (
             <div className={styles.slashPanel}>
               <div className={styles.slashItem} style={{ cursor: 'default' }}>
