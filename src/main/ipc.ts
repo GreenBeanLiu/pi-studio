@@ -48,6 +48,7 @@ export function registerIpcHandlers(): void {
         baseUrl: string
         favoriteModels: string
         tavilyApiKey: string
+        heliconeApiKey: string
       },
     ) => {
       saveSettings(settings)
@@ -75,7 +76,7 @@ export function registerIpcHandlers(): void {
       return { error: '请先在设置中填写 API Key' }
     }
 
-    writeModelsOverride(settings.provider, settings.baseUrl)
+    writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey)
     syncWebSearchExtension(!!settings.tavilyApiKey)
 
     try {
@@ -85,6 +86,7 @@ export function registerIpcHandlers(): void {
           [apiKeyEnvVar(settings.provider)]: settings.apiKey,
           PI_CODING_AGENT_DIR: agentConfigDir(),
           ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
+          ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
         },
         settings.provider,
         settings.model || undefined,

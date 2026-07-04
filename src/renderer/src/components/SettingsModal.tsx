@@ -11,6 +11,7 @@ type Settings = {
   baseUrl: string
   favoriteModels: string
   tavilyApiKey: string
+  heliconeApiKey: string
 }
 
 type Category = 'model' | 'tools' | 'about'
@@ -122,7 +123,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const { styles } = useStyles()
 
   const [category, setCategory] = useState<Category>('model')
-  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '' })
+  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '' })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
   const [version, setVersion] = useState('')
@@ -265,6 +266,21 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 />
                 <span className={styles.labelHint}>
                   修改后需重新打开工作区生效。agent 会在需要实时信息（新闻、版本号、文档）时自行调用搜索。
+                </span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  对话日志（Helicone API Key）
+                  <span className={styles.labelHint}>配置后所有对话经 Helicone 记录，可在其面板分析；留空关闭</span>
+                </span>
+                <Input.Password
+                  value={settings.heliconeApiKey}
+                  onChange={(e) => patch({ heliconeApiKey: e.target.value })}
+                  placeholder="sk-helicone-…"
+                />
+                <span className={styles.labelHint}>
+                  改后需重新打开工作区生效。经 gateway.helicone.ai 转发到你当前的 API 端点，密钥仅通过环境变量传给子进程。
                 </span>
               </div>
             </div>

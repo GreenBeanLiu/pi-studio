@@ -19,6 +19,8 @@ type SettingsData = {
   favoriteModels: string
   /** Tavily API key enabling the web_search agent tool; empty = disabled */
   tavilyApiKey: string
+  /** Helicone API key: routes LLM calls through Helicone for logging; empty = off */
+  heliconeApiKey: string
   recentWorkspaces: Workspace[]
 }
 
@@ -29,6 +31,7 @@ const DEFAULTS: SettingsData = {
   baseUrl: '',
   favoriteModels: '',
   tavilyApiKey: '',
+  heliconeApiKey: '',
   recentWorkspaces: [],
 }
 
@@ -89,6 +92,7 @@ export function loadSettings(): SettingsData {
     baseUrl: (raw.baseUrl as string) ?? DEFAULTS.baseUrl,
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
+    heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -98,13 +102,14 @@ export function loadSettings(): SettingsData {
 export function saveSettings(
   settings: Pick<
     SettingsData,
-    'provider' | 'apiKey' | 'model' | 'baseUrl' | 'favoriteModels' | 'tavilyApiKey'
+    'provider' | 'apiKey' | 'model' | 'baseUrl' | 'favoriteModels' | 'tavilyApiKey' | 'heliconeApiKey'
   >,
 ): void {
   const raw = readRaw()
 
   encryptField(raw, 'apiKey', 'apiKeyEncrypted', settings.apiKey)
   encryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted', settings.tavilyApiKey)
+  encryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted', settings.heliconeApiKey)
 
   raw.provider = settings.provider
   raw.model = settings.model
@@ -151,23 +156,50 @@ export function agentConfigDir(): string {
   return join(app.getPath('userData'), 'pi-agent')
 }
 
+const DEFAULT_TARGET: Record<PiProvider, string> = {
+  anthropic: 'https://api.anthropic.com',
+  openai: 'https://api.openai.com',
+}
+
 /**
- * Built-in providers support an "override-only" models.json entry — just a
- * baseUrl, no custom model list — that redirects every built-in model id for
- * that provider through a different (e.g. third-party OpenAI-compatible)
- * endpoint. Auth still comes from the provider's normal env var.
+ * Built-in providers support an "override-only" models.json entry (baseUrl +
+ * headers, no custom model list) that redirects every built-in model id for
+ * that provider through a different endpoint. Two uses here:
+ *
+ *  - Third-party OpenAI-compatible gateway: just a baseUrl override.
+ *  - Helicone logging: route through Helicone's universal gateway
+ *    (gateway.helicone.ai) with `Helicone-Auth` (the key, via the
+ *    HELICONE_API_KEY env var so it never lands in models.json) and
+ *    `Helicone-Target-Url` pointing at the *real* endpoint (the user's
+ *    gateway if set, else the provider default). pi forwards its normal
+ *    provider auth headers through, so Helicone just observes + relays.
+ *
+ * Auth for the model itself still comes from the provider's normal env var.
  */
-export function writeModelsOverride(provider: PiProvider, baseUrl: string): void {
+export function writeModelsOverride(
+  provider: PiProvider,
+  baseUrl: string,
+  heliconeEnabled: boolean,
+): void {
   const dir = agentConfigDir()
   mkdirSync(dir, { recursive: true })
   const modelsPath = join(dir, 'models.json')
-  if (!baseUrl.trim()) {
-    writeFileSync(modelsPath, JSON.stringify({ providers: {} }, null, 2), 'utf-8')
-    return
+
+  let providerConfig: Record<string, unknown> | null = null
+
+  if (heliconeEnabled) {
+    const realTarget = baseUrl.trim() || DEFAULT_TARGET[provider]
+    providerConfig = {
+      baseUrl: 'https://gateway.helicone.ai',
+      headers: {
+        'Helicone-Auth': 'Bearer ${HELICONE_API_KEY}',
+        'Helicone-Target-Url': realTarget,
+      },
+    }
+  } else if (baseUrl.trim()) {
+    providerConfig = { baseUrl: baseUrl.trim() }
   }
-  writeFileSync(
-    modelsPath,
-    JSON.stringify({ providers: { [provider]: { baseUrl: baseUrl.trim() } } }, null, 2),
-    'utf-8',
-  )
+
+  const providers = providerConfig ? { [provider]: providerConfig } : {}
+  writeFileSync(modelsPath, JSON.stringify({ providers }, null, 2), 'utf-8')
 }

@@ -30,6 +30,7 @@ declare global {
           baseUrl: string
           favoriteModels: string
           tavilyApiKey: string
+          heliconeApiKey: string
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -39,6 +40,7 @@ declare global {
           baseUrl: string
           favoriteModels: string
           tavilyApiKey: string
+          heliconeApiKey: string
         }) => Promise<{ ok: boolean }>
       }
       workspace: {
