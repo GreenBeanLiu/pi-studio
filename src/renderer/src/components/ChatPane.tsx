@@ -455,7 +455,6 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [autoFollow, setAutoFollow] = useState(true)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // Index of the message currently being streamed (set by message_start),
@@ -572,9 +571,12 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   }, [])
 
   useEffect(() => {
-    if (autoFollow) {
-      // 'auto': smooth-scrolling on every token tick jitters
-      bottomRef.current?.scrollIntoView({ behavior: 'auto' })
+    // Scroll the messages container directly — scrollIntoView also scrolls
+    // every scrollable ANCESTOR (overflow:hidden ones included), which
+    // shoved the whole app shell up: title bar and input box vanished.
+    const el = messagesRef.current
+    if (el && autoFollow) {
+      el.scrollTop = el.scrollHeight
     }
   }, [messages, autoFollow])
 
@@ -792,7 +794,6 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               ))
             )}
 
-            <div ref={bottomRef} />
           </div>
         </div>
 
@@ -802,7 +803,13 @@ export default function ChatPane({ workspace, starting = false }: Props) {
         }} />
 
         {showScrollBtn && (
-          <button className={styles.scrollBottomBtn} onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}>
+          <button
+            className={styles.scrollBottomBtn}
+            onClick={() => {
+              const el = messagesRef.current
+              if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+            }}
+          >
             <ArrowDown size={14} />
           </button>
         )}
