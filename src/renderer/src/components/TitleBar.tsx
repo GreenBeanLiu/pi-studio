@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
 import { Tooltip } from 'antd'
 import { FolderOpen } from 'lucide-react'
@@ -156,6 +157,11 @@ const useStyles = createStyles(({ token, css }) => ({
 
 export default function TitleBar({ workspace, update, onInstall, onDismissUpdate, onSwitchWorkspace }: Props) {
   const { styles, cx, theme: token } = useStyles()
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    api.app.version().then(setVersion).catch(() => {})
+  }, [])
 
   const isDownloaded = update.status === 'downloaded'
   const isAvailable = update.status === 'available'
@@ -175,7 +181,12 @@ export default function TitleBar({ workspace, update, onInstall, onDismissUpdate
       )}
 
       <div className={styles.centerZone}>
-        <span className={styles.appLabel}>pi-studio</span>
+        <span className={styles.appLabel}>
+          pi-studio
+          {version && (
+            <span style={{ opacity: 0.55, marginLeft: 6, fontSize: 11 }}>v{version}</span>
+          )}
+        </span>
       </div>
 
       <div className={styles.rightZone}>
