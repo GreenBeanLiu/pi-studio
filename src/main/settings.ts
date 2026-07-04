@@ -17,6 +17,8 @@ type SettingsData = {
   baseUrl: string
   /** Comma/newline-separated model ids to show in the switcher; empty = auto */
   favoriteModels: string
+  /** Tavily API key enabling the web_search agent tool; empty = disabled */
+  tavilyApiKey: string
   recentWorkspaces: Workspace[]
 }
 
@@ -26,6 +28,7 @@ const DEFAULTS: SettingsData = {
   model: '',
   baseUrl: '',
   favoriteModels: '',
+  tavilyApiKey: '',
   recentWorkspaces: [],
 }
 
@@ -49,19 +52,35 @@ function writeRaw(data: Record<string, unknown>): void {
   writeFileSync(settingsPath(), JSON.stringify(data, null, 2), 'utf-8')
 }
 
+function decryptField(raw: Record<string, unknown>, plainKey: string, encKey: string): string {
+  if (raw[encKey] && safeStorage.isEncryptionAvailable()) {
+    try {
+      return safeStorage.decryptString(Buffer.from(raw[encKey] as string, 'base64'))
+    } catch {
+      return ''
+    }
+  }
+  return typeof raw[plainKey] === 'string' ? (raw[plainKey] as string) : ''
+}
+
+function encryptField(
+  raw: Record<string, unknown>,
+  plainKey: string,
+  encKey: string,
+  value: string,
+): void {
+  if (safeStorage.isEncryptionAvailable() && value) {
+    raw[encKey] = safeStorage.encryptString(value).toString('base64')
+    delete raw[plainKey]
+  } else {
+    raw[plainKey] = value
+    delete raw[encKey]
+  }
+}
+
 export function loadSettings(): SettingsData {
   const raw = readRaw()
-  let apiKey = ''
-
-  if (raw.apiKeyEncrypted && safeStorage.isEncryptionAvailable()) {
-    try {
-      apiKey = safeStorage.decryptString(Buffer.from(raw.apiKeyEncrypted as string, 'base64'))
-    } catch {
-      apiKey = ''
-    }
-  } else if (typeof raw.apiKey === 'string') {
-    apiKey = raw.apiKey
-  }
+  const apiKey = decryptField(raw, 'apiKey', 'apiKeyEncrypted')
 
   return {
     provider: (raw.provider as PiProvider) ?? DEFAULTS.provider,
@@ -69,6 +88,7 @@ export function loadSettings(): SettingsData {
     model: (raw.model as string) ?? DEFAULTS.model,
     baseUrl: (raw.baseUrl as string) ?? DEFAULTS.baseUrl,
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
+    tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -76,17 +96,15 @@ export function loadSettings(): SettingsData {
 }
 
 export function saveSettings(
-  settings: Pick<SettingsData, 'provider' | 'apiKey' | 'model' | 'baseUrl' | 'favoriteModels'>,
+  settings: Pick<
+    SettingsData,
+    'provider' | 'apiKey' | 'model' | 'baseUrl' | 'favoriteModels' | 'tavilyApiKey'
+  >,
 ): void {
   const raw = readRaw()
 
-  if (safeStorage.isEncryptionAvailable() && settings.apiKey) {
-    raw.apiKeyEncrypted = safeStorage.encryptString(settings.apiKey).toString('base64')
-    delete raw.apiKey
-  } else {
-    raw.apiKey = settings.apiKey
-    delete raw.apiKeyEncrypted
-  }
+  encryptField(raw, 'apiKey', 'apiKeyEncrypted', settings.apiKey)
+  encryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted', settings.tavilyApiKey)
 
   raw.provider = settings.provider
   raw.model = settings.model

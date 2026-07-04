@@ -10,6 +10,7 @@ type Settings = {
   model: string
   baseUrl: string
   favoriteModels: string
+  tavilyApiKey: string
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -122,7 +123,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '' })
+  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '' })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -213,6 +214,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               value={settings.model}
               onChange={(e) => patch({ model: e.target.value })}
               placeholder={settings.provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o'}
+            />
+          </div>
+
+          <div className={styles.section}>
+            <span className={styles.label}>
+              Tavily API Key
+              <span className={styles.labelHint}>配置后 agent 获得 web_search 联网搜索工具；留空关闭</span>
+            </span>
+            <Input.Password
+              value={settings.tavilyApiKey}
+              onChange={(e) => patch({ tavilyApiKey: e.target.value })}
+              placeholder="tvly-…"
             />
           </div>
 

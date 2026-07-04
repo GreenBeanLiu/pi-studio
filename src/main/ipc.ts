@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, app, dialog } from 'electron'
 import { dirname } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { listSessions, deleteSession } from './pi-sessions'
+import { syncWebSearchExtension } from './web-search-extension'
 import {
   loadSettings,
   saveSettings,
@@ -46,6 +47,7 @@ export function registerIpcHandlers(): void {
         model: string
         baseUrl: string
         favoriteModels: string
+        tavilyApiKey: string
       },
     ) => {
       saveSettings(settings)
@@ -74,6 +76,7 @@ export function registerIpcHandlers(): void {
     }
 
     writeModelsOverride(settings.provider, settings.baseUrl)
+    syncWebSearchExtension(!!settings.tavilyApiKey)
 
     try {
       await piClientManager.startWorkspace(
@@ -81,6 +84,7 @@ export function registerIpcHandlers(): void {
         {
           [apiKeyEnvVar(settings.provider)]: settings.apiKey,
           PI_CODING_AGENT_DIR: agentConfigDir(),
+          ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
         },
         settings.provider,
         settings.model || undefined,
