@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
-import { Dropdown } from 'antd'
+import { Dropdown, Spin } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -27,6 +27,8 @@ import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
 type Props = {
   workspace: Workspace | null
+  /** Agent subprocess is still booting for this workspace */
+  starting?: boolean
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -416,7 +418,7 @@ function textOf(content: string | { type: string; text?: string }[]): string {
     .join('')
 }
 
-export default function ChatPane({ workspace }: Props) {
+export default function ChatPane({ workspace, starting = false }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
@@ -445,7 +447,7 @@ export default function ChatPane({ workspace }: Props) {
     setSending(false)
     setError(null)
     streamingIndexRef.current = null
-    if (!workspace) {
+    if (!workspace || starting) {
       setMessages([])
       setToolExecutions({})
       return
@@ -707,6 +709,12 @@ export default function ChatPane({ workspace }: Props) {
                 <p className={styles.emptyTitle}>还没有打开工作区</p>
                 <p className={styles.emptyHint}>从左上角选择一个项目目录，开始和 agent 对话。</p>
               </div>
+            ) : starting ? (
+              <div className={styles.emptyState}>
+                <Spin size="small" />
+                <p className={styles.emptyTitle}>{workspace.name}</p>
+                <p className={styles.emptyHint}>正在启动 agent 进程…</p>
+              </div>
             ) : isEmpty ? (
               <div className={styles.emptyState}>
                 <p className={styles.emptyTitle}>{workspace.name}</p>
@@ -836,14 +844,16 @@ export default function ChatPane({ workspace }: Props) {
               placeholder={
                 !workspace
                   ? '请先打开一个工作区'
-                  : sending
-                    ? 'Agent 运行中，Enter 排队 · Ctrl+Enter 立即插话'
-                    : '向 agent 描述任务，/ 唤起命令，可粘贴截图'
+                  : starting
+                    ? '正在启动 agent…'
+                    : sending
+                      ? 'Agent 运行中，Enter 排队 · Ctrl+Enter 立即插话'
+                      : '向 agent 描述任务，/ 唤起命令，可粘贴截图'
               }
               rows={1}
               style={{ fieldSizing: 'content' } as React.CSSProperties}
               className={styles.inputTextarea}
-              disabled={!workspace}
+              disabled={!workspace || starting}
             />
             {sending && (
               <button

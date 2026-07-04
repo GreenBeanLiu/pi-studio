@@ -92,6 +92,7 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
+  piClientManager.warmup()
   if (!is.dev) setupAutoUpdater()
   createWindow()
 

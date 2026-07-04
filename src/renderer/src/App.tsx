@@ -69,18 +69,27 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     }
   }, [])
 
+  // Optimistic open: close the picker immediately and show a "starting"
+  // chat pane — the agent subprocess takes 1–3s to boot, and blocking the
+  // modal on it reads as a UI freeze.
   async function openWorkspace(path: string) {
-    setOpening(true)
+    const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path
     setWorkspaceError(null)
+    setShowWorkspacePicker(false)
+    setOpening(true)
+    setWorkspace({ path, name, lastOpenedAt: new Date().toISOString() })
     const result = await api.workspace.open(path)
     setOpening(false)
     if ('error' in result) {
+      // startWorkspace stops the old subprocess before failing, so no
+      // workspace is actually open now — reflect that honestly.
+      setWorkspace(null)
       setWorkspaceError(result.error)
+      setShowWorkspacePicker(true)
       return
     }
     setRecentWorkspaces(result.recentWorkspaces)
-    setWorkspace(result.recentWorkspaces.find((w) => w.path === path) ?? { path, name: path, lastOpenedAt: new Date().toISOString() })
-    setShowWorkspacePicker(false)
+    setSessionEpoch((n) => n + 1)
   }
 
   async function removeWorkspace(path: string) {
@@ -106,14 +115,18 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           onSettings={() => setShowSettings(true)}
           onToggleTheme={onToggleTheme}
         />
-        {workspace && (
+        {workspace && !opening && (
           <SessionSidebar
             workspace={workspace}
             onSessionChanged={() => setSessionEpoch((n) => n + 1)}
           />
         )}
         <DesktopLayoutContainer>
-          <ChatPane key={`${workspace?.path ?? ''}#${sessionEpoch}`} workspace={workspace} />
+          <ChatPane
+            key={`${workspace?.path ?? ''}#${sessionEpoch}`}
+            workspace={workspace}
+            starting={opening}
+          />
         </DesktopLayoutContainer>
       </div>
 

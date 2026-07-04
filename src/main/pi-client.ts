@@ -46,6 +46,12 @@ class PiClientManager {
   private workspacePath: string | null = null
   private unsubscribe: (() => void) | null = null
 
+  /** Pre-import the pi-coding-agent ESM graph so the first workspace open
+   *  doesn't pay the module-load cost (hundreds of ms) on click. */
+  warmup(): void {
+    loadRpcClient().catch(() => {})
+  }
+
   async startWorkspace(
     cwd: string,
     env: Record<string, string>,
