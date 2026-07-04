@@ -251,7 +251,8 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorText};
     font-family: ${token.fontFamily};
     line-height: 1.6;
-    max-height: 160px;
+    min-height: 46px;
+    max-height: 200px;
     overflow-y: auto;
     padding: 0;
 
@@ -281,30 +282,6 @@ const useStyles = createStyles(({ token, css }) => ({
       cursor: not-allowed;
       opacity: 0.35;
     }
-  `,
-
-  inputHint: css`
-    text-align: center;
-    font-size: 12px;
-    color: ${token.colorTextTertiary};
-    margin-top: 8px;
-    user-select: none;
-    opacity: 0;
-    transition: opacity ${token.motionDurationMid};
-  `,
-
-  kbdKey: css`
-    display: inline-flex;
-    align-items: center;
-    padding: 0 6px;
-    border-radius: 4px;
-    border: 1px solid ${token.colorBorder};
-    background: ${token.colorFillTertiary};
-    font-size: 10px;
-    height: 18px;
-    font-family: ${token.fontFamily};
-    color: ${token.colorTextTertiary};
-    vertical-align: middle;
   `,
 
   modelChip: css`
@@ -660,10 +637,15 @@ export default function ChatPane({ workspace }: Props) {
     return [...byProvider.entries()].map(([provider, list]) => ({
       type: 'group' as const,
       label: provider,
-      children: list.map((m) => ({
-        key: `${m.provider}::${m.id}`,
-        label: m.id,
-      })),
+      // The registry appends models chronologically — the tail is the newest.
+      // Show only the latest few per provider, newest first.
+      children: list
+        .slice(-8)
+        .reverse()
+        .map((m) => ({
+          key: `${m.provider}::${m.id}`,
+          label: m.id,
+        })),
     }))
   }, [models])
 
@@ -855,8 +837,8 @@ export default function ChatPane({ workspace }: Props) {
                 !workspace
                   ? '请先打开一个工作区'
                   : sending
-                    ? 'Agent 运行中，输入将排队执行…'
-                    : '向 agent 描述任务…（可直接粘贴截图）'
+                    ? 'Agent 运行中，Enter 排队 · Ctrl+Enter 立即插话'
+                    : '向 agent 描述任务，/ 唤起命令，可粘贴截图'
               }
               rows={1}
               style={{ fieldSizing: 'content' } as React.CSSProperties}
@@ -887,23 +869,6 @@ export default function ChatPane({ workspace }: Props) {
               <SendHorizontal size={14} />
             </button>
           </div>
-          <p className={styles.inputHint} style={{ opacity: inputFocused ? 1 : 0 }}>
-            {sending ? (
-              <>
-                <span className={styles.kbdKey}>Enter</span> 排队
-                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
-                <span className={styles.kbdKey}>Ctrl+Enter</span> 立即插话
-                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
-                <span className={styles.kbdKey}>Shift+Enter</span> 换行
-              </>
-            ) : (
-              <>
-                <span className={styles.kbdKey}>Enter</span> 发送
-                <span style={{ margin: '0 6px', opacity: 0.4 }}>·</span>
-                <span className={styles.kbdKey}>Shift+Enter</span> 换行
-              </>
-            )}
-          </p>
         </div>
       </div>
     </div>
