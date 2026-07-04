@@ -109,6 +109,13 @@ function summarizeArgs(args: unknown): string {
 function stringifyResult(result: unknown): string {
   if (result == null) return ''
   if (typeof result === 'string') return result
+  // pi's toolResult.content is (TextContent | ImageContent)[] — pull the text.
+  if (Array.isArray(result)) {
+    const texts = result
+      .filter((b) => b && (b as { type?: string }).type === 'text')
+      .map((b) => (b as { text?: string }).text ?? '')
+    if (texts.length > 0) return texts.join('\n')
+  }
   try {
     return JSON.stringify(result, null, 2)
   } catch {

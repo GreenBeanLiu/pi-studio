@@ -9,6 +9,7 @@ import {
   FolderOpen,
   X,
   ChevronDown,
+  ChevronRight,
   Cpu,
   SlashSquare,
   Puzzle,
@@ -191,11 +192,35 @@ const useStyles = createStyles(({ token, css }) => ({
     white-space: normal;
   `,
 
+  thinkingToggle: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    padding: 2px 0;
+    cursor: pointer;
+    user-select: none;
+    width: fit-content;
+
+    &:hover {
+      color: ${token.colorTextSecondary};
+    }
+  `,
+
+  thinkingChevron: css`
+    transition: transform ${token.motionDurationFast};
+  `,
+
+  thinkingChevronOpen: css`
+    transform: rotate(90deg);
+  `,
+
   thinkingBlock: css`
     font-size: 12px;
     font-style: italic;
     color: ${token.colorTextTertiary};
-    padding: 4px 0;
+    padding: 4px 0 4px 15px;
     white-space: pre-wrap;
   `,
 
@@ -593,6 +618,34 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     return () => clearInterval(timer)
   }, [sending])
 
+  // Tool cards get their status from the live event map, but that map is only
+  // built from streaming events — reloaded history (getMessages on open /
+  // session switch / remount) has toolCall blocks with no live entry, so they
+  // would spin forever. pi persists each result as a `toolResult` message;
+  // seed the map from those so historical (and just-finished) tools resolve.
+  useEffect(() => {
+    setToolExecutions((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const m of messages) {
+        if ((m as { role: string }).role !== 'toolResult') continue
+        const tr = m as unknown as {
+          toolCallId: string
+          toolName: string
+          isError: boolean
+          content: unknown
+        }
+        const status: ToolExecutionState['status'] = tr.isError ? 'error' : 'done'
+        const existing = next[tr.toolCallId]
+        if (!existing || existing.status !== status || existing.result === undefined) {
+          next[tr.toolCallId] = { toolName: tr.toolName, args: existing?.args, status, result: tr.content }
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [messages])
+
   const runningTool = useMemo(() => {
     const running = Object.values(toolExecutions).filter((t) => t.status === 'running')
     return running.length > 0 ? running[running.length - 1].toolName : null
@@ -970,6 +1023,24 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 type StylesType = ReturnType<typeof useStyles>['styles']
 type CxType = ReturnType<typeof useStyles>['cx']
 
+// Thinking is collapsed by default — it's the model's scratch reasoning,
+// useful on demand but noise in the normal read.
+function ThinkingBlock({ text, styles, cx }: { text: string; styles: StylesType; cx: CxType }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <div className={styles.thinkingToggle} onClick={() => setOpen((v) => !v)}>
+        <ChevronRight
+          size={11}
+          className={cx(styles.thinkingChevron, open && styles.thinkingChevronOpen)}
+        />
+        思考过程
+      </div>
+      {open && <div className={styles.thinkingBlock}>{text}</div>}
+    </div>
+  )
+}
+
 // memo: during streaming only the message being updated changes reference,
 // so earlier bubbles skip re-rendering (and re-parsing their Markdown).
 const MessageBubble = memo(function MessageBubble({
@@ -1025,7 +1096,7 @@ const MessageBubble = memo(function MessageBubble({
               }
               if (block.type === 'thinking') {
                 return block.thinking ? (
-                  <div key={i} className={styles.thinkingBlock}>{block.thinking}</div>
+                  <ThinkingBlock key={i} text={block.thinking} styles={styles} cx={cx} />
                 ) : null
               }
               if (block.type === 'toolCall') {
