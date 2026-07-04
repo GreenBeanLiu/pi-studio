@@ -14,12 +14,15 @@ const sharedTokens = {
   borderRadiusLG: 12,
   borderRadiusSM: 6,
   borderRadiusXS: 4,
-  fontSize: 14,
-  fontSizeSM: 12,
-  fontSizeLG: 16,
-  lineHeight: 1.6,
+  fontSize: 15,
+  fontSizeSM: 13,
+  fontSizeLG: 17,
+  lineHeight: 1.7,
+  // Latin glyphs render in Geist; CJK falls through to Microsoft YaHei UI
+  // (native + crispest on Windows) — moved ahead of the PingFang/Harmony
+  // fallbacks so Chinese doesn't land on an inconsistent face.
   fontFamily:
-    '"Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    '"Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Roboto, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", "Helvetica Neue", Arial, sans-serif',
   fontFamilyCode:
     '"Geist Mono", "SF Mono", "Cascadia Code", Consolas, "Courier New", monospace',
   controlHeight: 36,

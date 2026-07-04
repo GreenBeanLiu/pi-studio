@@ -84,9 +84,9 @@ const useStyles = createStyles(({ token, css }) => ({
 
   messagesInner: css`
     width: 100%;
-    max-width: 780px;
+    max-width: 900px;
     margin: 0 auto;
-    padding: 16px 0 88px;
+    padding: 16px 24px 88px;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -171,8 +171,8 @@ const useStyles = createStyles(({ token, css }) => ({
 
   msgBubble: css`
     padding: 9px 13px;
-    font-size: 14px;
-    line-height: 1.6;
+    font-size: 15px;
+    line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-words;
     border-radius: ${token.borderRadiusLG}px;
@@ -264,7 +264,7 @@ const useStyles = createStyles(({ token, css }) => ({
 
   inputAreaInner: css`
     width: 100%;
-    max-width: 780px;
+    max-width: 900px;
     margin: 0 auto;
   `,
 
@@ -399,7 +399,6 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
   `,
 
   imageThumb: css`
@@ -923,22 +922,22 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               })}
             </div>
           )}
-          {images.length > 0 && (
-            <div className={styles.imageStrip}>
-              {images.map((img, i) => (
-                <div key={i} className={styles.imageThumb}>
-                  <img src={`data:${img.mimeType};base64,${img.data}`} alt="" />
-                  <button
-                    className={styles.imageRemove}
-                    onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    <X size={10} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
           <div className={cx(styles.inputBox, inputFocused && styles.inputBoxFocused)}>
+            {images.length > 0 && (
+              <div className={styles.imageStrip}>
+                {images.map((img, i) => (
+                  <div key={i} className={styles.imageThumb}>
+                    <img src={`data:${img.mimeType};base64,${img.data}`} alt="" />
+                    <button
+                      className={styles.imageRemove}
+                      onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={inputRef}
               value={input}
@@ -1089,7 +1088,7 @@ const MessageBubble = memo(function MessageBubble({
             {msg.content.map((block, i) => {
               if (block.type === 'text') {
                 return block.text ? (
-                  <Markdown key={i} variant="chat" fontSize={14} style={{ margin: 0 }} enableLatex={false} enableMermaid={false} enableImageGallery={false}>
+                  <Markdown key={i} variant="chat" fontSize={15} style={{ margin: 0 }} enableLatex={false} enableMermaid={false} enableImageGallery={false}>
                     {block.text}
                   </Markdown>
                 ) : null
