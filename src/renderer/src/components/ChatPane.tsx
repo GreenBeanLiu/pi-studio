@@ -747,11 +747,19 @@ export default function ChatPane({ workspace, starting = false }: Props) {
         <div
           className={styles.messages}
           ref={messagesRef}
+          // Wheel-up means "I want to read" — pause following immediately.
+          // The scroll-position check alone can't do this: one wheel notch
+          // (~100px) stays inside any reasonable near-bottom threshold, so
+          // the next stream tick would snap the view right back.
+          onWheel={(e) => {
+            if (e.deltaY < 0) setAutoFollow(false)
+          }}
           onScroll={(e) => {
             const el = e.currentTarget
             const dist = el.scrollHeight - el.scrollTop - el.clientHeight
             setShowScrollBtn(dist > 200)
-            setAutoFollow(dist < 120)
+            if (dist < 20) setAutoFollow(true) // truly back at the bottom
+            else if (dist > 150) setAutoFollow(false) // scrollbar drags etc.
           }}
         >
           <div className={styles.messagesInner}>
