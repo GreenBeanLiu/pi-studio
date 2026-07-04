@@ -9,6 +9,7 @@ type Settings = {
   apiKey: string
   model: string
   baseUrl: string
+  favoriteModels: string
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -121,7 +122,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '' })
+  const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '' })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -212,6 +213,19 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               value={settings.model}
               onChange={(e) => patch({ model: e.target.value })}
               placeholder={settings.provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o'}
+            />
+          </div>
+
+          <div className={styles.section}>
+            <span className={styles.label}>
+              模型切换列表
+              <span className={styles.labelHint}>逗号分隔，聊天页切换器只显示这些；留空则显示每家最新 8 个</span>
+            </span>
+            <Input.TextArea
+              value={settings.favoriteModels}
+              onChange={(e) => patch({ favoriteModels: e.target.value })}
+              placeholder="gpt-5.4, gpt-5.2, o4-mini"
+              autoSize={{ minRows: 2, maxRows: 4 }}
             />
           </div>
         </div>

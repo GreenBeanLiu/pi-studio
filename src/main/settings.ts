@@ -15,6 +15,8 @@ type SettingsData = {
   apiKey: string
   model: string
   baseUrl: string
+  /** Comma/newline-separated model ids to show in the switcher; empty = auto */
+  favoriteModels: string
   recentWorkspaces: Workspace[]
 }
 
@@ -23,6 +25,7 @@ const DEFAULTS: SettingsData = {
   apiKey: '',
   model: '',
   baseUrl: '',
+  favoriteModels: '',
   recentWorkspaces: [],
 }
 
@@ -65,6 +68,7 @@ export function loadSettings(): SettingsData {
     apiKey,
     model: (raw.model as string) ?? DEFAULTS.model,
     baseUrl: (raw.baseUrl as string) ?? DEFAULTS.baseUrl,
+    favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -72,7 +76,7 @@ export function loadSettings(): SettingsData {
 }
 
 export function saveSettings(
-  settings: Pick<SettingsData, 'provider' | 'apiKey' | 'model' | 'baseUrl'>,
+  settings: Pick<SettingsData, 'provider' | 'apiKey' | 'model' | 'baseUrl' | 'favoriteModels'>,
 ): void {
   const raw = readRaw()
 
@@ -87,6 +91,7 @@ export function saveSettings(
   raw.provider = settings.provider
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
+  raw.favoriteModels = settings.favoriteModels
 
   writeRaw(raw)
 }

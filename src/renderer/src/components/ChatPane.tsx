@@ -228,14 +228,20 @@ const useStyles = createStyles(({ token, css }) => ({
 
   inputBox: css`
     display: flex;
-    align-items: flex-end;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
     border-radius: 16px;
-    padding: 12px 14px;
+    padding: 12px 14px 8px;
     background: ${token.colorBgElevated};
     border: 1px solid ${token.colorBorder};
     box-shadow: ${token.boxShadowSecondary};
     transition: border-color ${token.motionDurationFast}, box-shadow ${token.motionDurationFast};
+  `,
+
+  inputControls: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
   `,
 
   inputBoxFocused: css`
@@ -292,7 +298,6 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 5px;
     font-size: 11px;
     padding: 3px 8px;
-    margin-bottom: 6px;
     border-radius: ${token.borderRadiusSM}px;
     border: 1px solid transparent;
     background: transparent;
@@ -428,6 +433,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [currentModel, setCurrentModel] = useState<{ provider: string; id: string } | null>(null)
   const [commands, setCommands] = useState<SlashCommand[]>([])
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([])
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
@@ -455,6 +461,17 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     api.pi.getMessages().then(setMessages).catch(() => {})
     api.pi.getAvailableModels().then(setModels).catch(() => {})
     api.pi.getCommands().then(setCommands).catch(() => {})
+    api.settings
+      .load()
+      .then((s) =>
+        setFavoriteModels(
+          (s.favoriteModels ?? '')
+            .split(/[,，\n]/)
+            .map((t) => t.trim())
+            .filter(Boolean),
+        ),
+      )
+      .catch(() => {})
     api.pi
       .getState()
       .then((s) => setCurrentModel(s?.model ? { provider: s.model.provider, id: s.model.id } : null))
@@ -593,10 +610,10 @@ export default function ChatPane({ workspace, starting = false }: Props) {
         selectSlash(slashMatches[Math.min(slashIndex, slashMatches.length - 1)])
         return
       }
-      if (e.key === 'Escape') {
-        setSlashDismissed(true)
-        return
-      }
+    }
+    if (slashFilter !== null && e.key === 'Escape') {
+      setSlashDismissed(true)
+      return
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -630,26 +647,33 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 
   // ── Model switcher ───────────────────────────────────────────────
   const modelMenuItems = useMemo(() => {
+    const favSet = new Set(favoriteModels.map((f) => f.toLowerCase()))
     const byProvider = new Map<string, ModelInfo[]>()
     for (const m of models) {
       const list = byProvider.get(m.provider) ?? []
       list.push(m)
       byProvider.set(m.provider, list)
     }
-    return [...byProvider.entries()].map(([provider, list]) => ({
-      type: 'group' as const,
-      label: provider,
-      // The registry appends models chronologically — the tail is the newest.
-      // Show only the latest few per provider, newest first.
-      children: list
-        .slice(-8)
-        .reverse()
-        .map((m) => ({
-          key: `${m.provider}::${m.id}`,
-          label: m.id,
-        })),
-    }))
-  }, [models])
+    // User-configured favorites win; otherwise the registry appends models
+    // chronologically, so the tail is the newest — show the latest few.
+    const anyFavoriteExists =
+      favSet.size > 0 && models.some((m) => favSet.has(m.id.toLowerCase()))
+    return [...byProvider.entries()]
+      .map(([provider, list]) => {
+        const shown = anyFavoriteExists
+          ? list.filter((m) => favSet.has(m.id.toLowerCase()))
+          : list.slice(-8).reverse()
+        return {
+          type: 'group' as const,
+          label: provider,
+          children: shown.map((m) => ({
+            key: `${m.provider}::${m.id}`,
+            label: m.id,
+          })),
+        }
+      })
+      .filter((g) => g.children.length > 0)
+  }, [models, favoriteModels])
 
   async function handleModelSelect({ key }: { key: string }) {
     const sep = key.indexOf('::')
@@ -772,6 +796,17 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 
       <div className={styles.inputArea}>
         <div className={styles.inputAreaInner}>
+          {slashFilter !== null && slashMatches.length === 0 && (
+            <div className={styles.slashPanel}>
+              <div className={styles.slashItem} style={{ cursor: 'default' }}>
+                <span className={styles.slashDesc}>
+                  {commands.length === 0
+                    ? '此工作区没有可用命令 — 把 skills / prompt 模板放进工作区的 .pi/ 目录或 pi 的配置目录后重新打开'
+                    : '没有匹配的命令'}
+                </span>
+              </div>
+            </div>
+          )}
           {slashMatches.length > 0 && (
             <div className={styles.slashPanel}>
               {slashMatches.map((c, i) => {
@@ -810,25 +845,6 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               ))}
             </div>
           )}
-          {workspace && (
-            <Dropdown
-              trigger={['click']}
-              placement="topLeft"
-              menu={{
-                items: modelMenuItems,
-                onClick: handleModelSelect,
-                selectedKeys: currentModel ? [`${currentModel.provider}::${currentModel.id}`] : [],
-                style: { maxHeight: 320, overflowY: 'auto' },
-              }}
-              disabled={models.length === 0}
-            >
-              <button className={styles.modelChip} title="切换模型">
-                <Cpu size={11} />
-                {currentModel ? currentModel.id : '默认模型'}
-                <ChevronDown size={11} />
-              </button>
-            </Dropdown>
-          )}
           <div className={cx(styles.inputBox, inputFocused && styles.inputBoxFocused)}>
             <textarea
               ref={inputRef}
@@ -855,29 +871,55 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               className={styles.inputTextarea}
               disabled={!workspace || starting}
             />
-            {sending && (
+            <div className={styles.inputControls}>
+              {workspace && (
+                <Dropdown
+                  trigger={['click']}
+                  placement="topLeft"
+                  menu={{
+                    items: modelMenuItems,
+                    onClick: handleModelSelect,
+                    selectedKeys: currentModel
+                      ? [`${currentModel.provider}::${currentModel.id}`]
+                      : [],
+                    style: { maxHeight: 320, overflowY: 'auto' },
+                  }}
+                  disabled={models.length === 0}
+                >
+                  <button className={styles.modelChip} title="切换模型">
+                    <Cpu size={11} />
+                    {currentModel ? currentModel.id : '默认模型'}
+                    <ChevronDown size={11} />
+                  </button>
+                </Dropdown>
+              )}
+              <div style={{ flex: 1 }} />
+              {sending && (
+                <button
+                  onClick={() => api.pi.abort()}
+                  className={styles.sendBtn}
+                  style={{ background: token.colorFill, color: token.colorTextSecondary }}
+                  title="停止"
+                >
+                  <Square size={12} fill="currentColor" />
+                </button>
+              )}
               <button
-                onClick={() => api.pi.abort()}
+                onClick={() => sendMessage('queue')}
+                disabled={(!input.trim() && images.length === 0) || !workspace}
                 className={styles.sendBtn}
-                style={{ background: token.colorFill, color: token.colorTextSecondary }}
-                title="停止"
+                title={sending ? '排队（跑完后执行）' : '发送'}
+                style={{
+                  background:
+                    input.trim() || images.length > 0
+                      ? token.colorPrimary
+                      : token.colorFillSecondary,
+                  color: input.trim() || images.length > 0 ? '#ffffff' : token.colorTextTertiary,
+                }}
               >
-                <Square size={12} fill="currentColor" />
+                <SendHorizontal size={14} />
               </button>
-            )}
-            <button
-              onClick={() => sendMessage('queue')}
-              disabled={(!input.trim() && images.length === 0) || !workspace}
-              className={styles.sendBtn}
-              title={sending ? '排队（跑完后执行）' : '发送'}
-              style={{
-                background:
-                  input.trim() || images.length > 0 ? token.colorPrimary : token.colorFillSecondary,
-                color: input.trim() || images.length > 0 ? '#ffffff' : token.colorTextTertiary,
-              }}
-            >
-              <SendHorizontal size={14} />
-            </button>
+            </div>
           </div>
         </div>
       </div>

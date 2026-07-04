@@ -38,7 +38,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:load', () => loadSettings())
   ipcMain.handle(
     'settings:save',
-    (_e, settings: { provider: PiProvider; apiKey: string; model: string; baseUrl: string }) => {
+    (
+      _e,
+      settings: {
+        provider: PiProvider
+        apiKey: string
+        model: string
+        baseUrl: string
+        favoriteModels: string
+      },
+    ) => {
       saveSettings(settings)
       return { ok: true }
     },

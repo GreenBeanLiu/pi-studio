@@ -28,9 +28,16 @@ declare global {
           apiKey: string
           model: string
           baseUrl: string
+          favoriteModels: string
           recentWorkspaces: Workspace[]
         }>
-        save: (s: { provider: PiProvider; apiKey: string; model: string; baseUrl: string }) => Promise<{ ok: boolean }>
+        save: (s: {
+          provider: PiProvider
+          apiKey: string
+          model: string
+          baseUrl: string
+          favoriteModels: string
+        }) => Promise<{ ok: boolean }>
       }
       workspace: {
         list: () => Promise<Workspace[]>
