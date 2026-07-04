@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Input, Segmented, Button } from 'antd'
-import { X, Eye, EyeOff, Bot, Globe, Info } from 'lucide-react'
+import { Input, Segmented, Button, Modal } from 'antd'
+import { Eye, EyeOff, Bot, Globe, Info } from 'lucide-react'
 import { api, type PiProvider } from '../lib/api'
 
 type Settings = {
@@ -22,67 +22,20 @@ const CATEGORIES: { key: Category; label: string; icon: typeof Bot }[] = [
 ]
 
 const useStyles = createStyles(({ token, css }) => ({
-  overlay: css`
-    position: fixed;
-    top: 0;
-    left: 64px;
-    right: 0;
-    bottom: 0;
-    z-index: 200;
+  main: css`
     display: flex;
-    flex-direction: column;
-    background: ${token.colorBgBase};
-    border-left: 1px solid ${token.colorBorderSecondary};
-    animation: slide-in-right 0.2s ease-out both;
-  `,
-
-  header: css`
-    height: 44px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
+    height: 440px;
+    margin: 0 -24px;
+    border-top: 1px solid ${token.colorBorderSecondary};
     border-bottom: 1px solid ${token.colorBorderSecondary};
   `,
 
-  headerTitle: css`
-    font-size: 14px;
-    font-weight: 600;
-    color: ${token.colorText};
-  `,
-
-  closeBtn: css`
-    width: 28px;
-    height: 28px;
-    border-radius: ${token.borderRadiusSM}px;
-    border: none;
-    background: transparent;
-    color: ${token.colorTextTertiary};
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    outline: none;
-
-    &:hover {
-      background: ${token.colorFill};
-      color: ${token.colorText};
-    }
-  `,
-
-  main: css`
-    flex: 1;
-    min-height: 0;
-    display: flex;
-  `,
-
   nav: css`
-    width: 168px;
+    width: 148px;
     flex-shrink: 0;
     border-right: 1px solid ${token.colorBorderSecondary};
     background: ${token.colorBgLayout};
-    padding: 16px 10px;
+    padding: 12px 8px;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -120,14 +73,13 @@ const useStyles = createStyles(({ token, css }) => ({
     flex: 1;
     min-width: 0;
     overflow-y: auto;
-    padding: 28px 32px;
+    padding: 20px 24px;
   `,
 
   form: css`
-    max-width: 480px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 18px;
   `,
 
   section: css`
@@ -143,6 +95,7 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
   `,
 
   labelHint: css`
@@ -163,28 +116,10 @@ const useStyles = createStyles(({ token, css }) => ({
       color: ${token.colorText};
     }
   `,
-
-  footer: css`
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 14px 24px;
-    border-top: 1px solid ${token.colorBorderSecondary};
-  `,
 }))
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const { styles } = useStyles()
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
 
   const [category, setCategory] = useState<Category>('model')
   const [settings, setSettings] = useState<Settings>({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '' })
@@ -209,14 +144,21 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className={styles.overlay}>
-      <div className={styles.header}>
-        <span className={styles.headerTitle}>设置</span>
-        <button className={styles.closeBtn} onClick={onClose}>
-          <X size={14} />
-        </button>
-      </div>
-
+    <Modal
+      open
+      onCancel={onClose}
+      title="设置"
+      width={680}
+      centered
+      footer={[
+        <Button key="cancel" onClick={onClose}>
+          取消
+        </Button>,
+        <Button key="save" type="primary" loading={saving} onClick={handleSave}>
+          保存设置
+        </Button>,
+      ]}
+    >
       <div className={styles.main}>
         <div className={styles.nav}>
           {CATEGORIES.map(({ key, label, icon: Icon }) => (
@@ -297,7 +239,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               <div className={styles.section}>
                 <span className={styles.label}>
                   模型切换列表
-                  <span className={styles.labelHint}>逗号分隔，聊天页切换器只显示这些；留空则显示每家最新 8 个</span>
+                  <span className={styles.labelHint}>逗号分隔，聊天页只显示这些；留空显示每家最新 8 个</span>
                 </span>
                 <Input.TextArea
                   value={settings.favoriteModels}
@@ -329,32 +271,23 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           )}
 
           {category === 'about' && (
-            <div className={styles.form}>
-              <div>
-                <div className={styles.aboutRow}>
-                  <span>版本</span>
-                  <span>v{version || '…'}</span>
-                </div>
-                <div className={styles.aboutRow}>
-                  <span>自动更新</span>
-                  <span>启动时及每 4 小时检查，后台静默安装</span>
-                </div>
-                <div className={styles.aboutRow}>
-                  <span>项目</span>
-                  <span>GreenBeanLiu/pi-studio</span>
-                </div>
+            <div>
+              <div className={styles.aboutRow}>
+                <span>版本</span>
+                <span>v{version || '…'}</span>
+              </div>
+              <div className={styles.aboutRow}>
+                <span>自动更新</span>
+                <span>启动时及每 4 小时检查，后台静默安装</span>
+              </div>
+              <div className={styles.aboutRow}>
+                <span>项目</span>
+                <span>GreenBeanLiu/pi-studio</span>
               </div>
             </div>
           )}
         </div>
       </div>
-
-      <div className={styles.footer}>
-        <Button onClick={onClose}>取消</Button>
-        <Button type="primary" loading={saving} onClick={handleSave}>
-          保存设置
-        </Button>
-      </div>
-    </div>
+    </Modal>
   )
 }
