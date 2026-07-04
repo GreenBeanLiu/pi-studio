@@ -35,7 +35,11 @@ function setupAutoUpdater(): void {
   })
 
   ipcMain.on('update:install', () => {
-    autoUpdater.quitAndInstall()
+    // isSilent=true: run the NSIS installer with /S so updates install
+    // in-place without re-showing the assisted-install wizard
+    // (oneClick:false only makes sense for FIRST installs).
+    // isForceRunAfter=true: relaunch the app when done.
+    autoUpdater.quitAndInstall(true, true)
   })
 
   const check = (): void => {
