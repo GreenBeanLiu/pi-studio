@@ -1,13 +1,27 @@
-import { memo, useEffect, useRef, useState, useCallback } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
+import { Dropdown } from 'antd'
 import { Markdown } from '@lobehub/ui'
-import { SendHorizontal, ArrowDown, Square, FolderOpen, X } from 'lucide-react'
+import {
+  SendHorizontal,
+  ArrowDown,
+  Square,
+  FolderOpen,
+  X,
+  ChevronDown,
+  Cpu,
+  SlashSquare,
+  Puzzle,
+  FileText,
+} from 'lucide-react'
 import {
   api,
   type Workspace,
   type AgentEvent,
   type AgentMessage,
   type ImageContent,
+  type ModelInfo,
+  type SlashCommand,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -293,6 +307,68 @@ const useStyles = createStyles(({ token, css }) => ({
     vertical-align: middle;
   `,
 
+  modelChip: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    padding: 3px 8px;
+    margin-bottom: 6px;
+    border-radius: ${token.borderRadiusSM}px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: ${token.colorTextTertiary};
+    cursor: pointer;
+    outline: none;
+    font-family: ${token.fontFamily};
+    transition: all ${token.motionDurationFast};
+
+    &:hover {
+      border-color: ${token.colorBorderSecondary};
+      background: ${token.colorFillTertiary};
+      color: ${token.colorTextSecondary};
+    }
+  `,
+
+  slashPanel: css`
+    margin-bottom: 8px;
+    border-radius: ${token.borderRadius}px;
+    border: 1px solid ${token.colorBorder};
+    background: ${token.colorBgElevated};
+    box-shadow: ${token.boxShadowSecondary};
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 4px;
+  `,
+
+  slashItem: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: ${token.borderRadiusSM}px;
+    cursor: pointer;
+    font-size: 13px;
+    color: ${token.colorText};
+  `,
+
+  slashItemActive: css`
+    background: ${token.colorFillSecondary};
+  `,
+
+  slashName: css`
+    font-weight: 500;
+    flex-shrink: 0;
+  `,
+
+  slashDesc: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  `,
+
   imageStrip: css`
     display: flex;
     gap: 8px;
@@ -370,6 +446,11 @@ export default function ChatPane({ workspace }: Props) {
   const [input, setInput] = useState('')
   const [images, setImages] = useState<ImageContent[]>([])
   const [sending, setSending] = useState(false)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [currentModel, setCurrentModel] = useState<{ provider: string; id: string } | null>(null)
+  const [commands, setCommands] = useState<SlashCommand[]>([])
+  const [slashIndex, setSlashIndex] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -393,6 +474,12 @@ export default function ChatPane({ workspace }: Props) {
       return
     }
     api.pi.getMessages().then(setMessages).catch(() => {})
+    api.pi.getAvailableModels().then(setModels).catch(() => {})
+    api.pi.getCommands().then(setCommands).catch(() => {})
+    api.pi
+      .getState()
+      .then((s) => setCurrentModel(s?.model ? { provider: s.model.provider, id: s.model.id } : null))
+      .catch(() => {})
   }, [workspace?.path])
 
   // For the completion notification — the event subscription effect runs once,
@@ -510,9 +597,85 @@ export default function ChatPane({ workspace }: Props) {
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Slash palette captures navigation keys while open
+    if (slashMatches.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashIndex((i) => (i + 1) % slashMatches.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length)
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        selectSlash(slashMatches[Math.min(slashIndex, slashMatches.length - 1)])
+        return
+      }
+      if (e.key === 'Escape') {
+        setSlashDismissed(true)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       sendMessage(e.ctrlKey || e.metaKey ? 'steer' : 'queue')
+    }
+  }
+
+  // ── Slash command palette ────────────────────────────────────────
+  // Visible while the first token is being typed (`/…` with no space yet).
+  const slashFilter =
+    workspace && /^\/\S*$/.test(input) && !slashDismissed ? input.slice(1).toLowerCase() : null
+  const slashMatches = useMemo(() => {
+    if (slashFilter === null || commands.length === 0) return []
+    return commands
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(slashFilter) ||
+          (c.description ?? '').toLowerCase().includes(slashFilter),
+      )
+      .slice(0, 12)
+  }, [slashFilter, commands])
+
+  useEffect(() => {
+    setSlashIndex(0)
+  }, [slashFilter])
+
+  function selectSlash(cmd: SlashCommand) {
+    setInput(`/${cmd.name} `)
+    inputRef.current?.focus()
+  }
+
+  // ── Model switcher ───────────────────────────────────────────────
+  const modelMenuItems = useMemo(() => {
+    const byProvider = new Map<string, ModelInfo[]>()
+    for (const m of models) {
+      const list = byProvider.get(m.provider) ?? []
+      list.push(m)
+      byProvider.set(m.provider, list)
+    }
+    return [...byProvider.entries()].map(([provider, list]) => ({
+      type: 'group' as const,
+      label: provider,
+      children: list.map((m) => ({
+        key: `${m.provider}::${m.id}`,
+        label: m.id,
+      })),
+    }))
+  }, [models])
+
+  async function handleModelSelect({ key }: { key: string }) {
+    const sep = key.indexOf('::')
+    const provider = key.slice(0, sep)
+    const id = key.slice(sep + 2)
+    try {
+      const result = await api.pi.setModel(provider, id)
+      setCurrentModel(result)
+    } catch (err) {
+      setError((err as Error).message ?? '切换模型失败')
     }
   }
 
@@ -619,6 +782,29 @@ export default function ChatPane({ workspace }: Props) {
 
       <div className={styles.inputArea}>
         <div className={styles.inputAreaInner}>
+          {slashMatches.length > 0 && (
+            <div className={styles.slashPanel}>
+              {slashMatches.map((c, i) => {
+                const SourceIcon =
+                  c.source === 'extension' ? Puzzle : c.source === 'prompt' ? FileText : SlashSquare
+                return (
+                  <div
+                    key={`${c.source}:${c.name}`}
+                    className={cx(styles.slashItem, i === slashIndex && styles.slashItemActive)}
+                    onMouseEnter={() => setSlashIndex(i)}
+                    onMouseDown={(e) => {
+                      e.preventDefault() // keep textarea focus
+                      selectSlash(c)
+                    }}
+                  >
+                    <SourceIcon size={13} color={token.colorTextTertiary} />
+                    <span className={styles.slashName}>/{c.name}</span>
+                    {c.description && <span className={styles.slashDesc}>{c.description}</span>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           {images.length > 0 && (
             <div className={styles.imageStrip}>
               {images.map((img, i) => (
@@ -634,11 +820,33 @@ export default function ChatPane({ workspace }: Props) {
               ))}
             </div>
           )}
+          {workspace && (
+            <Dropdown
+              trigger={['click']}
+              placement="topLeft"
+              menu={{
+                items: modelMenuItems,
+                onClick: handleModelSelect,
+                selectedKeys: currentModel ? [`${currentModel.provider}::${currentModel.id}`] : [],
+                style: { maxHeight: 320, overflowY: 'auto' },
+              }}
+              disabled={models.length === 0}
+            >
+              <button className={styles.modelChip} title="切换模型">
+                <Cpu size={11} />
+                {currentModel ? currentModel.id : '默认模型'}
+                <ChevronDown size={11} />
+              </button>
+            </Dropdown>
+          )}
           <div className={cx(styles.inputBox, inputFocused && styles.inputBoxFocused)}>
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                setSlashDismissed(false)
+              }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               onFocus={() => setInputFocused(true)}

@@ -11,7 +11,13 @@
     <script>
       if (!window.api) {
         window.api = {
-          win: { minimize: () => {}, maximize: () => {}, close: () => {} },
+          win: { minimize: () => {}, maximize: () => {}, close: () => {}, flash: () => {} },
+          sessions: {
+            list: () => Promise.resolve([]),
+            switch: () => Promise.resolve({ cancelled: false }),
+            rename: () => Promise.resolve(),
+            delete: () => Promise.resolve({ ok: true }),
+          },
           app: { version: () => Promise.resolve('0.1.0-preview') },
           settings: {
             load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', recentWorkspaces: [] }),
@@ -33,6 +39,7 @@
             getState: () => Promise.resolve(null),
             getMessages: () => Promise.resolve([]),
             getAvailableModels: () => Promise.resolve([]),
+            getCommands: () => Promise.resolve([]),
             setModel: () => Promise.resolve(),
             onEvent: () => () => {},
           },

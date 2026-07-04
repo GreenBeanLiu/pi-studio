@@ -127,6 +127,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
+  ipcMain.handle('pi:getCommands', () => piClientManager.getCommands())
   ipcMain.handle('pi:setModel', (_e, provider: string, modelId: string) =>
     piClientManager.setModel(provider, modelId),
   )

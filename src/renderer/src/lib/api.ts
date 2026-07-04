@@ -54,6 +54,7 @@ declare global {
         getState: () => Promise<RpcSessionState>
         getMessages: () => Promise<AgentMessage[]>
         getAvailableModels: () => Promise<ModelInfo[]>
+        getCommands: () => Promise<SlashCommand[]>
         setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
         onEvent: (cb: (event: AgentEvent) => void) => () => void
       }
@@ -92,6 +93,13 @@ export type ModelInfo = {
   id: string
   contextWindow: number
   reasoning: boolean
+}
+
+export type SlashCommand = {
+  /** Command name (without leading slash) */
+  name: string
+  description?: string
+  source: 'extension' | 'prompt' | 'skill'
 }
 
 export type SessionInfo = {

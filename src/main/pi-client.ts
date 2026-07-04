@@ -127,6 +127,10 @@ class PiClientManager {
     return this.require().switchSession(sessionPath)
   }
 
+  getCommands(): ReturnType<RpcClient['getCommands']> {
+    return this.require().getCommands()
+  }
+
   setSessionName(name: string): ReturnType<RpcClient['setSessionName']> {
     return this.require().setSessionName(name)
   }

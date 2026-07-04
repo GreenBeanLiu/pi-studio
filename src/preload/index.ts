@@ -45,6 +45,7 @@ const api = {
     getState: () => ipcRenderer.invoke('pi:getState'),
     getMessages: () => ipcRenderer.invoke('pi:getMessages'),
     getAvailableModels: () => ipcRenderer.invoke('pi:getAvailableModels'),
+    getCommands: () => ipcRenderer.invoke('pi:getCommands'),
     setModel: (provider: string, modelId: string) =>
       ipcRenderer.invoke('pi:setModel', provider, modelId),
     onEvent: (cb: (event: unknown) => void) => {
