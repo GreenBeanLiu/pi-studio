@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
-import { Dropdown, Spin } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -10,8 +10,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  Cpu,
-  Brain,
+  SlidersHorizontal,
+  Check,
   SlashSquare,
   Puzzle,
   FileText,
@@ -25,6 +25,7 @@ import {
   type ModelInfo,
   type SlashCommand,
   type ThinkingLevel,
+  type QueueMode,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -358,6 +359,53 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  paramLabel: css`
+    font-size: 11px;
+    color: ${token.colorTextTertiary};
+    margin-bottom: 5px;
+    user-select: none;
+  `,
+
+  paramHint: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    padding: 4px 0;
+  `,
+
+  modelList: css`
+    max-height: 168px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  `,
+
+  modelRow: css`
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: ${token.borderRadiusSM}px;
+    border: none;
+    background: transparent;
+    color: ${token.colorText};
+    font-size: 12px;
+    font-family: ${token.fontFamilyCode};
+    cursor: pointer;
+    outline: none;
+    text-align: left;
+    width: 100%;
+
+    &:hover {
+      background: ${token.colorFillTertiary};
+    }
+  `,
+
+  modelRowActive: css`
+    background: ${token.colorFillSecondary};
+    color: ${token.colorPrimary};
+  `,
+
   slashPanel: css`
     margin-bottom: 8px;
     border-radius: ${token.borderRadius}px;
@@ -476,6 +524,10 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [currentModel, setCurrentModel] = useState<{ provider: string; id: string } | null>(null)
   const [thinking, setThinking] = useState<ThinkingLevel>('off')
+  const [steeringMode, setSteeringMode] = useState<QueueMode>('all')
+  const [followUpMode, setFollowUpMode] = useState<QueueMode>('all')
+  const [autoCompaction, setAutoCompaction] = useState(true)
+  const [compacting, setCompacting] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [favoriteModels, setFavoriteModels] = useState<string[]>([])
   const [slashIndex, setSlashIndex] = useState(0)
@@ -522,8 +574,12 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     api.pi
       .getState()
       .then((s) => {
-        setCurrentModel(s?.model ? { provider: s.model.provider, id: s.model.id } : null)
-        if (s?.thinkingLevel) setThinking(s.thinkingLevel as ThinkingLevel)
+        if (!s) return
+        setCurrentModel(s.model ? { provider: s.model.provider, id: s.model.id } : null)
+        if (s.thinkingLevel) setThinking(s.thinkingLevel as ThinkingLevel)
+        if (s.steeringMode) setSteeringMode(s.steeringMode)
+        if (s.followUpMode) setFollowUpMode(s.followUpMode)
+        if (typeof s.autoCompactionEnabled === 'boolean') setAutoCompaction(s.autoCompactionEnabled)
       })
       .catch(() => {})
   }, [workspace?.path])
@@ -766,18 +822,6 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       .filter((g) => g.children.length > 0)
   }, [models, favoriteModels])
 
-  async function handleModelSelect({ key }: { key: string }) {
-    const sep = key.indexOf('::')
-    const provider = key.slice(0, sep)
-    const id = key.slice(sep + 2)
-    try {
-      const result = await api.pi.setModel(provider, id)
-      setCurrentModel(result)
-    } catch (err) {
-      setError((err as Error).message ?? '切换模型失败')
-    }
-  }
-
   // ── Thinking level ───────────────────────────────────────────────
   const THINKING_LEVELS: { key: ThinkingLevel; label: string }[] = [
     { key: 'off', label: '关闭' },
@@ -789,8 +833,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   ]
   const thinkingLabel = THINKING_LEVELS.find((t) => t.key === thinking)?.label ?? '关闭'
 
-  async function handleThinkingSelect({ key }: { key: string }) {
-    const level = key as ThinkingLevel
+  async function handleThinkingSelect(level: ThinkingLevel) {
     try {
       await api.pi.setThinkingLevel(level)
       setThinking(level)
@@ -798,6 +841,118 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       setError((err as Error).message ?? '切换思考深度失败')
     }
   }
+
+  // Flat model list for the params panel (favorites, else newest-8 per provider)
+  const modelList = useMemo(
+    () => modelMenuItems.flatMap((g) => g.children.map((c) => ({ key: c.key, label: c.label }))),
+    [modelMenuItems],
+  )
+
+  async function pickModel(key: string) {
+    const sep = key.indexOf('::')
+    try {
+      const result = await api.pi.setModel(key.slice(0, sep), key.slice(sep + 2))
+      setCurrentModel(result)
+    } catch (err) {
+      setError((err as Error).message ?? '切换模型失败')
+    }
+  }
+
+  async function handleSteering(mode: QueueMode) {
+    setSteeringMode(mode)
+    api.pi.setSteeringMode(mode).catch(() => {})
+  }
+  async function handleFollowUp(mode: QueueMode) {
+    setFollowUpMode(mode)
+    api.pi.setFollowUpMode(mode).catch(() => {})
+  }
+  async function handleAutoCompaction(enabled: boolean) {
+    setAutoCompaction(enabled)
+    api.pi.setAutoCompaction(enabled).catch(() => {})
+  }
+  async function handleCompact() {
+    setCompacting(true)
+    try {
+      await api.pi.compact()
+    } catch (err) {
+      setError((err as Error).message ?? '压缩失败')
+    } finally {
+      setCompacting(false)
+    }
+  }
+
+  const paramsPanel = (
+    <div style={{ width: 260, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div>
+        <div className={styles.paramLabel}>模型</div>
+        <div className={styles.modelList}>
+          {modelList.length === 0 && <div className={styles.paramHint}>暂无可选模型</div>}
+          {modelList.map((m) => {
+            const active = currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
+            return (
+              <button
+                key={m.key}
+                className={cx(styles.modelRow, active && styles.modelRowActive)}
+                onClick={() => pickModel(m.key)}
+              >
+                {active && <Check size={12} />}
+                <span style={{ marginLeft: active ? 0 : 18 }}>{m.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div className={styles.paramLabel}>思考深度</div>
+        <Segmented
+          size="small"
+          block
+          value={thinking}
+          onChange={(v) => handleThinkingSelect(v as ThinkingLevel)}
+          options={THINKING_LEVELS.map((t) => ({ label: t.label, value: t.key }))}
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div className={styles.paramLabel}>插话模式</div>
+          <Segmented
+            size="small"
+            block
+            value={steeringMode}
+            onChange={(v) => handleSteering(v as QueueMode)}
+            options={[
+              { label: '全部', value: 'all' },
+              { label: '逐条', value: 'one-at-a-time' },
+            ]}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div className={styles.paramLabel}>排队模式</div>
+          <Segmented
+            size="small"
+            block
+            value={followUpMode}
+            onChange={(v) => handleFollowUp(v as QueueMode)}
+            options={[
+              { label: '全部', value: 'all' },
+              { label: '逐条', value: 'one-at-a-time' },
+            ]}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span className={styles.paramLabel} style={{ marginBottom: 0 }}>自动压缩上下文</span>
+        <Switch size="small" checked={autoCompaction} onChange={handleAutoCompaction} />
+      </div>
+
+      <Button size="small" block loading={compacting} onClick={handleCompact}>
+        立即压缩上下文
+      </Button>
+    </div>
+  )
 
   function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const items = Array.from(e.clipboardData?.items ?? [])
@@ -992,42 +1147,20 @@ export default function ChatPane({ workspace, starting = false }: Props) {
             />
             <div className={styles.inputControls}>
               {workspace && (
-                <Dropdown
-                  trigger={['click']}
+                <Popover
+                  trigger={['hover', 'click']}
                   placement="topLeft"
-                  menu={{
-                    items: modelMenuItems,
-                    onClick: handleModelSelect,
-                    selectedKeys: currentModel
-                      ? [`${currentModel.provider}::${currentModel.id}`]
-                      : [],
-                    style: { maxHeight: 320, overflowY: 'auto' },
-                  }}
-                  disabled={models.length === 0}
+                  mouseEnterDelay={0.15}
+                  mouseLeaveDelay={0.25}
+                  content={paramsPanel}
                 >
-                  <button className={styles.modelChip} title="切换模型">
-                    <Cpu size={11} />
+                  <button className={styles.modelChip} title="模型与参数">
+                    <SlidersHorizontal size={11} />
                     {currentModel ? currentModel.id : '默认模型'}
+                    <span style={{ opacity: 0.6 }}>· 思考{thinkingLabel}</span>
                     <ChevronDown size={11} />
                   </button>
-                </Dropdown>
-              )}
-              {workspace && (
-                <Dropdown
-                  trigger={['click']}
-                  placement="topLeft"
-                  menu={{
-                    items: THINKING_LEVELS.map((t) => ({ key: t.key, label: t.label })),
-                    onClick: handleThinkingSelect,
-                    selectedKeys: [thinking],
-                  }}
-                >
-                  <button className={styles.modelChip} title="思考深度">
-                    <Brain size={11} />
-                    思考·{thinkingLabel}
-                    <ChevronDown size={11} />
-                  </button>
-                </Dropdown>
+                </Popover>
               )}
               <div style={{ flex: 1 }} />
               {sending && (

@@ -149,4 +149,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:setThinkingLevel', (_e, level: string) =>
     piClientManager.setThinkingLevel(level as never),
   )
+  ipcMain.handle('pi:setSteeringMode', (_e, mode: 'all' | 'one-at-a-time') =>
+    piClientManager.setSteeringMode(mode),
+  )
+  ipcMain.handle('pi:setFollowUpMode', (_e, mode: 'all' | 'one-at-a-time') =>
+    piClientManager.setFollowUpMode(mode),
+  )
+  ipcMain.handle('pi:setAutoCompaction', (_e, enabled: boolean) =>
+    piClientManager.setAutoCompaction(enabled),
+  )
+  ipcMain.handle('pi:compact', () => piClientManager.compact())
 }

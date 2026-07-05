@@ -49,6 +49,10 @@ const api = {
     setModel: (provider: string, modelId: string) =>
       ipcRenderer.invoke('pi:setModel', provider, modelId),
     setThinkingLevel: (level: string) => ipcRenderer.invoke('pi:setThinkingLevel', level),
+    setSteeringMode: (mode: string) => ipcRenderer.invoke('pi:setSteeringMode', mode),
+    setFollowUpMode: (mode: string) => ipcRenderer.invoke('pi:setFollowUpMode', mode),
+    setAutoCompaction: (enabled: boolean) => ipcRenderer.invoke('pi:setAutoCompaction', enabled),
+    compact: () => ipcRenderer.invoke('pi:compact'),
     onEvent: (cb: (event: unknown) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
       ipcRenderer.on('pi:event', handler)

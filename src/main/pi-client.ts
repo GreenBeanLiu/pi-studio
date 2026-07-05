@@ -133,6 +133,22 @@ class PiClientManager {
     return this.require().setThinkingLevel(level)
   }
 
+  setSteeringMode(mode: Parameters<RpcClient['setSteeringMode']>[0]): ReturnType<RpcClient['setSteeringMode']> {
+    return this.require().setSteeringMode(mode)
+  }
+
+  setFollowUpMode(mode: Parameters<RpcClient['setFollowUpMode']>[0]): ReturnType<RpcClient['setFollowUpMode']> {
+    return this.require().setFollowUpMode(mode)
+  }
+
+  setAutoCompaction(enabled: boolean): ReturnType<RpcClient['setAutoCompaction']> {
+    return this.require().setAutoCompaction(enabled)
+  }
+
+  compact(): ReturnType<RpcClient['compact']> {
+    return this.require().compact()
+  }
+
   switchSession(sessionPath: string): ReturnType<RpcClient['switchSession']> {
     return this.require().switchSession(sessionPath)
   }

@@ -68,6 +68,10 @@ declare global {
         getCommands: () => Promise<SlashCommand[]>
         setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
         setThinkingLevel: (level: ThinkingLevel) => Promise<void>
+        setSteeringMode: (mode: QueueMode) => Promise<void>
+        setFollowUpMode: (mode: QueueMode) => Promise<void>
+        setAutoCompaction: (enabled: boolean) => Promise<void>
+        compact: () => Promise<unknown>
         onEvent: (cb: (event: AgentEvent) => void) => () => void
       }
       update: {
@@ -88,11 +92,16 @@ export type Workspace = {
   lastOpenedAt: string
 }
 
+export type QueueMode = 'all' | 'one-at-a-time'
+
 export type RpcSessionState = {
   model?: { provider: string; id: string }
   thinkingLevel: string
   isStreaming: boolean
   isCompacting: boolean
+  steeringMode: QueueMode
+  followUpMode: QueueMode
+  autoCompactionEnabled: boolean
   sessionFile?: string
   sessionId: string
   sessionName?: string
