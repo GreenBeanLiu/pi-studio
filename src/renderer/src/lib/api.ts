@@ -31,6 +31,12 @@ declare global {
           favoriteModels: string
           tavilyApiKey: string
           heliconeApiKey: string
+          feishuAppId: string
+          feishuAppSecret: string
+          feishuApprovalCode: string
+          feishuUserId: string
+          feishuFormJson: string
+          feishuNodeApproversJson: string
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -41,7 +47,18 @@ declare global {
           favoriteModels: string
           tavilyApiKey: string
           heliconeApiKey: string
+          feishuAppId: string
+          feishuAppSecret: string
+          feishuApprovalCode: string
+          feishuUserId: string
+          feishuFormJson: string
+          feishuNodeApproversJson: string
         }) => Promise<{ ok: boolean }>
+      }
+      feishu: {
+        submitApprovalDemo: (
+          input: FeishuApprovalDemoInput,
+        ) => Promise<FeishuApprovalDemoResult>
       }
       workspace: {
         list: () => Promise<Workspace[]>
@@ -85,6 +102,29 @@ declare global {
 }
 
 export type PiProvider = 'anthropic' | 'openai'
+
+export type FeishuApprovalDemoInput = {
+  appId: string
+  appSecret: string
+  approvalCode: string
+  userId: string
+  formJson: string
+  nodeApproversJson?: string
+  dryRun?: boolean
+}
+
+export type FeishuApprovalDemoResult = {
+  ok: true
+  dryRun: boolean
+  payload: {
+    approval_code: string
+    user_id: string
+    form: string
+    uuid: string
+    node_approver_user_id_list?: unknown
+  }
+  response?: unknown
+}
 
 export type Workspace = {
   path: string

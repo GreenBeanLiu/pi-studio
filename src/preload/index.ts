@@ -19,6 +19,11 @@ const api = {
     save: (s: unknown) => ipcRenderer.invoke('settings:save', s),
   },
 
+  feishu: {
+    submitApprovalDemo: (input: unknown) =>
+      ipcRenderer.invoke('feishu:submitApprovalDemo', input),
+  },
+
   workspace: {
     list: () => ipcRenderer.invoke('workspace:list'),
     pickDirectory: () => ipcRenderer.invoke('workspace:pickDirectory'),
