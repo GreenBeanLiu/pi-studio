@@ -20,10 +20,11 @@
           },
           app: { version: () => Promise.resolve('0.1.0-preview') },
           settings: {
-            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', feishuAppId: '', feishuAppSecret: '', feishuApprovalCode: '', feishuUserId: '', feishuFormJson: '[{\"id\":\"reason\",\"type\":\"input\",\"value\":\"pi-studio 飞书审批 Demo\"}]', feishuNodeApproversJson: '', recentWorkspaces: [] }),
+            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', feishuApprovalCode: '', feishuUserId: '', feishuFormJson: '[{\"id\":\"reason\",\"type\":\"input\",\"value\":\"pi-studio 飞书审批 Demo\"}]', feishuNodeApproversJson: '', recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),
           },
           feishu: {
+            getConfigStatus: () => Promise.resolve({ appIdConfigured: true, appSecretConfigured: true, envFilePath: 'preview/.env' }),
             submitApprovalDemo: (input) => Promise.resolve({
               ok: true,
               dryRun: !!input.dryRun,

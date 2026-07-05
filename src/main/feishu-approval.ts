@@ -1,4 +1,8 @@
+import { backendEnvPath } from './app-env'
+
 const FEISHU_API_BASE = 'https://open.feishu.cn/open-apis'
+const FEISHU_APP_ID_ENV = 'FEISHU_APP_ID'
+const FEISHU_APP_SECRET_ENV = 'FEISHU_APP_SECRET'
 
 type FeishuTenantTokenResponse = {
   code: number
@@ -14,13 +18,17 @@ type FeishuApiResponse<T> = {
 }
 
 export type FeishuApprovalDemoInput = {
-  appId: string
-  appSecret: string
   approvalCode: string
   userId: string
   formJson: string
   nodeApproversJson?: string
   dryRun?: boolean
+}
+
+export type FeishuConfigStatus = {
+  appIdConfigured: boolean
+  appSecretConfigured: boolean
+  envFilePath: string
 }
 
 export type FeishuApprovalDemoPayload = {
@@ -104,6 +112,27 @@ async function getTenantAccessToken(appId: string, appSecret: string): Promise<s
   return data.tenant_access_token
 }
 
+function getFeishuAppConfig(): { appId: string; appSecret: string } {
+  const appId = process.env[FEISHU_APP_ID_ENV]?.trim() ?? ''
+  const appSecret = process.env[FEISHU_APP_SECRET_ENV]?.trim() ?? ''
+
+  if (!appId || !appSecret) {
+    throw new Error(
+      `飞书 App 配置缺失，请在后台 env 配置 ${FEISHU_APP_ID_ENV} 和 ${FEISHU_APP_SECRET_ENV}。本机 env 文件：${backendEnvPath()}`,
+    )
+  }
+
+  return { appId, appSecret }
+}
+
+export function getFeishuConfigStatus(): FeishuConfigStatus {
+  return {
+    appIdConfigured: !!process.env[FEISHU_APP_ID_ENV]?.trim(),
+    appSecretConfigured: !!process.env[FEISHU_APP_SECRET_ENV]?.trim(),
+    envFilePath: backendEnvPath(),
+  }
+}
+
 export async function submitFeishuApprovalDemo(
   input: FeishuApprovalDemoInput,
 ): Promise<FeishuApprovalDemoResult> {
@@ -113,7 +142,8 @@ export async function submitFeishuApprovalDemo(
     return { ok: true, dryRun: true, payload }
   }
 
-  const token = await getTenantAccessToken(input.appId, input.appSecret)
+  const { appId, appSecret } = getFeishuAppConfig()
+  const token = await getTenantAccessToken(appId, appSecret)
   const response = await fetch(`${FEISHU_API_BASE}/approval/v4/instances?user_id_type=user_id`, {
     method: 'POST',
     headers: {

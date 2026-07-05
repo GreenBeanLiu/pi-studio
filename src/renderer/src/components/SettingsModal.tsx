@@ -12,8 +12,6 @@ type Settings = {
   favoriteModels: string
   tavilyApiKey: string
   heliconeApiKey: string
-  feishuAppId: string
-  feishuAppSecret: string
   feishuApprovalCode: string
   feishuUserId: string
   feishuFormJson: string
@@ -124,34 +122,6 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
-  row: css`
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  `,
-
-  buttonRow: css`
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-  `,
-
-  resultBox: css`
-    margin: 0;
-    padding: 10px 12px;
-    border-radius: ${token.borderRadius}px;
-    border: 1px solid ${token.colorBorderSecondary};
-    background: ${token.colorFillTertiary};
-    color: ${token.colorTextSecondary};
-    font-size: 12px;
-    line-height: 1.55;
-    overflow: auto;
-    max-height: 180px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: ${token.fontFamilyCode};
-  `,
 }))
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
@@ -166,8 +136,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     favoriteModels: '',
     tavilyApiKey: '',
     heliconeApiKey: '',
-    feishuAppId: '',
-    feishuAppSecret: '',
     feishuApprovalCode: '',
     feishuUserId: '',
     feishuFormJson: '',
@@ -175,8 +143,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
-  const [feishuLoading, setFeishuLoading] = useState(false)
-  const [feishuResult, setFeishuResult] = useState('')
   const [version, setVersion] = useState('')
 
   useEffect(() => {
@@ -193,27 +159,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
   function patch(update: Partial<Settings>) {
     setSettings((s) => ({ ...s, ...update }))
-  }
-
-  async function runFeishuDemo(dryRun: boolean) {
-    setFeishuLoading(true)
-    setFeishuResult('')
-    try {
-      const result = await api.feishu.submitApprovalDemo({
-        appId: settings.feishuAppId,
-        appSecret: settings.feishuAppSecret,
-        approvalCode: settings.feishuApprovalCode,
-        userId: settings.feishuUserId,
-        formJson: settings.feishuFormJson,
-        nodeApproversJson: settings.feishuNodeApproversJson,
-        dryRun,
-      })
-      setFeishuResult(JSON.stringify(result, null, 2))
-    } catch (err) {
-      setFeishuResult(`ERROR: ${(err as Error).message}`)
-    } finally {
-      setFeishuLoading(false)
-    }
   }
 
   return (
@@ -354,73 +299,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <span className={styles.labelHint}>
                   改后需重新打开工作区生效。经 gateway.helicone.ai 转发到你当前的 API 端点，密钥仅通过环境变量传给子进程。
                 </span>
-              </div>
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  飞书审批 Demo
-                  <span className={styles.labelHint}>
-                    调用自建应用 tenant_access_token，再创建审批实例
-                  </span>
-                </span>
-
-                <div className={styles.row}>
-                  <Input
-                    value={settings.feishuAppId}
-                    onChange={(e) => patch({ feishuAppId: e.target.value })}
-                    placeholder="App ID"
-                  />
-                  <Input.Password
-                    value={settings.feishuAppSecret}
-                    onChange={(e) => patch({ feishuAppSecret: e.target.value })}
-                    placeholder="App Secret"
-                  />
-                </div>
-
-                <div className={styles.row}>
-                  <Input
-                    value={settings.feishuApprovalCode}
-                    onChange={(e) => patch({ feishuApprovalCode: e.target.value })}
-                    placeholder="Approval Code"
-                  />
-                  <Input
-                    value={settings.feishuUserId}
-                    onChange={(e) => patch({ feishuUserId: e.target.value })}
-                    placeholder="申请人 user_id"
-                  />
-                </div>
-
-                <Input.TextArea
-                  value={settings.feishuFormJson}
-                  onChange={(e) => patch({ feishuFormJson: e.target.value })}
-                  placeholder='[{"id":"reason","type":"input","value":"pi-studio 飞书审批 Demo"}]'
-                  autoSize={{ minRows: 4, maxRows: 8 }}
-                />
-
-                <Input.TextArea
-                  value={settings.feishuNodeApproversJson}
-                  onChange={(e) => patch({ feishuNodeApproversJson: e.target.value })}
-                  placeholder='可选：节点审批人 JSON，例如 [{"key":"node-id","value":["user-id"]}]'
-                  autoSize={{ minRows: 2, maxRows: 4 }}
-                />
-
-                <div className={styles.buttonRow}>
-                  <Button size="small" loading={feishuLoading} onClick={() => runFeishuDemo(true)}>
-                    生成请求
-                  </Button>
-                  <Button
-                    size="small"
-                    type="primary"
-                    loading={feishuLoading}
-                    onClick={() => runFeishuDemo(false)}
-                  >
-                    提交审批 Demo
-                  </Button>
-                  <span className={styles.labelHint}>
-                    表单 JSON 里的控件 id 必须匹配飞书审批定义。
-                  </span>
-                </div>
-
-                {feishuResult && <pre className={styles.resultBox}>{feishuResult}</pre>}
               </div>
             </div>
           )}

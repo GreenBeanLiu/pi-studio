@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc'
 import { piClientManager } from './pi-client'
+import { loadBackendEnv } from './app-env'
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
@@ -86,6 +87,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('cc.glanger.pi-studio')
+  loadBackendEnv()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

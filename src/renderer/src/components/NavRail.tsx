@@ -1,7 +1,7 @@
 import { createStyles } from 'antd-style'
 import { ActionIcon } from '@lobehub/ui'
 import { Tooltip } from 'antd'
-import { FolderOpen, Settings, Sun, Moon } from 'lucide-react'
+import { FileCheck2, FolderOpen, Settings, Sun, Moon } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -75,11 +75,19 @@ type Props = {
   workspace: Workspace | null
   appearance: 'dark' | 'light'
   onSwitchWorkspace: () => void
+  onFeishuApproval: () => void
   onSettings: () => void
   onToggleTheme: () => void
 }
 
-export default function NavRail({ workspace, appearance, onSwitchWorkspace, onSettings, onToggleTheme }: Props) {
+export default function NavRail({
+  workspace,
+  appearance,
+  onSwitchWorkspace,
+  onFeishuApproval,
+  onSettings,
+  onToggleTheme,
+}: Props) {
   const { styles } = useStyles()
 
   const initial = workspace?.name.slice(0, 1).toUpperCase() ?? ''
@@ -94,6 +102,14 @@ export default function NavRail({ workspace, appearance, onSwitchWorkspace, onSe
           </button>
         </div>
       </Tooltip>
+
+      <ActionIcon
+        className={styles.iconBtn}
+        icon={<FileCheck2 size={15} />}
+        title="飞书审批 Demo"
+        onClick={onFeishuApproval}
+        size={{ blockSize: 36, borderRadius: 8 }}
+      />
 
       <div className={styles.spacer} />
 

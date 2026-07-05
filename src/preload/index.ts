@@ -20,6 +20,7 @@ const api = {
   },
 
   feishu: {
+    getConfigStatus: () => ipcRenderer.invoke('feishu:getConfigStatus'),
     submitApprovalDemo: (input: unknown) =>
       ipcRenderer.invoke('feishu:submitApprovalDemo', input),
   },

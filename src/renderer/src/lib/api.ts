@@ -31,8 +31,6 @@ declare global {
           favoriteModels: string
           tavilyApiKey: string
           heliconeApiKey: string
-          feishuAppId: string
-          feishuAppSecret: string
           feishuApprovalCode: string
           feishuUserId: string
           feishuFormJson: string
@@ -47,8 +45,6 @@ declare global {
           favoriteModels: string
           tavilyApiKey: string
           heliconeApiKey: string
-          feishuAppId: string
-          feishuAppSecret: string
           feishuApprovalCode: string
           feishuUserId: string
           feishuFormJson: string
@@ -56,6 +52,7 @@ declare global {
         }) => Promise<{ ok: boolean }>
       }
       feishu: {
+        getConfigStatus: () => Promise<FeishuConfigStatus>
         submitApprovalDemo: (
           input: FeishuApprovalDemoInput,
         ) => Promise<FeishuApprovalDemoResult>
@@ -104,13 +101,17 @@ declare global {
 export type PiProvider = 'anthropic' | 'openai'
 
 export type FeishuApprovalDemoInput = {
-  appId: string
-  appSecret: string
   approvalCode: string
   userId: string
   formJson: string
   nodeApproversJson?: string
   dryRun?: boolean
+}
+
+export type FeishuConfigStatus = {
+  appIdConfigured: boolean
+  appSecretConfigured: boolean
+  envFilePath: string
 }
 
 export type FeishuApprovalDemoResult = {

@@ -21,10 +21,6 @@ type SettingsData = {
   tavilyApiKey: string
   /** Helicone API key: routes LLM calls through Helicone for logging; empty = off */
   heliconeApiKey: string
-  /** Feishu custom app id for approval-flow demo */
-  feishuAppId: string
-  /** Feishu custom app secret for approval-flow demo */
-  feishuAppSecret: string
   /** Feishu approval definition code */
   feishuApprovalCode: string
   /** Feishu applicant user_id */
@@ -44,8 +40,6 @@ const DEFAULTS: SettingsData = {
   favoriteModels: '',
   tavilyApiKey: '',
   heliconeApiKey: '',
-  feishuAppId: '',
-  feishuAppSecret: '',
   feishuApprovalCode: '',
   feishuUserId: '',
   feishuFormJson: JSON.stringify(
@@ -119,8 +113,6 @@ export function loadSettings(): SettingsData {
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
     heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
-    feishuAppId: (raw.feishuAppId as string) ?? DEFAULTS.feishuAppId,
-    feishuAppSecret: decryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted'),
     feishuApprovalCode: (raw.feishuApprovalCode as string) ?? DEFAULTS.feishuApprovalCode,
     feishuUserId: (raw.feishuUserId as string) ?? DEFAULTS.feishuUserId,
     feishuFormJson: (raw.feishuFormJson as string) ?? DEFAULTS.feishuFormJson,
@@ -142,8 +134,6 @@ export function saveSettings(
     | 'favoriteModels'
     | 'tavilyApiKey'
     | 'heliconeApiKey'
-    | 'feishuAppId'
-    | 'feishuAppSecret'
     | 'feishuApprovalCode'
     | 'feishuUserId'
     | 'feishuFormJson'
@@ -155,22 +145,17 @@ export function saveSettings(
   encryptField(raw, 'apiKey', 'apiKeyEncrypted', settings.apiKey)
   encryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted', settings.tavilyApiKey)
   encryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted', settings.heliconeApiKey)
-  encryptField(
-    raw,
-    'feishuAppSecret',
-    'feishuAppSecretEncrypted',
-    settings.feishuAppSecret,
-  )
-
   raw.provider = settings.provider
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
-  raw.feishuAppId = settings.feishuAppId
   raw.feishuApprovalCode = settings.feishuApprovalCode
   raw.feishuUserId = settings.feishuUserId
   raw.feishuFormJson = settings.feishuFormJson
   raw.feishuNodeApproversJson = settings.feishuNodeApproversJson
+  delete raw.feishuAppId
+  delete raw.feishuAppSecret
+  delete raw.feishuAppSecretEncrypted
 
   writeRaw(raw)
 }
