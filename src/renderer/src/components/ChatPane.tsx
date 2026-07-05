@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Cpu,
+  Brain,
   SlashSquare,
   Puzzle,
   FileText,
@@ -23,6 +24,7 @@ import {
   type ImageContent,
   type ModelInfo,
   type SlashCommand,
+  type ThinkingLevel,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -473,6 +475,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [currentModel, setCurrentModel] = useState<{ provider: string; id: string } | null>(null)
+  const [thinking, setThinking] = useState<ThinkingLevel>('off')
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [favoriteModels, setFavoriteModels] = useState<string[]>([])
   const [slashIndex, setSlashIndex] = useState(0)
@@ -518,7 +521,10 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       .catch(() => {})
     api.pi
       .getState()
-      .then((s) => setCurrentModel(s?.model ? { provider: s.model.provider, id: s.model.id } : null))
+      .then((s) => {
+        setCurrentModel(s?.model ? { provider: s.model.provider, id: s.model.id } : null)
+        if (s?.thinkingLevel) setThinking(s.thinkingLevel as ThinkingLevel)
+      })
       .catch(() => {})
   }, [workspace?.path])
 
@@ -772,6 +778,27 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     }
   }
 
+  // ── Thinking level ───────────────────────────────────────────────
+  const THINKING_LEVELS: { key: ThinkingLevel; label: string }[] = [
+    { key: 'off', label: '关闭' },
+    { key: 'minimal', label: '极简' },
+    { key: 'low', label: '低' },
+    { key: 'medium', label: '中' },
+    { key: 'high', label: '高' },
+    { key: 'xhigh', label: '极高' },
+  ]
+  const thinkingLabel = THINKING_LEVELS.find((t) => t.key === thinking)?.label ?? '关闭'
+
+  async function handleThinkingSelect({ key }: { key: string }) {
+    const level = key as ThinkingLevel
+    try {
+      await api.pi.setThinkingLevel(level)
+      setThinking(level)
+    } catch (err) {
+      setError((err as Error).message ?? '切换思考深度失败')
+    }
+  }
+
   function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const items = Array.from(e.clipboardData?.items ?? [])
     const imageFiles = items
@@ -981,6 +1008,23 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                   <button className={styles.modelChip} title="切换模型">
                     <Cpu size={11} />
                     {currentModel ? currentModel.id : '默认模型'}
+                    <ChevronDown size={11} />
+                  </button>
+                </Dropdown>
+              )}
+              {workspace && (
+                <Dropdown
+                  trigger={['click']}
+                  placement="topLeft"
+                  menu={{
+                    items: THINKING_LEVELS.map((t) => ({ key: t.key, label: t.label })),
+                    onClick: handleThinkingSelect,
+                    selectedKeys: [thinking],
+                  }}
+                >
+                  <button className={styles.modelChip} title="思考深度">
+                    <Brain size={11} />
+                    思考·{thinkingLabel}
                     <ChevronDown size={11} />
                   </button>
                 </Dropdown>

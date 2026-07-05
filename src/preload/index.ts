@@ -48,6 +48,7 @@ const api = {
     getCommands: () => ipcRenderer.invoke('pi:getCommands'),
     setModel: (provider: string, modelId: string) =>
       ipcRenderer.invoke('pi:setModel', provider, modelId),
+    setThinkingLevel: (level: string) => ipcRenderer.invoke('pi:setThinkingLevel', level),
     onEvent: (cb: (event: unknown) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
       ipcRenderer.on('pi:event', handler)

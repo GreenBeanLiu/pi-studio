@@ -67,6 +67,7 @@ declare global {
         getAvailableModels: () => Promise<ModelInfo[]>
         getCommands: () => Promise<SlashCommand[]>
         setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
+        setThinkingLevel: (level: ThinkingLevel) => Promise<void>
         onEvent: (cb: (event: AgentEvent) => void) => () => void
       }
       update: {
@@ -105,6 +106,8 @@ export type ModelInfo = {
   contextWindow: number
   reasoning: boolean
 }
+
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 
 export type SlashCommand = {
   /** Command name (without leading slash) */

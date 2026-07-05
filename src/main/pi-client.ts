@@ -129,6 +129,10 @@ class PiClientManager {
     return this.require().setModel(provider, modelId)
   }
 
+  setThinkingLevel(level: Parameters<RpcClient['setThinkingLevel']>[0]): ReturnType<RpcClient['setThinkingLevel']> {
+    return this.require().setThinkingLevel(level)
+  }
+
   switchSession(sessionPath: string): ReturnType<RpcClient['switchSession']> {
     return this.require().switchSession(sessionPath)
   }

@@ -146,4 +146,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:setModel', (_e, provider: string, modelId: string) =>
     piClientManager.setModel(provider, modelId),
   )
+  ipcMain.handle('pi:setThinkingLevel', (_e, level: string) =>
+    piClientManager.setThinkingLevel(level as never),
+  )
 }
