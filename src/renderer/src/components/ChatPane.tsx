@@ -341,7 +341,7 @@ const useStyles = createStyles(({ token, css }) => ({
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 11px;
+    font-size: 12px;
     padding: 3px 8px;
     border-radius: ${token.borderRadiusSM}px;
     border: 1px solid transparent;
@@ -359,10 +359,31 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  paramsPanel: css`
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-family: ${token.fontFamily};
+
+    .ant-segmented {
+      width: 100%;
+      font-family: ${token.fontFamily};
+    }
+
+    .ant-segmented-item-label {
+      min-width: 0;
+      padding-inline: 8px;
+      overflow: visible;
+      text-overflow: clip;
+    }
+  `,
+
   paramLabel: css`
-    font-size: 11px;
+    font-size: 12px;
     color: ${token.colorTextTertiary};
     margin-bottom: 5px;
+    line-height: 1.4;
     user-select: none;
   `,
 
@@ -404,6 +425,12 @@ const useStyles = createStyles(({ token, css }) => ({
   modelRowActive: css`
     background: ${token.colorFillSecondary};
     color: ${token.colorPrimary};
+  `,
+
+  paramGrid: css`
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
   `,
 
   slashPanel: css`
@@ -838,7 +865,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       await api.pi.setThinkingLevel(level)
       setThinking(level)
     } catch (err) {
-      setError((err as Error).message ?? '切换思考深度失败')
+      setError((err as Error).message ?? '切换推理深度失败')
     }
   }
 
@@ -882,7 +909,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   }
 
   const paramsPanel = (
-    <div style={{ width: 260, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className={styles.paramsPanel}>
       <div>
         <div className={styles.paramLabel}>模型</div>
         <div className={styles.modelList}>
@@ -904,7 +931,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       </div>
 
       <div>
-        <div className={styles.paramLabel}>思考深度</div>
+        <div className={styles.paramLabel}>推理深度</div>
         <Segmented
           size="small"
           block
@@ -914,7 +941,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
         />
       </div>
 
-      <div style={{ display: 'flex', gap: 10 }}>
+      <div className={styles.paramGrid}>
         <div style={{ flex: 1 }}>
           <div className={styles.paramLabel}>插话模式</div>
           <Segmented
@@ -1157,7 +1184,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                   <button className={styles.modelChip} title="模型与参数">
                     <SlidersHorizontal size={11} />
                     {currentModel ? currentModel.id : '默认模型'}
-                    <span style={{ opacity: 0.6 }}>· 思考{thinkingLabel}</span>
+                    <span style={{ opacity: 0.6 }}>· 推理：{thinkingLabel}</span>
                     <ChevronDown size={11} />
                   </button>
                 </Popover>

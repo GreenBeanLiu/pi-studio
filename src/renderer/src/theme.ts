@@ -22,7 +22,7 @@ const sharedTokens = {
   // (native + crispest on Windows) — moved ahead of the PingFang/Harmony
   // fallbacks so Chinese doesn't land on an inconsistent face.
   fontFamily:
-    '"Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Roboto, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "HarmonyOS Sans SC", "Helvetica Neue", Arial, sans-serif',
+    '"Geist Variable", Geist, "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "PingFang SC", "HarmonyOS Sans SC", "Helvetica Neue", Arial, sans-serif',
   fontFamilyCode:
     '"Geist Mono", "SF Mono", "Cascadia Code", Consolas, "Courier New", monospace',
   controlHeight: 36,
