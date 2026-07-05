@@ -174,11 +174,11 @@ export default function FeishuApprovalDemoModal({ onClose }: { onClose: () => vo
             />
           </div>
           <div>
-            <div className={styles.label}>申请人 user_id</div>
+            <div className={styles.label}>申请人 open_id</div>
             <Input
               value={settings.feishuUserId}
               onChange={(e) => patch({ feishuUserId: e.target.value })}
-              placeholder="发起审批的飞书 user_id"
+              placeholder="发起审批的飞书 open_id，例如 ou_xxx"
             />
           </div>
         </div>

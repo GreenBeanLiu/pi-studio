@@ -68,7 +68,7 @@ export function buildFeishuApprovalDemoPayload(
 
   const payload: FeishuApprovalDemoPayload = {
     approval_code: required(input.approvalCode, 'Approval Code'),
-    user_id: required(input.userId, '申请人 user_id'),
+    user_id: required(input.userId, '申请人 open_id'),
     form: JSON.stringify(form),
     uuid: `pi-studio-${Date.now()}`,
   }
@@ -144,7 +144,7 @@ export async function submitFeishuApprovalDemo(
 
   const { appId, appSecret } = getFeishuAppConfig()
   const token = await getTenantAccessToken(appId, appSecret)
-  const response = await fetch(`${FEISHU_API_BASE}/approval/v4/instances?user_id_type=user_id`, {
+  const response = await fetch(`${FEISHU_API_BASE}/approval/v4/instances?user_id_type=open_id`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
