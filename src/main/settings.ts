@@ -21,14 +21,6 @@ type SettingsData = {
   tavilyApiKey: string
   /** Helicone API key: routes LLM calls through Helicone for logging; empty = off */
   heliconeApiKey: string
-  /** Feishu approval definition code */
-  feishuApprovalCode: string
-  /** Feishu applicant user_id */
-  feishuUserId: string
-  /** Raw Feishu approval form JSON array, stringified before submit */
-  feishuFormJson: string
-  /** Optional raw node approver override JSON for approvals that require user-picked approvers */
-  feishuNodeApproversJson: string
   recentWorkspaces: Workspace[]
 }
 
@@ -40,18 +32,6 @@ const DEFAULTS: SettingsData = {
   favoriteModels: '',
   tavilyApiKey: '',
   heliconeApiKey: '',
-  feishuApprovalCode: '',
-  feishuUserId: '',
-  feishuFormJson: JSON.stringify(
-    [
-      { id: 'reason', type: 'input', value: 'pi-studio 飞书审批 Demo' },
-      { id: 'amount', type: 'number', value: '100' },
-      { id: 'repo', type: 'input', value: 'pi-studio' },
-    ],
-    null,
-    2,
-  ),
-  feishuNodeApproversJson: '',
   recentWorkspaces: [],
 }
 
@@ -113,11 +93,6 @@ export function loadSettings(): SettingsData {
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
     heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
-    feishuApprovalCode: (raw.feishuApprovalCode as string) ?? DEFAULTS.feishuApprovalCode,
-    feishuUserId: (raw.feishuUserId as string) ?? DEFAULTS.feishuUserId,
-    feishuFormJson: (raw.feishuFormJson as string) ?? DEFAULTS.feishuFormJson,
-    feishuNodeApproversJson:
-      (raw.feishuNodeApproversJson as string) ?? DEFAULTS.feishuNodeApproversJson,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -134,10 +109,6 @@ export function saveSettings(
     | 'favoriteModels'
     | 'tavilyApiKey'
     | 'heliconeApiKey'
-    | 'feishuApprovalCode'
-    | 'feishuUserId'
-    | 'feishuFormJson'
-    | 'feishuNodeApproversJson'
   >,
 ): void {
   const raw = readRaw()
@@ -149,13 +120,6 @@ export function saveSettings(
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
-  raw.feishuApprovalCode = settings.feishuApprovalCode
-  raw.feishuUserId = settings.feishuUserId
-  raw.feishuFormJson = settings.feishuFormJson
-  raw.feishuNodeApproversJson = settings.feishuNodeApproversJson
-  delete raw.feishuAppId
-  delete raw.feishuAppSecret
-  delete raw.feishuAppSecretEncrypted
 
   writeRaw(raw)
 }

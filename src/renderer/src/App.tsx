@@ -6,7 +6,6 @@ import ChatPane from './components/ChatPane'
 import SessionSidebar from './components/SessionSidebar'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
-import FeishuApprovalDemoModal from './components/FeishuApprovalDemoModal'
 import WorkspacePicker from './components/WorkspacePicker'
 import { api, type Workspace } from './lib/api'
 
@@ -43,7 +42,6 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [recentWorkspaces, setRecentWorkspaces] = useState<Workspace[]>([])
   const [showSettings, setShowSettings] = useState(false)
-  const [showFeishuApproval, setShowFeishuApproval] = useState(false)
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(true)
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' })
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
@@ -114,7 +112,6 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           workspace={workspace}
           appearance={appearance}
           onSwitchWorkspace={() => setShowWorkspacePicker(true)}
-          onFeishuApproval={() => setShowFeishuApproval(true)}
           onSettings={() => setShowSettings(true)}
           onToggleTheme={onToggleTheme}
         />
@@ -134,9 +131,6 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       </div>
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {showFeishuApproval && (
-        <FeishuApprovalDemoModal onClose={() => setShowFeishuApproval(false)} />
-      )}
       {showWorkspacePicker && (
         <WorkspacePicker
           recentWorkspaces={recentWorkspaces}

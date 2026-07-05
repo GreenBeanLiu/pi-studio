@@ -12,10 +12,6 @@ type Settings = {
   favoriteModels: string
   tavilyApiKey: string
   heliconeApiKey: string
-  feishuApprovalCode: string
-  feishuUserId: string
-  feishuFormJson: string
-  feishuNodeApproversJson: string
 }
 
 type Category = 'model' | 'tools' | 'about'
@@ -136,10 +132,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     favoriteModels: '',
     tavilyApiKey: '',
     heliconeApiKey: '',
-    feishuApprovalCode: '',
-    feishuUserId: '',
-    feishuFormJson: '',
-    feishuNodeApproversJson: '',
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)

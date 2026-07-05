@@ -14,11 +14,6 @@ import {
   type PiProvider,
 } from './settings'
 import { piClientManager } from './pi-client'
-import {
-  getFeishuConfigStatus,
-  submitFeishuApprovalDemo,
-  type FeishuApprovalDemoInput,
-} from './feishu-approval'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -54,20 +49,11 @@ export function registerIpcHandlers(): void {
         favoriteModels: string
         tavilyApiKey: string
         heliconeApiKey: string
-        feishuApprovalCode: string
-        feishuUserId: string
-        feishuFormJson: string
-        feishuNodeApproversJson: string
       },
     ) => {
       saveSettings(settings)
       return { ok: true }
     },
-  )
-
-  ipcMain.handle('feishu:getConfigStatus', () => getFeishuConfigStatus())
-  ipcMain.handle('feishu:submitApprovalDemo', (_e, input: FeishuApprovalDemoInput) =>
-    submitFeishuApprovalDemo(input),
   )
 
   // ── Workspaces ───────────────────────────────────────────────────
