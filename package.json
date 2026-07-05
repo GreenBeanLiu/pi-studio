@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "Windows desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
@@ -54,11 +54,14 @@
       "!node_modules/**/{LICENSE,LICENSE.*,license,CHANGELOG.md,README.md}"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "publish": {
       "provider": "github",

@@ -3,6 +3,7 @@ import { createStyles } from 'antd-style'
 import { Tooltip } from 'antd'
 import { FolderOpen } from 'lucide-react'
 import { api, type Workspace } from '../lib/api'
+import appIcon from '../assets/app-icon.png'
 
 type UpdateState =
   | { status: 'idle' }
@@ -181,10 +182,17 @@ export default function TitleBar({ workspace, update, onInstall, onDismissUpdate
       )}
 
       <div className={styles.centerZone}>
-        <span className={styles.appLabel}>
+        <span className={styles.appLabel} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <img
+            src={appIcon}
+            alt=""
+            width={16}
+            height={16}
+            style={{ borderRadius: 4, display: 'block' }}
+          />
           pi-studio
           {version && (
-            <span style={{ opacity: 0.55, marginLeft: 6, fontSize: 11 }}>v{version}</span>
+            <span style={{ opacity: 0.55, fontSize: 11 }}>v{version}</span>
           )}
         </span>
       </div>
