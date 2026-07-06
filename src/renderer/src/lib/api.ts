@@ -65,6 +65,9 @@ declare global {
         rename: (name: string) => Promise<void>
         delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
       }
+      git: {
+        diff: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
+      }
       pi: {
         prompt: (message: string, images?: ImageContent[]) => Promise<void>
         steer: (message: string, images?: ImageContent[]) => Promise<void>
@@ -143,6 +146,15 @@ export type SessionInfo = {
   firstMessage: string
   messageCount: number
   modified: string
+}
+
+export type GitDiffSnapshot = {
+  status: string
+  unstagedStat: string
+  unstagedDiff: string
+  stagedStat: string
+  stagedDiff: string
+  truncated: boolean
 }
 
 export type {

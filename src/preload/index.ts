@@ -38,6 +38,10 @@ const api = {
     delete: (sessionPath: string) => ipcRenderer.invoke('sessions:delete', sessionPath),
   },
 
+  git: {
+    diff: () => ipcRenderer.invoke('git:diff'),
+  },
+
   pi: {
     prompt: (message: string, images?: unknown[]) =>
       ipcRenderer.invoke('pi:prompt', message, images),

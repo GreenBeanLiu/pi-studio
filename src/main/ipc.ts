@@ -17,6 +17,7 @@ import {
 import { piClientManager } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
+import { getGitDiffSnapshot } from './git-diff'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -161,6 +162,16 @@ export function registerIpcHandlers(): void {
     if (state.sessionFile === sessionPath) return { error: '不能删除当前会话' }
     deleteSession(sessionPath)
     return { ok: true }
+  })
+
+  ipcMain.handle('git:diff', async () => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return { error: 'No workspace is open' }
+    try {
+      return { ok: true, snapshot: await getGitDiffSnapshot(cwd) }
+    } catch (err) {
+      return { error: (err as Error).message ?? '读取 Git 变更失败' }
+    }
   })
 
   // ── Pi agent session ─────────────────────────────────────────────

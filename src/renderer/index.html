@@ -18,6 +18,9 @@
             rename: () => Promise.resolve(),
             delete: () => Promise.resolve({ ok: true }),
           },
+          git: {
+            diff: () => Promise.resolve({ ok: true, snapshot: { status: '', unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
+          },
           app: { version: () => Promise.resolve('0.1.0-preview') },
           diagnostics: { save: () => Promise.resolve({ ok: true, path: 'mock-diagnostics.json' }) },
           settings: {

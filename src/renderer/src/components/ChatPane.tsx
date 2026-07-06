@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
-import { Spin, Popover, Segmented, Switch, Button, message as antdMessage } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button, message as antdMessage, Modal, Tabs, Empty } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -16,6 +16,7 @@ import {
   Puzzle,
   FileText,
   Download,
+  GitCompare,
 } from 'lucide-react'
 import {
   api,
@@ -27,6 +28,7 @@ import {
   type SlashCommand,
   type ThinkingLevel,
   type QueueMode,
+  type GitDiffSnapshot,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -360,6 +362,43 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  diffMeta: css`
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+  `,
+
+  diffMetaBlock: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillTertiary};
+    padding: 8px 10px;
+    min-width: 0;
+  `,
+
+  diffMetaTitle: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    margin-bottom: 4px;
+  `,
+
+  diffPre: css`
+    margin: 0;
+    max-height: 58vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorBgContainer};
+    color: ${token.colorText};
+    padding: 12px;
+    font-family: ${token.fontFamilyCode};
+    font-size: 12px;
+    line-height: 1.55;
+  `,
+
   paramsPanel: css`
     width: 300px;
     display: flex;
@@ -599,6 +638,9 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+  const [diffOpen, setDiffOpen] = useState(false)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [diffSnapshot, setDiffSnapshot] = useState<GitDiffSnapshot | null>(null)
   // Follow the stream only while the user is at the bottom; scrolling up
   // pauses following so reading history isn't fought by auto-scroll.
   const [autoFollow, setAutoFollow] = useState(true)
@@ -853,6 +895,26 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     toolExecutions,
     runningTool,
   ])
+
+  const openGitDiff = useCallback(async () => {
+    if (!workspace) return
+    setDiffOpen(true)
+    setDiffLoading(true)
+    try {
+      const result = await api.git.diff()
+      if ('error' in result) {
+        antdMessage.error(result.error)
+        setDiffSnapshot(null)
+      } else {
+        setDiffSnapshot(result.snapshot)
+      }
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '读取 Git 变更失败')
+      setDiffSnapshot(null)
+    } finally {
+      setDiffLoading(false)
+    }
+  }, [workspace])
 
   // While the agent runs, Enter queues a follow-up and Ctrl+Enter steers
   // (interrupts); when idle both are a plain prompt.
@@ -1116,6 +1178,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   }
 
   const isEmpty = messages.length === 0
+  const hasGitChanges = !!diffSnapshot?.status.trim()
 
   return (
     <div className={styles.pane}>
@@ -1125,6 +1188,76 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           <button className={styles.errorDismiss} onClick={() => setError(null)}>✕</button>
         </div>
       )}
+
+      <Modal
+        open={diffOpen}
+        onCancel={() => setDiffOpen(false)}
+        title="工作区变更"
+        width={980}
+        centered
+        footer={[
+          <Button key="refresh" onClick={openGitDiff} loading={diffLoading}>
+            刷新
+          </Button>,
+          <Button key="close" type="primary" onClick={() => setDiffOpen(false)}>
+            关闭
+          </Button>,
+        ]}
+      >
+        {diffLoading ? (
+          <div style={{ padding: 32, display: 'flex', justifyContent: 'center' }}>
+            <Spin size="small" />
+          </div>
+        ) : !diffSnapshot ? (
+          <Empty description="暂无 Git 信息" />
+        ) : !hasGitChanges ? (
+          <Empty description="工作区没有变更" />
+        ) : (
+          <>
+            <div className={styles.diffMeta}>
+              <div className={styles.diffMetaBlock}>
+                <div className={styles.diffMetaTitle}>状态</div>
+                <pre className={styles.diffPre} style={{ maxHeight: 120 }}>
+                  {diffSnapshot.status || '无'}
+                </pre>
+              </div>
+              <div className={styles.diffMetaBlock}>
+                <div className={styles.diffMetaTitle}>统计</div>
+                <pre className={styles.diffPre} style={{ maxHeight: 120 }}>
+                  {[diffSnapshot.unstagedStat, diffSnapshot.stagedStat].filter(Boolean).join('\n') || '无'}
+                </pre>
+              </div>
+            </div>
+            {diffSnapshot.truncated && (
+              <div className={styles.errorText} style={{ marginBottom: 12 }}>
+                Diff 内容较大，已截断显示。完整内容可在终端用 git diff 查看。
+              </div>
+            )}
+            <Tabs
+              items={[
+                {
+                  key: 'unstaged',
+                  label: '未暂存',
+                  children: diffSnapshot.unstagedDiff ? (
+                    <pre className={styles.diffPre}>{diffSnapshot.unstagedDiff}</pre>
+                  ) : (
+                    <Empty description="没有未暂存 diff" />
+                  ),
+                },
+                {
+                  key: 'staged',
+                  label: '已暂存',
+                  children: diffSnapshot.stagedDiff ? (
+                    <pre className={styles.diffPre}>{diffSnapshot.stagedDiff}</pre>
+                  ) : (
+                    <Empty description="没有已暂存 diff" />
+                  ),
+                },
+              ]}
+            />
+          </>
+        )}
+      </Modal>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <div
@@ -1308,6 +1441,12 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                 <button className={styles.modelChip} onClick={exportDiagnostics} title="导出诊断包">
                   <Download size={11} />
                   诊断包
+                </button>
+              )}
+              {workspace && (
+                <button className={styles.modelChip} onClick={openGitDiff} title="查看工作区变更">
+                  <GitCompare size={11} />
+                  变更
                 </button>
               )}
               <div style={{ flex: 1 }} />
