@@ -74,6 +74,7 @@ declare global {
         followUp: (message: string, images?: ImageContent[]) => Promise<void>
         abort: () => Promise<void>
         bash: (command: string) => Promise<unknown>
+        extensionUiResponse: (response: ExtensionUiResponse) => Promise<void>
         newSession: () => Promise<{ cancelled: boolean }>
         getState: () => Promise<RpcSessionState>
         getMessages: () => Promise<AgentMessage[]>
@@ -85,7 +86,7 @@ declare global {
         setFollowUpMode: (mode: QueueMode) => Promise<void>
         setAutoCompaction: (enabled: boolean) => Promise<void>
         compact: () => Promise<unknown>
-        onEvent: (cb: (event: AgentEvent) => void) => () => void
+        onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
       }
       update: {
         onAvailable: (cb: (data: { version: string }) => void) => () => void
@@ -137,6 +138,52 @@ export type SlashCommand = {
   description?: string
   source: 'extension' | 'prompt' | 'skill'
 }
+
+export type ExtensionUiRequest =
+  | {
+      type: 'extension_ui_request'
+      id: string
+      method: 'confirm'
+      title: string
+      message: string
+      timeout?: number
+    }
+  | {
+      type: 'extension_ui_request'
+      id: string
+      method: 'notify'
+      message: string
+      notifyType?: 'info' | 'warning' | 'error'
+    }
+  | {
+      type: 'extension_ui_request'
+      id: string
+      method: 'select'
+      title: string
+      options: string[]
+      timeout?: number
+    }
+  | {
+      type: 'extension_ui_request'
+      id: string
+      method: 'input'
+      title: string
+      placeholder?: string
+      timeout?: number
+    }
+  | {
+      type: 'extension_ui_request'
+      id: string
+      method: 'setStatus' | 'setWidget' | 'setTitle' | 'set_editor_text' | 'editor'
+      [key: string]: unknown
+    }
+
+export type ExtensionUiResponse =
+  | { type: 'extension_ui_response'; id: string; value: string }
+  | { type: 'extension_ui_response'; id: string; confirmed: boolean }
+  | { type: 'extension_ui_response'; id: string; cancelled: true }
+
+export type PiRuntimeEvent = AgentEvent | ExtensionUiRequest
 
 export type SessionInfo = {
   path: string

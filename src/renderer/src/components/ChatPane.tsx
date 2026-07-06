@@ -21,7 +21,6 @@ import {
 import {
   api,
   type Workspace,
-  type AgentEvent,
   type AgentMessage,
   type ImageContent,
   type ModelInfo,
@@ -29,6 +28,7 @@ import {
   type ThinkingLevel,
   type QueueMode,
   type GitDiffSnapshot,
+  type PiRuntimeEvent,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -697,7 +697,43 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   workspaceRef.current = workspace
 
   useEffect(() => {
-    const off = api.pi.onEvent((event: AgentEvent) => {
+    const off = api.pi.onEvent((event: PiRuntimeEvent) => {
+      if (event.type === 'extension_ui_request') {
+        if (event.method === 'confirm') {
+          Modal.confirm({
+            title: event.title,
+            content: <div style={{ whiteSpace: 'pre-wrap' }}>{event.message}</div>,
+            okText: '允许执行',
+            cancelText: '拒绝',
+            okButtonProps: { danger: true },
+            onOk: () =>
+              api.pi.extensionUiResponse({
+                type: 'extension_ui_response',
+                id: event.id,
+                confirmed: true,
+              }),
+            onCancel: () =>
+              api.pi.extensionUiResponse({
+                type: 'extension_ui_response',
+                id: event.id,
+                confirmed: false,
+              }),
+          })
+        } else if (event.method === 'notify') {
+          const notify = event.notifyType === 'error' ? antdMessage.error : event.notifyType === 'warning' ? antdMessage.warning : antdMessage.info
+          notify(event.message)
+        } else if (event.method === 'input' || event.method === 'select' || event.method === 'editor') {
+          api.pi
+            .extensionUiResponse({
+              type: 'extension_ui_response',
+              id: event.id,
+              cancelled: true,
+            })
+            .catch(() => {})
+        }
+        return
+      }
+
       switch (event.type) {
         case 'agent_start':
           setSending(true)

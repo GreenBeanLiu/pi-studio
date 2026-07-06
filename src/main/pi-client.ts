@@ -109,6 +109,19 @@ class PiClientManager {
     return this.require().bash(command)
   }
 
+  respondExtensionUi(response: {
+    type: 'extension_ui_response'
+    id: string
+    value?: string
+    confirmed?: boolean
+    cancelled?: true
+  }): void {
+    const client = this.require() as unknown as { process?: { stdin?: { write: (chunk: string) => void } } }
+    const stdin = client.process?.stdin
+    if (!stdin) throw new Error('Agent process stdin is not available')
+    stdin.write(`${JSON.stringify(response)}\n`)
+  }
+
   newSession(): ReturnType<RpcClient['newSession']> {
     return this.require().newSession()
   }

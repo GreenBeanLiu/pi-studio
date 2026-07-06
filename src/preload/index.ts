@@ -50,6 +50,13 @@ const api = {
       ipcRenderer.invoke('pi:followUp', message, images),
     abort: () => ipcRenderer.invoke('pi:abort'),
     bash: (command: string) => ipcRenderer.invoke('pi:bash', command),
+    extensionUiResponse: (response: {
+      type: 'extension_ui_response'
+      id: string
+      value?: string
+      confirmed?: boolean
+      cancelled?: true
+    }) => ipcRenderer.invoke('pi:extensionUiResponse', response),
     newSession: () => ipcRenderer.invoke('pi:newSession'),
     getState: () => ipcRenderer.invoke('pi:getState'),
     getMessages: () => ipcRenderer.invoke('pi:getMessages'),

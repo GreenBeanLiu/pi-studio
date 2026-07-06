@@ -73,7 +73,19 @@ export default function piStudioGuard(pi: ExtensionAPI) {
       const command = String((event.input as Record<string, unknown>).command ?? '')
       for (const rule of dangerousCommandPatterns) {
         if (rule.pattern.test(command)) {
-          return { block: true, reason: 'pi-studio guard: ' + rule.reason }
+          const approved = await ctx.ui.confirm(
+            '确认危险命令',
+            'Pi Studio 识别到高风险命令：\\n\\n' +
+              command +
+              '\\n\\n原因：' +
+              rule.reason +
+              '\\n\\n只有确认后才会继续执行。',
+            { timeout: 120000 },
+          )
+
+          if (approved) return undefined
+
+          return { block: true, reason: 'pi-studio guard: dangerous command rejected by user' }
         }
       }
     }

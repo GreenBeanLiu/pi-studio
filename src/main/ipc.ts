@@ -186,6 +186,19 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle('pi:abort', () => piClientManager.abort())
   ipcMain.handle('pi:bash', (_e, command: string) => piClientManager.bash(command))
+  ipcMain.handle(
+    'pi:extensionUiResponse',
+    (
+      _e,
+      response: {
+        type: 'extension_ui_response'
+        id: string
+        value?: string
+        confirmed?: boolean
+        cancelled?: true
+      },
+    ) => piClientManager.respondExtensionUi(response),
+  )
   ipcMain.handle('pi:newSession', () => piClientManager.newSession())
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
