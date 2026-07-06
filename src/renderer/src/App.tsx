@@ -50,6 +50,8 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [opening, setOpening] = useState(false)
   const [restartingAgent, setRestartingAgent] = useState(false)
   const [agentIssue, setAgentIssue] = useState<AgentIssue | null>(null)
+  const [diagnosticsExporter, setDiagnosticsExporter] = useState<(() => void) | null>(null)
+  const [workflowDemoNonce, setWorkflowDemoNonce] = useState(0)
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)
 
@@ -146,6 +148,15 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     setRecentWorkspaces(next)
   }
 
+  function triggerWorkflowDemo() {
+    if (!workspace) {
+      setWorkspaceError('请先打开一个工作区，再运行工作流 demo。')
+      setShowWorkspacePicker(true)
+      return
+    }
+    setWorkflowDemoNonce((n) => n + 1)
+  }
+
   function closeSettings() {
     setShowSettings(false)
     if (!workspace && !opening) setShowWorkspacePicker(true)
@@ -167,6 +178,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           appearance={appearance}
           onSwitchWorkspace={() => setShowWorkspacePicker(true)}
           onSettings={() => setShowSettings(true)}
+          onWorkflowDemo={triggerWorkflowDemo}
           onToggleTheme={onToggleTheme}
         />
         {workspace && !opening && (
@@ -183,11 +195,19 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
             agentIssue={agentIssue}
             restarting={restartingAgent}
             onRestartAgent={restartAgent}
+            onDiagnosticsExporterChange={(exporter) => setDiagnosticsExporter(() => exporter)}
+            workflowDemoNonce={workflowDemoNonce}
           />
         </DesktopLayoutContainer>
       </div>
 
-      {showSettings && <SettingsModal onClose={closeSettings} />}
+      {showSettings && (
+        <SettingsModal
+          onClose={closeSettings}
+          onExportDiagnostics={diagnosticsExporter ?? undefined}
+          diagnosticsDisabled={!workspace}
+        />
+      )}
       {showWorkspacePicker && !showSettings && (
         <WorkspacePicker
           recentWorkspaces={recentWorkspaces}

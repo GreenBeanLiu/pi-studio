@@ -11,6 +11,10 @@ export type ProviderConnectionResult =
   | { ok: true; message: string; details?: string }
   | { ok: false; message: string; details?: string }
 
+export type ProviderModelListResult =
+  | { ok: true; message: string; models: string[] }
+  | { ok: false; message: string; details?: string }
+
 const DEFAULT_BASE_URL: Record<PiProvider, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com',
@@ -63,6 +67,52 @@ function modelCount(data: unknown): number | null {
   return Array.isArray(maybeData) ? maybeData.length : null
 }
 
+function modelIds(data: unknown): string[] {
+  if (!data || typeof data !== 'object') return []
+  const maybeData = (data as Record<string, unknown>).data
+  if (!Array.isArray(maybeData)) return []
+  return maybeData
+    .map((item) => {
+      if (!item || typeof item !== 'object') return ''
+      const id = (item as Record<string, unknown>).id
+      return typeof id === 'string' ? id.trim() : ''
+    })
+    .filter(Boolean)
+}
+
+async function fetchProviderModels(settings: ProviderConnectionSettings): Promise<{
+  response: Response
+  data: unknown
+}> {
+  const apiKey = settings.apiKey.trim()
+  const provider = settings.provider
+  const baseUrl = stripTrailingSlash(settings.baseUrl.trim() || DEFAULT_BASE_URL[provider])
+  const url = joinApiPath(baseUrl, '/v1/models')
+
+  if (provider === 'openai') {
+    return fetchJson(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+      },
+    })
+  }
+
+  return fetchJson(url, {
+    method: 'GET',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      Accept: 'application/json',
+    },
+  })
+}
+
+function providerName(provider: PiProvider): string {
+  return provider === 'openai' ? 'OpenAI' : 'Anthropic'
+}
+
 export async function testProviderConnection(
   settings: ProviderConnectionSettings,
 ): Promise<ProviderConnectionResult> {
@@ -72,48 +122,15 @@ export async function testProviderConnection(
   }
 
   const provider = settings.provider
-  const baseUrl = stripTrailingSlash(settings.baseUrl.trim() || DEFAULT_BASE_URL[provider])
 
   try {
-    if (provider === 'openai') {
-      const url = joinApiPath(baseUrl, '/v1/models')
-      const { response, data } = await fetchJson(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
-      })
-
-      if (!response.ok) {
-        return {
-          ok: false,
-          message: `OpenAI 连接失败：HTTP ${response.status}`,
-          details: readErrorMessage(data) ?? response.statusText,
-        }
-      }
-
-      const count = modelCount(data)
-      return {
-        ok: true,
-        message: count === null ? 'OpenAI 连接成功' : `OpenAI 连接成功，读取到 ${count} 个模型`,
-      }
-    }
-
-    const url = joinApiPath(baseUrl, '/v1/models')
-    const { response, data } = await fetchJson(url, {
-      method: 'GET',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        Accept: 'application/json',
-      },
-    })
+    const { response, data } = await fetchProviderModels(settings)
+    const name = providerName(provider)
 
     if (!response.ok) {
       return {
         ok: false,
-        message: `Anthropic 连接失败：HTTP ${response.status}`,
+        message: `${name} 连接失败：HTTP ${response.status}`,
         details: readErrorMessage(data) ?? response.statusText,
       }
     }
@@ -121,7 +138,7 @@ export async function testProviderConnection(
     const count = modelCount(data)
     return {
       ok: true,
-      message: count === null ? 'Anthropic 连接成功' : `Anthropic 连接成功，读取到 ${count} 个模型`,
+      message: count === null ? `${name} 连接成功` : `${name} 连接成功，读取到 ${count} 个模型`,
     }
   } catch (err) {
     const message =
@@ -131,5 +148,49 @@ export async function testProviderConnection(
           ? err.message
           : String(err)
     return { ok: false, message: '连接测试失败', details: message }
+  }
+}
+
+export async function listProviderModels(
+  settings: ProviderConnectionSettings,
+): Promise<ProviderModelListResult> {
+  const apiKey = settings.apiKey.trim()
+  if (!apiKey) {
+    return { ok: false, message: 'API Key 为空', details: '请先填写模型服务 API Key。' }
+  }
+
+  const name = providerName(settings.provider)
+  try {
+    const { response, data } = await fetchProviderModels(settings)
+    if (!response.ok) {
+      return {
+        ok: false,
+        message: `${name} 模型读取失败：HTTP ${response.status}`,
+        details: readErrorMessage(data) ?? response.statusText,
+      }
+    }
+
+    const models = modelIds(data)
+    if (models.length === 0) {
+      return {
+        ok: false,
+        message: '没有读取到模型',
+        details: '接口返回了 /v1/models 响应，但没有 data[].id。',
+      }
+    }
+
+    return {
+      ok: true,
+      message: `读取到 ${models.length} 个模型`,
+      models,
+    }
+  } catch (err) {
+    const message =
+      err instanceof Error && err.name === 'AbortError'
+        ? '连接超时'
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    return { ok: false, message: '模型读取失败', details: message }
   }
 }

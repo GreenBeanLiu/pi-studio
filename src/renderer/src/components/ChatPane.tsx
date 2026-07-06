@@ -50,6 +50,8 @@ type Props = {
   agentIssue?: AgentIssue | null
   restarting?: boolean
   onRestartAgent?: () => void
+  onDiagnosticsExporterChange?: (exporter: (() => void) | null) => void
+  workflowDemoNonce?: number
 }
 
 type RunStatus = 'running' | 'done' | 'error' | 'aborted'
@@ -1186,6 +1188,8 @@ export default function ChatPane({
   agentIssue = null,
   restarting = false,
   onRestartAgent,
+  onDiagnosticsExporterChange,
+  workflowDemoNonce = 0,
 }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -1234,6 +1238,7 @@ export default function ChatPane({
   // (e.g. tool results) land in between.
   const streamingIndexRef = useRef<number | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
+  const lastWorkflowDemoNonceRef = useRef(0)
   const messagesStateRef = useRef(messages)
   const runRecordsRef = useRef(runRecords)
   messagesStateRef.current = messages
@@ -1961,6 +1966,21 @@ export default function ChatPane({
     pendingApprovals.length,
   ])
 
+  useEffect(() => {
+    onDiagnosticsExporterChange?.(workspace ? exportDiagnostics : null)
+    return () => onDiagnosticsExporterChange?.(null)
+  }, [workspace, exportDiagnostics, onDiagnosticsExporterChange])
+
+  useEffect(() => {
+    if (!workflowDemoNonce || !workspace || starting || agentIssue) return
+    if (lastWorkflowDemoNonceRef.current === workflowDemoNonce) return
+    lastWorkflowDemoNonceRef.current = workflowDemoNonce
+    setInput('/scout-and-plan 先查看这个项目的结构，给出下一步开发计划，不要修改文件')
+    setSlashDismissed(false)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    antdMessage.info('已填入工作流 demo，可直接发送')
+  }, [workflowDemoNonce, workspace, starting, agentIssue])
+
   const exportCurrentSession = useCallback(
     async (format: SessionExportFormat) => {
       if (!workspace || sessionExportLoading) return
@@ -2075,6 +2095,7 @@ export default function ChatPane({
 
   const acceptGitChanges = useCallback(() => {
     setDiffOpen(false)
+    setDiffSnapshot(null)
     antdMessage.success('已接受当前工作区变更')
   }, [])
 
@@ -2953,12 +2974,6 @@ export default function ChatPane({
                 </Popover>
               )}
               {workspace && (
-                <button className={styles.modelChip} onClick={exportDiagnostics} title="导出诊断包">
-                  <Download size={11} />
-                  诊断包
-                </button>
-              )}
-              {workspace && (
                 <button className={styles.modelChip} onClick={() => setRunTimelineOpen(true)} title="查看运行记录">
                   <Activity size={11} />
                   运行
@@ -2993,7 +3008,7 @@ export default function ChatPane({
                   </button>
                 </Popover>
               )}
-              {workspace && (
+              {workspace && hasGitChanges && (
                 <button className={styles.modelChip} onClick={openGitDiff} title="查看工作区变更">
                   <GitCompare size={11} />
                   变更

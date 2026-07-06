@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import { Alert, Input, Segmented, Button, Modal, Switch } from 'antd'
 import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck } from 'lucide-react'
-import { api, type PiProvider, type ProviderConnectionResult, type SecurityPolicy } from '../lib/api'
+import {
+  api,
+  type PiProvider,
+  type ProviderConnectionResult,
+  type ProviderModelListResult,
+  type SecurityPolicy,
+} from '../lib/api'
 
 type Settings = {
   provider: PiProvider
@@ -125,6 +131,14 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-wrap: wrap;
   `,
 
+  switchItem: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: ${token.colorTextSecondary};
+  `,
+
   policyGrid: css`
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -156,7 +170,15 @@ const useStyles = createStyles(({ token, css }) => ({
 
 }))
 
-export default function SettingsModal({ onClose }: { onClose: () => void }) {
+export default function SettingsModal({
+  onClose,
+  onExportDiagnostics,
+  diagnosticsDisabled,
+}: {
+  onClose: () => void
+  onExportDiagnostics?: () => void
+  diagnosticsDisabled?: boolean
+}) {
   const { styles } = useStyles()
 
   const [category, setCategory] = useState<Category>('model')
@@ -176,6 +198,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [version, setVersion] = useState('')
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<ProviderConnectionResult | null>(null)
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [modelFetchResult, setModelFetchResult] = useState<ProviderModelListResult | null>(null)
   const [securityPolicy, setSecurityPolicy] = useState<SecurityPolicy>(DEFAULT_SECURITY_POLICY)
   const [policyScope, setPolicyScope] = useState<'default' | 'workspace'>('default')
   const [policyWorkspacePath, setPolicyWorkspacePath] = useState('')
@@ -214,6 +238,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   function patch(update: Partial<Settings>) {
     setSettings((s) => ({ ...s, ...update }))
     setConnectionResult(null)
+    setModelFetchResult(null)
   }
 
   function patchPolicy(update: Partial<SecurityPolicy>) {
@@ -251,6 +276,35 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       })
     } finally {
       setTestingConnection(false)
+    }
+  }
+
+  async function handleFetchModels() {
+    setFetchingModels(true)
+    setModelFetchResult(null)
+    try {
+      const result = await api.settings.listModels({
+        provider: settings.provider,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        baseUrl: settings.baseUrl,
+      })
+      setModelFetchResult(result)
+      if (result.ok) {
+        setSettings((s) => ({
+          ...s,
+          favoriteModels: result.models.join(','),
+          model: s.model || result.models[0] || '',
+        }))
+      }
+    } catch (err) {
+      setModelFetchResult({
+        ok: false,
+        message: '模型读取失败',
+        details: (err as Error).message ?? String(err),
+      })
+    } finally {
+      setFetchingModels(false)
     }
   }
 
@@ -366,12 +420,26 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   模型切换列表
                   <span className={styles.labelHint}>逗号分隔，聊天页只显示这些；留空显示每家最新 8 个</span>
                 </span>
+                <div className={styles.actionRow}>
+                  <Button size="small" onClick={handleFetchModels} loading={fetchingModels}>
+                    从接口拉取模型
+                  </Button>
+                  <span className={styles.labelHint}>支持 OpenAI 兼容网关的 /v1/models。</span>
+                </div>
                 <Input.TextArea
                   value={settings.favoriteModels}
                   onChange={(e) => patch({ favoriteModels: e.target.value })}
                   placeholder="gpt-5.4, gpt-5.2, o4-mini"
                   autoSize={{ minRows: 2, maxRows: 4 }}
                 />
+                {modelFetchResult && (
+                  <Alert
+                    type={modelFetchResult.ok ? 'success' : 'error'}
+                    showIcon
+                    message={modelFetchResult.message}
+                    description={modelFetchResult.ok ? undefined : modelFetchResult.details}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -413,12 +481,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   子 agent 工作流
                   <span className={styles.labelHint}>启用 scout / planner / worker / reviewer 和斜杠命令</span>
                 </span>
-                <Switch
-                  checked={settings.subagentsEnabled}
-                  onChange={(checked) => patch({ subagentsEnabled: checked })}
-                  checkedChildren="开启"
-                  unCheckedChildren="关闭"
-                />
+                <div className={styles.actionRow}>
+                  <Switch
+                    size="small"
+                    checked={settings.subagentsEnabled}
+                    onChange={(checked) => patch({ subagentsEnabled: checked })}
+                  />
+                  <span className={styles.labelHint}>{settings.subagentsEnabled ? '已开启' : '已关闭'}</span>
+                </div>
                 <span className={styles.labelHint}>
                   修改后需重新打开工作区生效。默认提供 /implement、/scout-and-plan、/implement-and-review，用独立
                   pi 子进程分担代码侦察、规划、实现和审查。
@@ -430,12 +500,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   Agent 安全边界
                   <span className={styles.labelHint}>拦截危险命令、越界写入和敏感文件改写</span>
                 </span>
-                <Switch
-                  checked={settings.securityGuardEnabled}
-                  onChange={(checked) => patch({ securityGuardEnabled: checked })}
-                  checkedChildren="开启"
-                  unCheckedChildren="关闭"
-                />
+                <div className={styles.actionRow}>
+                  <Switch
+                    size="small"
+                    checked={settings.securityGuardEnabled}
+                    onChange={(checked) => patch({ securityGuardEnabled: checked })}
+                  />
+                  <span className={styles.labelHint}>{settings.securityGuardEnabled ? '已开启' : '已关闭'}</span>
+                </div>
                 <span className={styles.labelHint}>
                   修改后需重新打开工作区生效。默认阻止 rm -rf、递归强删、提权命令、注册表删除，以及 .env、.git、node_modules 和密钥文件写入。
                 </span>
@@ -462,26 +534,32 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   <span className={styles.labelHint}>建议全部开启，必要时用允许规则放行具体命令或路径</span>
                 </span>
                 <div className={styles.actionRow}>
-                  <Switch
-                    checked={securityPolicy.blockOutsideWorkspace}
-                    onChange={(checked) => patchPolicy({ blockOutsideWorkspace: checked })}
-                    checkedChildren="阻止越界写入"
-                    unCheckedChildren="允许越界写入"
-                  />
-                  <Switch
-                    checked={securityPolicy.blockProtectedPaths}
-                    onChange={(checked) => patchPolicy({ blockProtectedPaths: checked })}
-                    checkedChildren="保护敏感路径"
-                    unCheckedChildren="不保护敏感路径"
-                  />
-                  <Switch
-                    checked={securityPolicy.requireConfirmationForDangerousCommands}
-                    onChange={(checked) =>
-                      patchPolicy({ requireConfirmationForDangerousCommands: checked })
-                    }
-                    checkedChildren="危险命令确认"
-                    unCheckedChildren="不确认危险命令"
-                  />
+                  <span className={styles.switchItem}>
+                    <Switch
+                      size="small"
+                      checked={securityPolicy.blockOutsideWorkspace}
+                      onChange={(checked) => patchPolicy({ blockOutsideWorkspace: checked })}
+                    />
+                    越界写入
+                  </span>
+                  <span className={styles.switchItem}>
+                    <Switch
+                      size="small"
+                      checked={securityPolicy.blockProtectedPaths}
+                      onChange={(checked) => patchPolicy({ blockProtectedPaths: checked })}
+                    />
+                    敏感路径
+                  </span>
+                  <span className={styles.switchItem}>
+                    <Switch
+                      size="small"
+                      checked={securityPolicy.requireConfirmationForDangerousCommands}
+                      onChange={(checked) =>
+                        patchPolicy({ requireConfirmationForDangerousCommands: checked })
+                      }
+                    />
+                    危险确认
+                  </span>
                 </div>
               </div>
 
@@ -554,6 +632,16 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               <div className={styles.aboutRow}>
                 <span>项目</span>
                 <span>GreenBeanLiu/pi-studio</span>
+              </div>
+              <div className={styles.aboutRow}>
+                <span>诊断包</span>
+                <Button
+                  size="small"
+                  disabled={diagnosticsDisabled || !onExportDiagnostics}
+                  onClick={onExportDiagnostics}
+                >
+                  导出
+                </Button>
               </div>
             </div>
           )}

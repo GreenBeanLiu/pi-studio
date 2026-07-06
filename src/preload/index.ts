@@ -24,6 +24,7 @@ const api = {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (s: unknown) => ipcRenderer.invoke('settings:save', s),
     testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
+    listModels: (s: unknown) => ipcRenderer.invoke('settings:listModels', s),
   },
 
   securityPolicy: {

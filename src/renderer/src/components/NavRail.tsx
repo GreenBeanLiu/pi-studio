@@ -1,7 +1,7 @@
 import { createStyles } from 'antd-style'
 import { ActionIcon } from '@lobehub/ui'
 import { Tooltip } from 'antd'
-import { FolderOpen, Settings, Sun, Moon } from 'lucide-react'
+import { FolderOpen, Settings, Sun, Moon, Workflow } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -75,6 +75,7 @@ type Props = {
   workspace: Workspace | null
   appearance: 'dark' | 'light'
   onSwitchWorkspace: () => void
+  onWorkflowDemo: () => void
   onSettings: () => void
   onToggleTheme: () => void
 }
@@ -83,6 +84,7 @@ export default function NavRail({
   workspace,
   appearance,
   onSwitchWorkspace,
+  onWorkflowDemo,
   onSettings,
   onToggleTheme,
 }: Props) {
@@ -100,6 +102,14 @@ export default function NavRail({
           </button>
         </div>
       </Tooltip>
+
+      <ActionIcon
+        className={styles.iconBtn}
+        icon={<Workflow size={15} />}
+        title="工作流 Demo"
+        onClick={onWorkflowDemo}
+        size={{ blockSize: 36, borderRadius: 8 }}
+      />
 
       <div className={styles.spacer} />
 

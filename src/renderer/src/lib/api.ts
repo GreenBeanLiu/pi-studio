@@ -59,6 +59,12 @@ declare global {
           model: string
           baseUrl: string
         }) => Promise<ProviderConnectionResult>
+        listModels: (s: {
+          provider: PiProvider
+          apiKey: string
+          model: string
+          baseUrl: string
+        }) => Promise<ProviderModelListResult>
       }
       securityPolicy: {
         load: () => Promise<SecurityPolicyLoadResult>
@@ -133,6 +139,10 @@ export type PiProvider = 'anthropic' | 'openai'
 
 export type ProviderConnectionResult =
   | { ok: true; message: string; details?: string }
+  | { ok: false; message: string; details?: string }
+
+export type ProviderModelListResult =
+  | { ok: true; message: string; models: string[] }
   | { ok: false; message: string; details?: string }
 
 export type Workspace = {

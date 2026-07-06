@@ -23,7 +23,7 @@ import { piClientManager, type AgentStatusEvent } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
 import { discardGitChanges, getGitDiffSnapshot } from './git-diff'
-import { testProviderConnection } from './provider-test'
+import { listProviderModels, testProviderConnection } from './provider-test'
 import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
 import {
   loadWorkspaceMemory,
@@ -127,6 +127,18 @@ export function registerIpcHandlers(): void {
         baseUrl: string
       },
     ) => testProviderConnection(settings),
+  )
+  ipcMain.handle(
+    'settings:listModels',
+    (
+      _e,
+      settings: {
+        provider: PiProvider
+        apiKey: string
+        model: string
+        baseUrl: string
+      },
+    ) => listProviderModels(settings),
   )
 
   ipcMain.handle('securityPolicy:load', () => {
