@@ -26,6 +26,7 @@
           settings: {
             load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, subagentsEnabled: true, recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),
+            testConnection: () => Promise.resolve({ ok: true, message: 'mock connection ok' }),
           },
           workspace: {
             list: () => Promise.resolve([]),

@@ -52,6 +52,12 @@ declare global {
           securityGuardEnabled: boolean
           subagentsEnabled: boolean
         }) => Promise<{ ok: boolean }>
+        testConnection: (s: {
+          provider: PiProvider
+          apiKey: string
+          model: string
+          baseUrl: string
+        }) => Promise<ProviderConnectionResult>
       }
       workspace: {
         list: () => Promise<Workspace[]>
@@ -99,6 +105,10 @@ declare global {
 }
 
 export type PiProvider = 'anthropic' | 'openai'
+
+export type ProviderConnectionResult =
+  | { ok: true; message: string; details?: string }
+  | { ok: false; message: string; details?: string }
 
 export type Workspace = {
   path: string

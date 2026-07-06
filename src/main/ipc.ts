@@ -18,6 +18,7 @@ import { piClientManager } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
 import { getGitDiffSnapshot } from './git-diff'
+import { testProviderConnection } from './provider-test'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -86,6 +87,18 @@ export function registerIpcHandlers(): void {
       saveSettings(settings)
       return { ok: true }
     },
+  )
+  ipcMain.handle(
+    'settings:testConnection',
+    (
+      _e,
+      settings: {
+        provider: PiProvider
+        apiKey: string
+        model: string
+        baseUrl: string
+      },
+    ) => testProviderConnection(settings),
   )
 
   // ── Workspaces ───────────────────────────────────────────────────

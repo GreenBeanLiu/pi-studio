@@ -50,7 +50,16 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [sessionEpoch, setSessionEpoch] = useState(0)
 
   useEffect(() => {
-    api.workspace.list().then(setRecentWorkspaces)
+    Promise.all([api.workspace.list(), api.settings.load()])
+      .then(([workspaces, settings]) => {
+        setRecentWorkspaces(workspaces)
+        if (!settings.apiKey) {
+          setShowWorkspacePicker(false)
+          setWorkspaceError('请先配置模型服务 API Key，然后再打开工作区。')
+          setShowSettings(true)
+        }
+      })
+      .catch(() => {})
 
     const offAvail = api.update.onAvailable(({ version }) =>
       setUpdate({ status: 'available', version }),
@@ -85,7 +94,12 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       // workspace is actually open now — reflect that honestly.
       setWorkspace(null)
       setWorkspaceError(result.error)
-      setShowWorkspacePicker(true)
+      if (result.error.includes('API Key')) {
+        setShowWorkspacePicker(false)
+        setShowSettings(true)
+      } else {
+        setShowWorkspacePicker(true)
+      }
       return
     }
     setRecentWorkspaces(result.recentWorkspaces)
@@ -95,6 +109,11 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   async function removeWorkspace(path: string) {
     const next = await api.workspace.remove(path)
     setRecentWorkspaces(next)
+  }
+
+  function closeSettings() {
+    setShowSettings(false)
+    if (!workspace && !opening) setShowWorkspacePicker(true)
   }
 
   return (
@@ -130,8 +149,8 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
         </DesktopLayoutContainer>
       </div>
 
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {showWorkspacePicker && (
+      {showSettings && <SettingsModal onClose={closeSettings} />}
+      {showWorkspacePicker && !showSettings && (
         <WorkspacePicker
           recentWorkspaces={recentWorkspaces}
           currentPath={workspace?.path ?? null}

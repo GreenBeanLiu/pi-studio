@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Input, Segmented, Button, Modal, Switch } from 'antd'
+import { Alert, Input, Segmented, Button, Modal, Switch } from 'antd'
 import { Eye, EyeOff, Bot, Globe, Info } from 'lucide-react'
-import { api, type PiProvider } from '../lib/api'
+import { api, type PiProvider, type ProviderConnectionResult } from '../lib/api'
 
 type Settings = {
   provider: PiProvider
@@ -107,6 +107,13 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorTextTertiary};
   `,
 
+  actionRow: css`
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  `,
+
   aboutRow: css`
     display: flex;
     justify-content: space-between;
@@ -140,6 +147,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
   const [version, setVersion] = useState('')
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [connectionResult, setConnectionResult] = useState<ProviderConnectionResult | null>(null)
 
   useEffect(() => {
     api.settings.load().then(setSettings)
@@ -155,6 +164,29 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
 
   function patch(update: Partial<Settings>) {
     setSettings((s) => ({ ...s, ...update }))
+    setConnectionResult(null)
+  }
+
+  async function handleTestConnection() {
+    setTestingConnection(true)
+    setConnectionResult(null)
+    try {
+      const result = await api.settings.testConnection({
+        provider: settings.provider,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        baseUrl: settings.baseUrl,
+      })
+      setConnectionResult(result)
+    } catch (err) {
+      setConnectionResult({
+        ok: false,
+        message: '连接测试失败',
+        details: (err as Error).message ?? String(err),
+      })
+    } finally {
+      setTestingConnection(false)
+    }
   }
 
   return (
@@ -194,7 +226,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <span className={styles.label}>AI 提供商</span>
                 <Segmented
                   value={settings.provider}
-                  onChange={(v) => patch({ provider: v as PiProvider, model: '' })}
+                  onChange={(v) => patch({ provider: v as PiProvider, model: '', baseUrl: '' })}
                   options={[
                     { label: 'Anthropic (Claude)', value: 'anthropic' },
                     { label: 'OpenAI', value: 'openai' },
@@ -222,6 +254,20 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </button>
                   }
                 />
+                <div className={styles.actionRow}>
+                  <Button size="small" onClick={handleTestConnection} loading={testingConnection}>
+                    测试连接
+                  </Button>
+                  <span className={styles.labelHint}>使用当前表单内容测试，不需要先保存。</span>
+                </div>
+                {connectionResult && (
+                  <Alert
+                    type={connectionResult.ok ? 'success' : 'error'}
+                    showIcon
+                    message={connectionResult.message}
+                    description={connectionResult.details}
+                  />
+                )}
               </div>
 
               {settings.provider === 'openai' && (
