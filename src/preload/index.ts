@@ -26,6 +26,11 @@ const api = {
     testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
   },
 
+  securityPolicy: {
+    load: () => ipcRenderer.invoke('securityPolicy:load'),
+    save: (policy: unknown) => ipcRenderer.invoke('securityPolicy:save', policy),
+  },
+
   workspace: {
     list: () => ipcRenderer.invoke('workspace:list'),
     pickDirectory: () => ipcRenderer.invoke('workspace:pickDirectory'),

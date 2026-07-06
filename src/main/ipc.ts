@@ -30,6 +30,11 @@ import {
   saveWorkspaceMemory,
   syncWorkspaceMemoryExtension,
 } from './workspace-memory'
+import {
+  loadSecurityPolicy,
+  saveSecurityPolicy,
+  type SecurityPolicy,
+} from './security-policy'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -116,6 +121,23 @@ export function registerIpcHandlers(): void {
       },
     ) => testProviderConnection(settings),
   )
+
+  ipcMain.handle('securityPolicy:load', () => {
+    return loadSecurityPolicy(piClientManager.getWorkspacePath())
+  })
+  ipcMain.handle('securityPolicy:save', (_e, policy: SecurityPolicy) => {
+    try {
+      const result = saveSecurityPolicy(policy, piClientManager.getWorkspacePath())
+      appendAppLog('info', 'security.policy', 'Security policy saved', {
+        scope: result.scope,
+        workspacePath: result.workspacePath,
+      })
+      return { ok: true, ...result }
+    } catch (err) {
+      appendAppLog('error', 'security.policy', 'Failed to save security policy', normalizeError(err))
+      return { error: (err as Error).message ?? '保存安全策略失败' }
+    }
+  })
 
   // ── Workspaces ───────────────────────────────────────────────────
   ipcMain.handle('workspace:list', () => loadSettings().recentWorkspaces)

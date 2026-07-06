@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import { Alert, Input, Segmented, Button, Modal, Switch } from 'antd'
-import { Eye, EyeOff, Bot, Globe, Info } from 'lucide-react'
-import { api, type PiProvider, type ProviderConnectionResult } from '../lib/api'
+import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck } from 'lucide-react'
+import { api, type PiProvider, type ProviderConnectionResult, type SecurityPolicy } from '../lib/api'
 
 type Settings = {
   provider: PiProvider
@@ -16,13 +16,24 @@ type Settings = {
   subagentsEnabled: boolean
 }
 
-type Category = 'model' | 'tools' | 'about'
+type Category = 'model' | 'tools' | 'security' | 'about'
 
 const CATEGORIES: { key: Category; label: string; icon: typeof Bot }[] = [
   { key: 'model', label: '模型服务', icon: Bot },
   { key: 'tools', label: '扩展工具', icon: Globe },
+  { key: 'security', label: '安全策略', icon: ShieldCheck },
   { key: 'about', label: '关于', icon: Info },
 ]
+
+const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
+  commandAllowlist: [],
+  commandBlocklist: [],
+  writeAllowlist: [],
+  writeBlocklist: [],
+  requireConfirmationForDangerousCommands: true,
+  blockProtectedPaths: true,
+  blockOutsideWorkspace: true,
+}
 
 const useStyles = createStyles(({ token, css }) => ({
   main: css`
@@ -114,6 +125,22 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-wrap: wrap;
   `,
 
+  policyGrid: css`
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  `,
+
+  policyScope: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillTertiary};
+    padding: 8px 10px;
+    color: ${token.colorTextSecondary};
+    font-size: 12px;
+    line-height: 1.5;
+  `,
+
   aboutRow: css`
     display: flex;
     justify-content: space-between;
@@ -149,22 +176,60 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [version, setVersion] = useState('')
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<ProviderConnectionResult | null>(null)
+  const [securityPolicy, setSecurityPolicy] = useState<SecurityPolicy>(DEFAULT_SECURITY_POLICY)
+  const [policyScope, setPolicyScope] = useState<'default' | 'workspace'>('default')
+  const [policyWorkspacePath, setPolicyWorkspacePath] = useState('')
+  const [policyError, setPolicyError] = useState<string | null>(null)
 
   useEffect(() => {
     api.settings.load().then(setSettings)
+    api.securityPolicy
+      .load()
+      .then((result) => {
+        setSecurityPolicy(result.policy)
+        setPolicyScope(result.scope)
+        setPolicyWorkspacePath(result.workspacePath ?? '')
+      })
+      .catch((err) => setPolicyError((err as Error).message ?? '读取安全策略失败'))
     api.app.version().then(setVersion).catch(() => {})
   }, [])
 
   async function handleSave() {
     setSaving(true)
-    await api.settings.save(settings)
-    setSaving(false)
-    onClose()
+    try {
+      await api.settings.save(settings)
+      const result = await api.securityPolicy.save(securityPolicy)
+      if ('error' in result) {
+        setPolicyError(result.error)
+        return
+      }
+      setPolicyScope(result.scope)
+      setPolicyWorkspacePath(result.workspacePath ?? '')
+      onClose()
+    } finally {
+      setSaving(false)
+    }
   }
 
   function patch(update: Partial<Settings>) {
     setSettings((s) => ({ ...s, ...update }))
     setConnectionResult(null)
+  }
+
+  function patchPolicy(update: Partial<SecurityPolicy>) {
+    setSecurityPolicy((policy) => ({ ...policy, ...update }))
+    setPolicyError(null)
+  }
+
+  function linesToRules(value: string): string[] {
+    return value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+  }
+
+  function rulesToLines(value: string[]): string {
+    return value.join('\n')
   }
 
   async function handleTestConnection() {
@@ -374,6 +439,104 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <span className={styles.labelHint}>
                   修改后需重新打开工作区生效。默认阻止 rm -rf、递归强删、提权命令、注册表删除，以及 .env、.git、node_modules 和密钥文件写入。
                 </span>
+              </div>
+            </div>
+          )}
+
+          {category === 'security' && (
+            <div className={styles.form}>
+              <div className={styles.policyScope}>
+                当前编辑：
+                {policyScope === 'workspace'
+                  ? `当前工作区策略${policyWorkspacePath ? ` · ${policyWorkspacePath}` : ''}`
+                  : '默认策略（打开工作区前使用）'}
+                <br />
+                保存后下一次工具调用生效；不需要重启应用。命令规则按包含/前缀匹配，路径规则相对当前工作区解析。
+              </div>
+
+              {policyError && <Alert type="error" showIcon message={policyError} />}
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  默认保护
+                  <span className={styles.labelHint}>建议全部开启，必要时用允许规则放行具体命令或路径</span>
+                </span>
+                <div className={styles.actionRow}>
+                  <Switch
+                    checked={securityPolicy.blockOutsideWorkspace}
+                    onChange={(checked) => patchPolicy({ blockOutsideWorkspace: checked })}
+                    checkedChildren="阻止越界写入"
+                    unCheckedChildren="允许越界写入"
+                  />
+                  <Switch
+                    checked={securityPolicy.blockProtectedPaths}
+                    onChange={(checked) => patchPolicy({ blockProtectedPaths: checked })}
+                    checkedChildren="保护敏感路径"
+                    unCheckedChildren="不保护敏感路径"
+                  />
+                  <Switch
+                    checked={securityPolicy.requireConfirmationForDangerousCommands}
+                    onChange={(checked) =>
+                      patchPolicy({ requireConfirmationForDangerousCommands: checked })
+                    }
+                    checkedChildren="危险命令确认"
+                    unCheckedChildren="不确认危险命令"
+                  />
+                </div>
+              </div>
+
+              <div className={styles.policyGrid}>
+                <div className={styles.section}>
+                  <span className={styles.label}>
+                    命令允许规则
+                    <span className={styles.labelHint}>一行一个前缀；命中后不再弹危险确认</span>
+                  </span>
+                  <Input.TextArea
+                    value={rulesToLines(securityPolicy.commandAllowlist)}
+                    onChange={(e) => patchPolicy({ commandAllowlist: linesToRules(e.target.value) })}
+                    placeholder={'git status\npnpm test\nnpm run build'}
+                    autoSize={{ minRows: 5, maxRows: 8 }}
+                  />
+                </div>
+
+                <div className={styles.section}>
+                  <span className={styles.label}>
+                    命令阻止规则
+                    <span className={styles.labelHint}>一行一个关键字；命中后直接阻止</span>
+                  </span>
+                  <Input.TextArea
+                    value={rulesToLines(securityPolicy.commandBlocklist)}
+                    onChange={(e) => patchPolicy({ commandBlocklist: linesToRules(e.target.value) })}
+                    placeholder={'git push --force\ncurl | powershell\nSet-ExecutionPolicy'}
+                    autoSize={{ minRows: 5, maxRows: 8 }}
+                  />
+                </div>
+
+                <div className={styles.section}>
+                  <span className={styles.label}>
+                    写入允许路径
+                    <span className={styles.labelHint}>一行一个路径；可放行受保护目录内的具体文件</span>
+                  </span>
+                  <Input.TextArea
+                    value={rulesToLines(securityPolicy.writeAllowlist)}
+                    onChange={(e) => patchPolicy({ writeAllowlist: linesToRules(e.target.value) })}
+                    placeholder={'.env.example\ndocs/\nsrc/generated/'}
+                    autoSize={{ minRows: 5, maxRows: 8 }}
+                  />
+                </div>
+
+                <div className={styles.section}>
+                  <span className={styles.label}>
+                    写入阻止路径
+                    <span className={styles.labelHint}>一行一个路径；命中后直接阻止</span>
+                  </span>
+                  <Input.TextArea
+                    value={rulesToLines(securityPolicy.writeBlocklist)}
+                    onChange={(e) => patchPolicy({ writeBlocklist: linesToRules(e.target.value) })}
+                    placeholder={'.github/workflows/\npackage-lock.json\nscripts/release-local.mjs'}
+                    autoSize={{ minRows: 5, maxRows: 8 }}
+                  />
+                </div>
               </div>
             </div>
           )}

@@ -60,6 +60,15 @@ declare global {
           baseUrl: string
         }) => Promise<ProviderConnectionResult>
       }
+      securityPolicy: {
+        load: () => Promise<SecurityPolicyLoadResult>
+        save: (
+          policy: SecurityPolicy,
+        ) => Promise<
+          | ({ ok: true } & SecurityPolicyLoadResult)
+          | { error: string }
+        >
+      }
       workspace: {
         list: () => Promise<Workspace[]>
         pickDirectory: () => Promise<string | null>
@@ -132,6 +141,22 @@ export type WorkspaceMemory = {
   path: string
   exists: boolean
   content: string
+}
+
+export type SecurityPolicy = {
+  commandAllowlist: string[]
+  commandBlocklist: string[]
+  writeAllowlist: string[]
+  writeBlocklist: string[]
+  requireConfirmationForDangerousCommands: boolean
+  blockProtectedPaths: boolean
+  blockOutsideWorkspace: boolean
+}
+
+export type SecurityPolicyLoadResult = {
+  scope: 'default' | 'workspace'
+  workspacePath?: string
+  policy: SecurityPolicy
 }
 
 export type QueueMode = 'all' | 'one-at-a-time'
