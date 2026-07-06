@@ -22,7 +22,10 @@
             diff: () => Promise.resolve({ ok: true, snapshot: { status: '', unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
           },
           app: { version: () => Promise.resolve('0.1.0-preview') },
-          diagnostics: { save: () => Promise.resolve({ ok: true, path: 'mock-diagnostics.json' }) },
+          diagnostics: {
+            getLogs: () => Promise.resolve({ ok: true, content: '' }),
+            save: () => Promise.resolve({ ok: true, path: 'mock-diagnostics.json' }),
+          },
           settings: {
             load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, subagentsEnabled: true, recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),

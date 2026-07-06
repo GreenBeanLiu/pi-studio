@@ -15,6 +15,7 @@ const api = {
   },
 
   diagnostics: {
+    getLogs: () => ipcRenderer.invoke('diagnostics:getLogs'),
     save: (payload: { defaultPath: string; content: string }) =>
       ipcRenderer.invoke('diagnostics:save', payload),
   },

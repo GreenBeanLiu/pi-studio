@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc'
 import { piClientManager } from './pi-client'
+import { appendAppLog, attachWindowLoggers, installProcessLoggers, normalizeError } from './app-log'
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
@@ -22,19 +23,23 @@ function setupAutoUpdater(): void {
   autoUpdater.logger = null // suppress default logger noise
 
   autoUpdater.on('update-available', (info) => {
+    appendAppLog('info', 'updater', 'Update available', { version: info.version })
     broadcast('update:available', { version: info.version })
   })
 
   autoUpdater.on('update-downloaded', (info) => {
+    appendAppLog('info', 'updater', 'Update downloaded', { version: info.version })
     broadcast('update:downloaded', { version: info.version })
   })
 
   autoUpdater.on('error', (err) => {
     // Surface the error to the renderer so the user can see it
+    appendAppLog('error', 'updater', 'Auto update failed', normalizeError(err))
     broadcast('update:error', { message: err.message ?? String(err) })
   })
 
   ipcMain.on('update:install', () => {
+    appendAppLog('info', 'updater', 'Installing downloaded update')
     // isSilent=true: run the NSIS installer with /S so updates install
     // in-place without re-showing the assisted-install wizard
     // (oneClick:false only makes sense for FIRST installs).
@@ -44,6 +49,7 @@ function setupAutoUpdater(): void {
 
   const check = (): void => {
     autoUpdater.checkForUpdates().catch((err) => {
+      appendAppLog('error', 'updater', 'Update check failed', normalizeError(err))
       broadcast('update:error', { message: err.message ?? String(err) })
     })
   }
@@ -70,6 +76,8 @@ function createWindow(): void {
     },
   })
 
+  attachWindowLoggers(mainWindow)
+
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -85,6 +93,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  installProcessLoggers()
+  appendAppLog('info', 'app', 'App ready', { version: app.getVersion() })
+
   electronApp.setAppUserModelId('cc.glanger.pi-studio')
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -105,5 +116,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  appendAppLog('info', 'app', 'App quitting')
   piClientManager.stop().catch(() => {})
 })

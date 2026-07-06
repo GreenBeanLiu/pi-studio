@@ -23,6 +23,7 @@ declare global {
         version: () => Promise<string>
       }
       diagnostics: {
+        getLogs: () => Promise<{ ok: true; content: string }>
         save: (payload: {
           defaultPath: string
           content: string

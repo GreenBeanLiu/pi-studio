@@ -3,10 +3,21 @@ import { join } from 'path'
 import type { RpcClient as RpcClientType } from '@earendil-works/pi-coding-agent'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
+import { appendAppLog, normalizeError } from './app-log'
 
 export type PiEventListener = (event: AgentEvent) => void
 
 type RpcClient = RpcClientType
+
+type AgentProcessLike = {
+  stderr?: {
+    on: (event: 'data', listener: (chunk: Buffer | string) => void) => void
+  }
+  on: {
+    (event: 'exit', listener: (code: number | null, signal: string | null) => void): void
+    (event: 'error', listener: (err: Error) => void): void
+  }
+}
 
 // `@earendil-works/pi-coding-agent` ships ESM-only (no "require" export
 // condition), but electron-vite compiles the main process to CJS. A static
@@ -49,7 +60,9 @@ class PiClientManager {
   /** Pre-import the pi-coding-agent ESM graph so the first workspace open
    *  doesn't pay the module-load cost (hundreds of ms) on click. */
   warmup(): void {
-    loadRpcClient().catch(() => {})
+    loadRpcClient().catch((err) => {
+      appendAppLog('warn', 'agent.warmup', 'Failed to warm up pi coding agent', normalizeError(err))
+    })
   }
 
   async startWorkspace(
@@ -64,10 +77,16 @@ class PiClientManager {
     const RpcClient = await loadRpcClient()
     const client = new RpcClient({ cwd, env, provider, model, cliPath: resolvePiCliPath() })
     await client.start()
+    this.attachAgentProcessLoggers(client, cwd)
 
     this.client = client
     this.workspacePath = cwd
     this.unsubscribe = client.onEvent(onEvent)
+    appendAppLog('info', 'agent.start', 'Pi agent process started', {
+      cwd,
+      provider,
+      modelConfigured: !!model,
+    })
   }
 
   async stop(): Promise<void> {
@@ -75,6 +94,9 @@ class PiClientManager {
     this.unsubscribe = null
     if (this.client) {
       await this.client.stop().catch(() => {})
+      appendAppLog('info', 'agent.stop', 'Pi agent process stopped', {
+        cwd: this.workspacePath,
+      })
     }
     this.client = null
     this.workspacePath = null
@@ -87,6 +109,32 @@ class PiClientManager {
   private require(): RpcClient {
     if (!this.client) throw new Error('No workspace is open')
     return this.client
+  }
+
+  private attachAgentProcessLoggers(client: RpcClient, cwd: string): void {
+    const child = (client as unknown as { process?: AgentProcessLike }).process
+    if (!child) return
+
+    child.stderr?.on('data', (chunk) => {
+      const message = String(chunk).trim()
+      if (!message) return
+      appendAppLog('warn', 'agent.stderr', message, { cwd })
+    })
+
+    child.on('exit', (code, signal) => {
+      appendAppLog(code === 0 ? 'info' : 'warn', 'agent.exit', 'Pi agent process exited', {
+        cwd,
+        code,
+        signal,
+      })
+    })
+
+    child.on('error', (err) => {
+      appendAppLog('error', 'agent.process', 'Pi agent process error', {
+        cwd,
+        error: normalizeError(err),
+      })
+    })
   }
 
   prompt(message: string, images?: ImageContent[]): Promise<void> {

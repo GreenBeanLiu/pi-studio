@@ -859,10 +859,13 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     if (!workspace) return
 
     try {
-      const [state, appVersion, settings] = await Promise.all([
+      const [state, appVersion, settings, logs] = await Promise.all([
         api.pi.getState().catch(() => null),
         api.app.version().catch(() => 'unknown'),
         api.settings.load().catch(() => null),
+        api.diagnostics.getLogs().catch((err) => ({
+          error: (err as Error).message ?? 'Failed to read app logs',
+        })),
       ])
       const diagnostic = {
         exportedAt: new Date().toISOString(),
@@ -900,6 +903,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           toolExecutionCount: Object.keys(toolExecutions).length,
           runningTool,
         },
+        logs,
         toolExecutions: sanitizeForDiagnostics(toolExecutions),
         messages: sanitizeForDiagnostics(messages.slice(-80)),
       }

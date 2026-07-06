@@ -19,6 +19,7 @@ import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
 import { getGitDiffSnapshot } from './git-diff'
 import { testProviderConnection } from './provider-test'
+import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -39,6 +40,7 @@ export function registerIpcHandlers(): void {
 
   // ── App ──────────────────────────────────────────────────────────
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('diagnostics:getLogs', () => ({ ok: true, content: readRecentAppLog() }))
   ipcMain.handle(
     'diagnostics:save',
     async (
@@ -59,8 +61,12 @@ export function registerIpcHandlers(): void {
 
       try {
         writeFileSync(result.filePath, payload.content, 'utf-8')
+        appendAppLog('info', 'diagnostics', 'Diagnostics bundle exported', {
+          path: result.filePath,
+        })
         return { ok: true, path: result.filePath }
       } catch (err) {
+        appendAppLog('error', 'diagnostics', 'Diagnostics bundle export failed', normalizeError(err))
         return { error: (err as Error).message ?? '导出诊断包失败' }
       }
     },
@@ -127,6 +133,7 @@ export function registerIpcHandlers(): void {
     try {
       syncSubagentWorkflow(settings.subagentsEnabled)
     } catch (err) {
+      appendAppLog('warn', 'workspace.open', 'Failed to sync subagent workflow', normalizeError(err))
       console.warn('Failed to sync pi-studio subagent workflow:', err)
     }
 
@@ -146,10 +153,15 @@ export function registerIpcHandlers(): void {
         },
       )
     } catch (err) {
+      appendAppLog('error', 'workspace.open', 'Failed to start workspace', {
+        workspacePath,
+        error: normalizeError(err),
+      })
       return { error: (err as Error).message ?? '启动工作区失败' }
     }
 
     const recentWorkspaces = addRecentWorkspace(workspacePath)
+    appendAppLog('info', 'workspace.open', 'Workspace opened', { workspacePath })
     return { ok: true, recentWorkspaces }
   })
 
@@ -183,6 +195,7 @@ export function registerIpcHandlers(): void {
     try {
       return { ok: true, snapshot: await getGitDiffSnapshot(cwd) }
     } catch (err) {
+      appendAppLog('warn', 'git.diff', 'Failed to read git diff snapshot', normalizeError(err))
       return { error: (err as Error).message ?? '读取 Git 变更失败' }
     }
   })
