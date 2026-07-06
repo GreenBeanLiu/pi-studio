@@ -20,6 +20,7 @@ import {
   ExternalLink,
   RotateCcw,
   ShieldCheck,
+  Activity,
 } from 'lucide-react'
 import {
   api,
@@ -41,6 +42,41 @@ type Props = {
   workspace: Workspace | null
   /** Agent subprocess is still booting for this workspace */
   starting?: boolean
+}
+
+type RunStatus = 'running' | 'done' | 'error' | 'aborted'
+
+type RunTimelineItem = {
+  id: string
+  type: 'event' | 'tool'
+  label: string
+  detail?: string
+  timestamp: string
+  status?: RunStatus
+}
+
+type RunToolRecord = {
+  id: string
+  toolName: string
+  args?: unknown
+  status: ToolExecutionState['status']
+  result?: unknown
+  startedAt: string
+  endedAt?: string
+}
+
+type RunRecord = {
+  id: string
+  workspaceName?: string
+  workspacePath?: string
+  startedAt: string
+  endedAt?: string
+  status: RunStatus
+  model?: string
+  provider?: string
+  thinking: ThinkingLevel
+  tools: RunToolRecord[]
+  timeline: RunTimelineItem[]
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -533,6 +569,143 @@ const useStyles = createStyles(({ token, css }) => ({
     line-height: 1.55;
   `,
 
+  runSummaryGrid: css`
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  `,
+
+  runMetric: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillTertiary};
+    padding: 9px 10px;
+    min-width: 0;
+  `,
+
+  runMetricLabel: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    margin-bottom: 3px;
+  `,
+
+  runMetricValue: css`
+    font-size: 13px;
+    font-weight: 600;
+    color: ${token.colorText};
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  runList: css`
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-right: 4px;
+  `,
+
+  runItem: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorBgContainer};
+    overflow: hidden;
+  `,
+
+  runItemHeader: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid ${token.colorBorderSecondary};
+    background: ${token.colorFillTertiary};
+  `,
+
+  runItemTitle: css`
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  `,
+
+  runItemName: css`
+    font-size: 13px;
+    font-weight: 600;
+    color: ${token.colorText};
+  `,
+
+  runItemMeta: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  runStatusBadge: css`
+    flex-shrink: 0;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    border: 1px solid ${token.colorBorderSecondary};
+    color: ${token.colorTextSecondary};
+    background: ${token.colorBgElevated};
+  `,
+
+  runTimeline: css`
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px 12px;
+  `,
+
+  runTimelineRow: css`
+    display: grid;
+    grid-template-columns: 72px 16px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 30px;
+    align-items: flex-start;
+    color: ${token.colorTextSecondary};
+    font-size: 12px;
+  `,
+
+  runTimelineTime: css`
+    color: ${token.colorTextTertiary};
+    font-family: ${token.fontFamilyCode};
+    padding-top: 3px;
+  `,
+
+  runTimelineDot: css`
+    width: 8px;
+    height: 8px;
+    margin-top: 7px;
+    border-radius: 50%;
+    background: ${token.colorBorder};
+  `,
+
+  runTimelineText: css`
+    min-width: 0;
+    padding: 2px 0 7px;
+    border-bottom: 1px solid ${token.colorBorderSecondary};
+  `,
+
+  runTimelineLabel: css`
+    color: ${token.colorText};
+    font-weight: 500;
+  `,
+
+  runTimelineDetail: css`
+    margin-top: 2px;
+    color: ${token.colorTextTertiary};
+    font-family: ${token.fontFamilyCode};
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  `,
+
   paramsPanel: css`
     width: 300px;
     display: flex;
@@ -719,6 +892,51 @@ function truncateString(value: string): string {
   return value.length > 4000 ? `${value.slice(0, 4000)}\n...[truncated ${value.length - 4000} chars]` : value
 }
 
+function shortId(): string {
+  return Math.random().toString(36).slice(2, 8)
+}
+
+function formatClock(value: string): string {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function formatDuration(startedAt: string, endedAt?: string): string {
+  const end = endedAt ? new Date(endedAt).getTime() : Date.now()
+  const total = Math.max(0, Math.round((end - new Date(startedAt).getTime()) / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
+}
+
+function summarizeToolArgs(args: unknown): string {
+  if (args == null) return ''
+  if (typeof args === 'string') return args
+  if (typeof args === 'object') {
+    const obj = args as Record<string, unknown>
+    const candidate = obj.command ?? obj.path ?? obj.file_path ?? obj.pattern ?? obj.query
+    if (typeof candidate === 'string') return candidate
+  }
+  try {
+    return JSON.stringify(args)
+  } catch {
+    return String(args)
+  }
+}
+
+function runStatusLabel(status: RunStatus): string {
+  if (status === 'running') return '运行中'
+  if (status === 'done') return '已完成'
+  if (status === 'error') return '失败'
+  return '已停止'
+}
+
+function runStatusColor(status: RunStatus, token: ReturnType<typeof useStyles>['theme']): string {
+  if (status === 'running') return token.colorPrimary
+  if (status === 'done') return token.colorSuccess
+  if (status === 'error') return token.colorError
+  return token.colorTextTertiary
+}
+
 function sanitizeForDiagnostics(value: unknown, depth = 0): unknown {
   if (depth > 8) return '[max depth]'
   if (value == null) return value
@@ -790,6 +1008,8 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [memorySaving, setMemorySaving] = useState(false)
   const [memoryPath, setMemoryPath] = useState('')
   const [memoryDraft, setMemoryDraft] = useState('')
+  const [runTimelineOpen, setRunTimelineOpen] = useState(false)
+  const [runRecords, setRunRecords] = useState<RunRecord[]>([])
   // Follow the stream only while the user is at the bottom; scrolling up
   // pauses following so reading history isn't fought by auto-scroll.
   const [autoFollow, setAutoFollow] = useState(true)
@@ -801,6 +1021,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   // so update/end events replace the right slot even if other messages
   // (e.g. tool results) land in between.
   const streamingIndexRef = useRef<number | null>(null)
+  const activeRunIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     // Switching workspaces kills the old agent subprocess, so its agent_end
@@ -811,6 +1032,8 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     if (!workspace || starting) {
       setMessages([])
       setToolExecutions({})
+      setRunRecords([])
+      activeRunIdRef.current = null
       return
     }
     api.pi.getMessages().then(setMessages).catch(() => {})
@@ -844,10 +1067,43 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   // so it reads the current workspace through a ref.
   const workspaceRef = useRef(workspace)
   workspaceRef.current = workspace
+  const currentModelRef = useRef(currentModel)
+  currentModelRef.current = currentModel
+  const thinkingRef = useRef(thinking)
+  thinkingRef.current = thinking
 
   useEffect(() => {
     const off = api.pi.onEvent((event: PiRuntimeEvent) => {
       if (event.type === 'extension_ui_request') {
+        const runId = activeRunIdRef.current
+        if (runId) {
+          const timestamp = new Date().toISOString()
+          setRunRecords((prev) =>
+            prev.map((run) =>
+              run.id === runId
+                ? {
+                    ...run,
+                    timeline: [
+                      ...run.timeline,
+                      {
+                        id: `${timestamp}:ui:${shortId()}`,
+                        type: 'event',
+                        label:
+                          event.method === 'confirm'
+                            ? '等待用户确认'
+                            : event.method === 'notify'
+                              ? '扩展通知'
+                              : '扩展请求',
+                        detail: 'message' in event ? String(event.message) : event.method,
+                        timestamp,
+                        status: event.method === 'confirm' ? 'running' : undefined,
+                      },
+                    ],
+                  }
+                : run,
+            ),
+          )
+        }
         if (event.method === 'confirm') {
           Modal.confirm({
             title: event.title,
@@ -885,9 +1141,81 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 
       switch (event.type) {
         case 'agent_start':
+          {
+            const timestamp = new Date().toISOString()
+            const id = `${timestamp}:run:${shortId()}`
+            const model = currentModelRef.current
+            activeRunIdRef.current = id
+            setRunRecords((prev) =>
+              [
+                {
+                  id,
+                  workspaceName: workspaceRef.current?.name,
+                  workspacePath: workspaceRef.current?.path,
+                  startedAt: timestamp,
+                  status: 'running',
+                  model: model?.id,
+                  provider: model?.provider,
+                  thinking: thinkingRef.current,
+                  tools: [],
+                  timeline: [
+                    {
+                      id: `${id}:start`,
+                      type: 'event',
+                      label: 'Agent 开始',
+                      detail: workspaceRef.current?.name,
+                      timestamp,
+                      status: 'running',
+                    },
+                  ],
+                },
+                ...prev,
+              ].slice(0, 20),
+            )
+          }
           setSending(true)
           break
         case 'agent_end':
+          let completedRunId: string | null = null
+          {
+            const runId = activeRunIdRef.current
+            const timestamp = new Date().toISOString()
+            if (runId) {
+              completedRunId = runId
+              setRunRecords((prev) =>
+                prev.map((run) =>
+                  run.id === runId
+                    ? {
+                        ...run,
+                        endedAt: timestamp,
+                        status:
+                          run.status === 'aborted'
+                            ? 'aborted'
+                            : run.tools.some((tool) => tool.status === 'error')
+                              ? 'error'
+                              : 'done',
+                        timeline: [
+                          ...run.timeline,
+                          {
+                            id: `${runId}:end`,
+                            type: 'event',
+                            label: 'Agent 结束',
+                            timestamp,
+                            status:
+                              run.status === 'aborted'
+                                ? 'aborted'
+                                : run.tools.some((tool) => tool.status === 'error')
+                                  ? 'error'
+                                  : 'done',
+                          },
+                        ],
+                      }
+                    : run,
+                ),
+              )
+            }
+            activeRunIdRef.current = null
+          }
           setSending(false)
           api.git
             .diff()
@@ -896,6 +1224,29 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                 setDiffSnapshot(result.snapshot)
                 setDiffOpen(true)
                 antdMessage.info('Agent 修改了工作区，请检查后接受或回滚')
+                if (completedRunId) {
+                  const timestamp = new Date().toISOString()
+                  setRunRecords((prev) =>
+                    prev.map((run) =>
+                      run.id === completedRunId
+                        ? {
+                            ...run,
+                            timeline: [
+                              ...run.timeline,
+                              {
+                                id: `${completedRunId}:git:${shortId()}`,
+                                type: 'event',
+                                label: '检测到 Git 变更',
+                                detail: `${result.snapshot.files.length} 个文件变更`,
+                                timestamp,
+                                status: 'done',
+                              },
+                            ],
+                          }
+                        : run,
+                    ),
+                  )
+                }
               }
             })
             .catch(() => {})
@@ -931,12 +1282,66 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           })
           break
         case 'tool_execution_start':
+          {
+            const runId = activeRunIdRef.current
+            if (runId) {
+              const timestamp = new Date().toISOString()
+              const detail = summarizeToolArgs(event.args)
+              setRunRecords((prev) =>
+                prev.map((run) =>
+                  run.id === runId
+                    ? {
+                        ...run,
+                        tools: [
+                          ...run.tools.filter((tool) => tool.id !== event.toolCallId),
+                          {
+                            id: event.toolCallId,
+                            toolName: event.toolName,
+                            args: event.args,
+                            status: 'running',
+                            startedAt: timestamp,
+                          },
+                        ],
+                        timeline: [
+                          ...run.timeline,
+                          {
+                            id: `${timestamp}:tool-start:${event.toolCallId}`,
+                            type: 'tool',
+                            label: `开始 ${event.toolName}`,
+                            detail,
+                            timestamp,
+                            status: 'running',
+                          },
+                        ],
+                      }
+                    : run,
+                ),
+              )
+            }
+          }
           setToolExecutions((prev) => ({
             ...prev,
             [event.toolCallId]: { toolName: event.toolName, args: event.args, status: 'running' },
           }))
           break
         case 'tool_execution_update':
+          {
+            const runId = activeRunIdRef.current
+            if (runId) {
+              setRunRecords((prev) =>
+                prev.map((run) =>
+                  run.id === runId
+                    ? {
+                        ...run,
+                        tools: run.tools.map((tool) =>
+                          tool.id === event.toolCallId ? { ...tool, result: event.partialResult } : tool,
+                        ),
+                      }
+                    : run,
+                ),
+              )
+            }
+          }
           setToolExecutions((prev) => ({
             ...prev,
             [event.toolCallId]: {
@@ -946,6 +1351,42 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           }))
           break
         case 'tool_execution_end':
+          {
+            const runId = activeRunIdRef.current
+            if (runId) {
+              const timestamp = new Date().toISOString()
+              setRunRecords((prev) =>
+                prev.map((run) =>
+                  run.id === runId
+                    ? {
+                        ...run,
+                        tools: run.tools.map((tool) =>
+                          tool.id === event.toolCallId
+                            ? {
+                                ...tool,
+                                toolName: event.toolName,
+                                status: event.isError ? 'error' : 'done',
+                                result: event.result,
+                                endedAt: timestamp,
+                              }
+                            : tool,
+                        ),
+                        timeline: [
+                          ...run.timeline,
+                          {
+                            id: `${timestamp}:tool-end:${event.toolCallId}`,
+                            type: 'tool',
+                            label: `${event.isError ? '失败' : '完成'} ${event.toolName}`,
+                            timestamp,
+                            status: event.isError ? 'error' : 'done',
+                          },
+                        ],
+                      }
+                    : run,
+                ),
+              )
+            }
+          }
           setToolExecutions((prev) => ({
             ...prev,
             [event.toolCallId]: {
@@ -1014,6 +1455,47 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     return running.length > 0 ? running[running.length - 1].toolName : null
   }, [toolExecutions])
 
+  const latestRun = runRecords[0]
+  const latestRunErrors = latestRun?.tools.filter((tool) => tool.status === 'error').length ?? 0
+
+  const copyRunTimeline = useCallback(async () => {
+    if (runRecords.length === 0) return
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(runRecords, null, 2))
+      antdMessage.success('运行记录 JSON 已复制')
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '复制运行记录失败')
+    }
+  }, [runRecords])
+
+  const abortCurrentRun = useCallback(async () => {
+    const runId = activeRunIdRef.current
+    if (runId) {
+      const timestamp = new Date().toISOString()
+      setRunRecords((prev) =>
+        prev.map((run) =>
+          run.id === runId
+            ? {
+                ...run,
+                status: 'aborted',
+                timeline: [
+                  ...run.timeline,
+                  {
+                    id: `${runId}:abort:${shortId()}`,
+                    type: 'event',
+                    label: '用户停止',
+                    timestamp,
+                    status: 'aborted',
+                  },
+                ],
+              }
+            : run,
+        ),
+      )
+    }
+    await api.pi.abort()
+  }, [])
+
   const exportDiagnostics = useCallback(async () => {
     if (!workspace) return
 
@@ -1061,9 +1543,11 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           messageCount: messages.length,
           toolExecutionCount: Object.keys(toolExecutions).length,
           runningTool,
+          runRecordCount: runRecords.length,
         },
         logs,
         toolExecutions: sanitizeForDiagnostics(toolExecutions),
+        runRecords: sanitizeForDiagnostics(runRecords),
         messages: sanitizeForDiagnostics(messages.slice(-80)),
       }
 
@@ -1093,6 +1577,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     messages,
     toolExecutions,
     runningTool,
+    runRecords,
   ])
 
   const exportCurrentSession = useCallback(
@@ -1659,10 +2144,104 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     </Modal>
   )
 
+  const runTimelineModal = (
+    <Modal
+      open={runTimelineOpen}
+      onCancel={() => setRunTimelineOpen(false)}
+      title="运行记录"
+      width={900}
+      centered
+      footer={[
+        <Button key="copy" disabled={runRecords.length === 0} onClick={copyRunTimeline}>
+          <Download size={13} />
+          复制 JSON
+        </Button>,
+        <Button key="close" type="primary" onClick={() => setRunTimelineOpen(false)}>
+          关闭
+        </Button>,
+      ]}
+    >
+      {runRecords.length === 0 ? (
+        <Empty description="还没有运行记录" />
+      ) : (
+        <>
+          <div className={styles.runSummaryGrid}>
+            <div className={styles.runMetric}>
+              <div className={styles.runMetricLabel}>最近状态</div>
+              <div className={styles.runMetricValue}>{runStatusLabel(latestRun.status)}</div>
+            </div>
+            <div className={styles.runMetric}>
+              <div className={styles.runMetricLabel}>耗时</div>
+              <div className={styles.runMetricValue}>{formatDuration(latestRun.startedAt, latestRun.endedAt)}</div>
+            </div>
+            <div className={styles.runMetric}>
+              <div className={styles.runMetricLabel}>工具调用</div>
+              <div className={styles.runMetricValue}>{latestRun.tools.length}</div>
+            </div>
+            <div className={styles.runMetric}>
+              <div className={styles.runMetricLabel}>失败工具</div>
+              <div className={styles.runMetricValue}>{latestRunErrors}</div>
+            </div>
+          </div>
+
+          <div className={styles.runList}>
+            {runRecords.map((run) => {
+              const statusColor = runStatusColor(run.status, token)
+              return (
+                <div key={run.id} className={styles.runItem}>
+                  <div className={styles.runItemHeader}>
+                    <div className={styles.runItemTitle}>
+                      <div className={styles.runItemName}>
+                        {run.workspaceName ?? 'Workspace'} · {formatDuration(run.startedAt, run.endedAt)}
+                      </div>
+                      <div className={styles.runItemMeta}>
+                        {formatClock(run.startedAt)}
+                        {run.model ? ` · ${run.provider ?? 'model'}:${run.model}` : ''}
+                        {` · 推理 ${run.thinking}`}
+                        {` · ${run.tools.length} 个工具`}
+                      </div>
+                    </div>
+                    <span
+                      className={styles.runStatusBadge}
+                      style={{ color: statusColor, borderColor: `${statusColor}55` }}
+                    >
+                      {runStatusLabel(run.status)}
+                    </span>
+                  </div>
+
+                  <div className={styles.runTimeline}>
+                    {run.timeline.map((item) => {
+                      const itemColor = item.status ? runStatusColor(item.status, token) : token.colorBorder
+                      return (
+                        <div key={item.id} className={styles.runTimelineRow}>
+                          <span className={styles.runTimelineTime}>{formatClock(item.timestamp)}</span>
+                          <span className={styles.runTimelineDot} style={{ background: itemColor }} />
+                          <div className={styles.runTimelineText}>
+                            <div className={styles.runTimelineLabel}>{item.label}</div>
+                            {item.detail && (
+                              <div className={styles.runTimelineDetail} title={item.detail}>
+                                {item.detail}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </Modal>
+  )
+
   return (
     <div className={styles.pane}>
       {diffReviewModal}
       {workspaceMemoryModal}
+      {runTimelineModal}
       {error && (
         <div className={styles.errorBanner}>
           <span style={{ flex: 1 }}>{error}</span>
@@ -1855,6 +2434,12 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                 </button>
               )}
               {workspace && (
+                <button className={styles.modelChip} onClick={() => setRunTimelineOpen(true)} title="查看运行记录">
+                  <Activity size={11} />
+                  运行
+                </button>
+              )}
+              {workspace && (
                 <button className={styles.modelChip} onClick={openWorkspaceMemory} title="编辑 Workspace Memory">
                   <FileText size={11} />
                   记忆
@@ -1881,7 +2466,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               <div style={{ flex: 1 }} />
               {sending && (
                 <button
-                  onClick={() => api.pi.abort()}
+                  onClick={abortCurrentRun}
                   className={styles.sendBtn}
                   style={{ background: token.colorFill, color: token.colorTextSecondary }}
                   title="停止"
