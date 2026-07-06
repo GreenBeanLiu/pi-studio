@@ -20,7 +20,7 @@
           },
           app: { version: () => Promise.resolve('0.1.0-preview') },
           settings: {
-            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', recentWorkspaces: [] }),
+            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),
           },
           workspace: {

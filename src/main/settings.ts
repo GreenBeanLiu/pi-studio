@@ -21,6 +21,8 @@ type SettingsData = {
   tavilyApiKey: string
   /** Helicone API key: routes LLM calls through Helicone for logging; empty = off */
   heliconeApiKey: string
+  /** Blocks dangerous commands and writes to sensitive paths before tools execute */
+  securityGuardEnabled: boolean
   recentWorkspaces: Workspace[]
 }
 
@@ -32,6 +34,7 @@ const DEFAULTS: SettingsData = {
   favoriteModels: '',
   tavilyApiKey: '',
   heliconeApiKey: '',
+  securityGuardEnabled: true,
   recentWorkspaces: [],
 }
 
@@ -93,6 +96,10 @@ export function loadSettings(): SettingsData {
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
     heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
+    securityGuardEnabled:
+      typeof raw.securityGuardEnabled === 'boolean'
+        ? raw.securityGuardEnabled
+        : DEFAULTS.securityGuardEnabled,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -109,6 +116,7 @@ export function saveSettings(
     | 'favoriteModels'
     | 'tavilyApiKey'
     | 'heliconeApiKey'
+    | 'securityGuardEnabled'
   >,
 ): void {
   const raw = readRaw()
@@ -120,6 +128,7 @@ export function saveSettings(
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
+  raw.securityGuardEnabled = settings.securityGuardEnabled
 
   writeRaw(raw)
 }

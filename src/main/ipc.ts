@@ -14,6 +14,7 @@ import {
   type PiProvider,
 } from './settings'
 import { piClientManager } from './pi-client'
+import { syncSecurityGuardExtension } from './security-guard-extension'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -49,6 +50,7 @@ export function registerIpcHandlers(): void {
         favoriteModels: string
         tavilyApiKey: string
         heliconeApiKey: string
+        securityGuardEnabled: boolean
       },
     ) => {
       saveSettings(settings)
@@ -78,6 +80,7 @@ export function registerIpcHandlers(): void {
 
     writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey)
     syncWebSearchExtension(!!settings.tavilyApiKey)
+    syncSecurityGuardExtension(settings.securityGuardEnabled)
 
     try {
       await piClientManager.startWorkspace(

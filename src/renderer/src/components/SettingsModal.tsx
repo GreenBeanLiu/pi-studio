@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Input, Segmented, Button, Modal } from 'antd'
+import { Input, Segmented, Button, Modal, Switch } from 'antd'
 import { Eye, EyeOff, Bot, Globe, Info } from 'lucide-react'
 import { api, type PiProvider } from '../lib/api'
 
@@ -12,6 +12,7 @@ type Settings = {
   favoriteModels: string
   tavilyApiKey: string
   heliconeApiKey: string
+  securityGuardEnabled: boolean
 }
 
 type Category = 'model' | 'tools' | 'about'
@@ -132,6 +133,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     favoriteModels: '',
     tavilyApiKey: '',
     heliconeApiKey: '',
+    securityGuardEnabled: true,
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -290,6 +292,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 />
                 <span className={styles.labelHint}>
                   改后需重新打开工作区生效。经 gateway.helicone.ai 转发到你当前的 API 端点，密钥仅通过环境变量传给子进程。
+                </span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  Agent 安全边界
+                  <span className={styles.labelHint}>拦截危险命令、越界写入和敏感文件改写</span>
+                </span>
+                <Switch
+                  checked={settings.securityGuardEnabled}
+                  onChange={(checked) => patch({ securityGuardEnabled: checked })}
+                  checkedChildren="开启"
+                  unCheckedChildren="关闭"
+                />
+                <span className={styles.labelHint}>
+                  修改后需重新打开工作区生效。默认阻止 rm -rf、递归强删、提权命令、注册表删除，以及 .env、.git、node_modules 和密钥文件写入。
                 </span>
               </div>
             </div>

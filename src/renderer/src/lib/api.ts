@@ -31,6 +31,7 @@ declare global {
           favoriteModels: string
           tavilyApiKey: string
           heliconeApiKey: string
+          securityGuardEnabled: boolean
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -41,6 +42,7 @@ declare global {
           favoriteModels: string
           tavilyApiKey: string
           heliconeApiKey: string
+          securityGuardEnabled: boolean
         }) => Promise<{ ok: boolean }>
       }
       workspace: {
