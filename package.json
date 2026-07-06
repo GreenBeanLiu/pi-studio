@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "check:text": "node scripts/check-text-encoding.mjs",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder --win --publish always",
     "release:local": "node scripts/release-local.mjs",

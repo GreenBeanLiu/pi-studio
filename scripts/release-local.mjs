@@ -252,6 +252,7 @@ if (!skipBuild) {
     rmSync(distDir, { recursive: true, force: true })
     mkdirSync(distDir, { recursive: true })
   }
+  run('pnpm', ['run', 'check:text'])
   run('pnpm', ['run', 'build'])
   run('pnpm', ['exec', 'electron-builder', '--win', '--publish', 'never'])
 }
