@@ -25,6 +25,11 @@ import { syncSubagentWorkflow } from './subagent-workflow'
 import { discardGitChanges, getGitDiffSnapshot } from './git-diff'
 import { testProviderConnection } from './provider-test'
 import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
+import {
+  loadWorkspaceMemory,
+  saveWorkspaceMemory,
+  syncWorkspaceMemoryExtension,
+} from './workspace-memory'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -135,6 +140,7 @@ export function registerIpcHandlers(): void {
     writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey)
     syncWebSearchExtension(!!settings.tavilyApiKey)
     syncSecurityGuardExtension(settings.securityGuardEnabled)
+    syncWorkspaceMemoryExtension()
     try {
       syncSubagentWorkflow(settings.subagentsEnabled)
     } catch (err) {
@@ -172,6 +178,30 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('workspace:remove', (_e, workspacePath: string) => {
     return removeRecentWorkspace(workspacePath)
+  })
+
+  // ── Workspace memory ───────────────────────────────────────────
+  ipcMain.handle('memory:load', () => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return { error: 'No workspace is open' }
+    try {
+      return { ok: true, memory: loadWorkspaceMemory(cwd) }
+    } catch (err) {
+      appendAppLog('error', 'memory.load', 'Failed to load workspace memory', normalizeError(err))
+      return { error: (err as Error).message ?? '读取 Workspace Memory 失败' }
+    }
+  })
+  ipcMain.handle('memory:save', (_e, content: string) => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return { error: 'No workspace is open' }
+    try {
+      const memory = saveWorkspaceMemory(cwd, content)
+      appendAppLog('info', 'memory.save', 'Workspace memory saved', { path: memory.path })
+      return { ok: true, memory }
+    } catch (err) {
+      appendAppLog('error', 'memory.save', 'Failed to save workspace memory', normalizeError(err))
+      return { error: (err as Error).message ?? '保存 Workspace Memory 失败' }
+    }
   })
 
   // ── Sessions ─────────────────────────────────────────────────────

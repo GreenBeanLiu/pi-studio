@@ -66,6 +66,12 @@ declare global {
         open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
         remove: (path: string) => Promise<Workspace[]>
       }
+      memory: {
+        load: () => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
+        save: (
+          content: string,
+        ) => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
+      }
       sessions: {
         list: () => Promise<SessionInfo[]>
         switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
@@ -120,6 +126,12 @@ export type Workspace = {
   path: string
   name: string
   lastOpenedAt: string
+}
+
+export type WorkspaceMemory = {
+  path: string
+  exists: boolean
+  content: string
 }
 
 export type QueueMode = 'all' | 'one-at-a-time'

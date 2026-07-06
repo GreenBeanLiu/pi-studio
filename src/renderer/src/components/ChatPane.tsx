@@ -473,6 +473,36 @@ const useStyles = createStyles(({ token, css }) => ({
     min-width: 0;
   `,
 
+  memoryPath: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    margin-bottom: 8px;
+    font-family: ${token.fontFamilyCode};
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  memoryTextarea: css`
+    width: 100%;
+    min-height: 440px;
+    resize: vertical;
+    border: 1px solid ${token.colorBorder};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorBgContainer};
+    color: ${token.colorText};
+    padding: 12px;
+    outline: none;
+    font-family: ${token.fontFamilyCode};
+    font-size: 13px;
+    line-height: 1.65;
+
+    &:focus {
+      border-color: ${token.colorPrimaryBorder};
+      box-shadow: 0 0 0 2px ${token.colorPrimary}18;
+    }
+  `,
+
   diffMetaBlock: css`
     border: 1px solid ${token.colorBorderSecondary};
     border-radius: ${token.borderRadius}px;
@@ -755,6 +785,11 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffSnapshot, setDiffSnapshot] = useState<GitDiffSnapshot | null>(null)
   const [sessionExportLoading, setSessionExportLoading] = useState<SessionExportFormat | null>(null)
+  const [memoryOpen, setMemoryOpen] = useState(false)
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memorySaving, setMemorySaving] = useState(false)
+  const [memoryPath, setMemoryPath] = useState('')
+  const [memoryDraft, setMemoryDraft] = useState('')
   // Follow the stream only while the user is at the bottom; scrolling up
   // pauses following so reading history isn't fought by auto-scroll.
   const [autoFollow, setAutoFollow] = useState(true)
@@ -1079,6 +1114,47 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     },
     [workspace, sessionExportLoading],
   )
+
+  const openWorkspaceMemory = useCallback(async () => {
+    if (!workspace || memoryLoading) return
+    setMemoryOpen(true)
+    setMemoryLoading(true)
+    try {
+      const result = await api.memory.load()
+      if ('error' in result) {
+        antdMessage.error(result.error)
+        setMemoryOpen(false)
+        return
+      }
+      setMemoryPath(result.memory.path)
+      setMemoryDraft(result.memory.content)
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '读取 Workspace Memory 失败')
+      setMemoryOpen(false)
+    } finally {
+      setMemoryLoading(false)
+    }
+  }, [workspace, memoryLoading])
+
+  const saveWorkspaceMemory = useCallback(async () => {
+    if (!workspace || memorySaving) return
+    setMemorySaving(true)
+    try {
+      const result = await api.memory.save(memoryDraft)
+      if ('error' in result) {
+        antdMessage.error(result.error)
+        return
+      }
+      setMemoryPath(result.memory.path)
+      setMemoryDraft(result.memory.content)
+      setMemoryOpen(false)
+      antdMessage.success('Workspace Memory 已保存，下一轮任务生效')
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '保存 Workspace Memory 失败')
+    } finally {
+      setMemorySaving(false)
+    }
+  }, [workspace, memorySaving, memoryDraft])
 
   const openGitDiff = useCallback(async () => {
     if (!workspace) return
@@ -1547,9 +1623,46 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     </Modal>
   )
 
+  const workspaceMemoryModal = (
+    <Modal
+      open={memoryOpen}
+      onCancel={() => setMemoryOpen(false)}
+      title="Workspace Memory"
+      width={780}
+      centered
+      footer={[
+        <Button key="cancel" onClick={() => setMemoryOpen(false)}>
+          取消
+        </Button>,
+        <Button key="save" type="primary" loading={memorySaving} onClick={saveWorkspaceMemory}>
+          保存记忆
+        </Button>,
+      ]}
+    >
+      {memoryLoading ? (
+        <div style={{ padding: 32, display: 'flex', justifyContent: 'center' }}>
+          <Spin size="small" />
+        </div>
+      ) : (
+        <>
+          <div className={styles.memoryPath} title={memoryPath}>
+            {memoryPath || '.pi-studio/memory.md'}
+          </div>
+          <textarea
+            className={styles.memoryTextarea}
+            value={memoryDraft}
+            onChange={(e) => setMemoryDraft(e.target.value)}
+            spellCheck={false}
+          />
+        </>
+      )}
+    </Modal>
+  )
+
   return (
     <div className={styles.pane}>
       {diffReviewModal}
+      {workspaceMemoryModal}
       {error && (
         <div className={styles.errorBanner}>
           <span style={{ flex: 1 }}>{error}</span>
@@ -1739,6 +1852,12 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                 <button className={styles.modelChip} onClick={exportDiagnostics} title="导出诊断包">
                   <Download size={11} />
                   诊断包
+                </button>
+              )}
+              {workspace && (
+                <button className={styles.modelChip} onClick={openWorkspaceMemory} title="编辑 Workspace Memory">
+                  <FileText size={11} />
+                  记忆
                 </button>
               )}
               {workspace && (

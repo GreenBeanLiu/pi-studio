@@ -33,6 +33,11 @@ const api = {
     remove: (path: string) => ipcRenderer.invoke('workspace:remove', path),
   },
 
+  memory: {
+    load: () => ipcRenderer.invoke('memory:load'),
+    save: (content: string) => ipcRenderer.invoke('memory:save', content),
+  },
+
   sessions: {
     list: () => ipcRenderer.invoke('sessions:list'),
     switch: (sessionPath: string) => ipcRenderer.invoke('sessions:switch', sessionPath),

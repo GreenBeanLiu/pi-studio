@@ -17,6 +17,7 @@
             switch: () => Promise.resolve({ cancelled: false }),
             rename: () => Promise.resolve(),
             delete: () => Promise.resolve({ ok: true }),
+            exportCurrent: () => Promise.resolve({ ok: true, path: 'mock-session.md' }),
           },
           git: {
             diff: () => Promise.resolve({ ok: true, snapshot: { status: '', files: [], unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
@@ -38,6 +39,10 @@
             pickDirectory: () => Promise.resolve(null),
             open: () => Promise.resolve({ error: 'mock: not running in Electron' }),
             remove: () => Promise.resolve([]),
+          },
+          memory: {
+            load: () => Promise.resolve({ ok: true, memory: { path: '.pi-studio/memory.md', exists: false, content: '# Workspace Memory\n\n' } }),
+            save: (content) => Promise.resolve({ ok: true, memory: { path: '.pi-studio/memory.md', exists: true, content } }),
           },
           pi: {
             prompt: () => Promise.resolve(),
