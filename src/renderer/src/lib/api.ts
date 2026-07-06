@@ -68,6 +68,9 @@ declare global {
           | ({ ok: true } & SecurityPolicyLoadResult)
           | { error: string }
         >
+        addRule: (
+          payload: { target: SecurityPolicyRuleTarget; rule: string },
+        ) => Promise<({ ok: true } & SecurityPolicyLoadResult) | { error: string }>
       }
       workspace: {
         list: () => Promise<Workspace[]>
@@ -153,6 +156,12 @@ export type SecurityPolicy = {
   blockProtectedPaths: boolean
   blockOutsideWorkspace: boolean
 }
+
+export type SecurityPolicyRuleTarget =
+  | 'commandAllowlist'
+  | 'commandBlocklist'
+  | 'writeAllowlist'
+  | 'writeBlocklist'
 
 export type SecurityPolicyLoadResult = {
   scope: 'default' | 'workspace'

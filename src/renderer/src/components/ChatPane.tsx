@@ -20,6 +20,7 @@ import {
   ExternalLink,
   RotateCcw,
   ShieldCheck,
+  ShieldAlert,
   Activity,
 } from 'lucide-react'
 import {
@@ -92,6 +93,22 @@ type MemorySuggestion = {
   content: string
 }
 
+type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'remembered' | 'blocked' | 'error'
+
+type ToolApprovalRequest = {
+  id: string
+  runId: string | null
+  title: string
+  message: string
+  command?: string
+  reason?: string
+  createdAt: string
+  status: ApprovalStatus
+  error?: string
+}
+
+type ApprovalDecision = 'allow-once' | 'deny' | 'remember-allow' | 'remember-block'
+
 const useStyles = createStyles(({ token, css }) => ({
   pane: css`
     flex: 1;
@@ -132,6 +149,75 @@ const useStyles = createStyles(({ token, css }) => ({
     padding: 0;
     transition: opacity ${token.motionDurationFast};
     &:hover { opacity: 1; }
+  `,
+
+  approvalStack: css`
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+  `,
+
+  approvalCard: css`
+    border: 1px solid ${token.colorWarningBorder};
+    background: ${token.colorWarningBg};
+    border-radius: ${token.borderRadius}px;
+    padding: 10px 12px;
+    box-shadow: ${token.boxShadowSecondary};
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: ${token.colorText};
+  `,
+
+  approvalHeader: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  `,
+
+  approvalTitle: css`
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  approvalMeta: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    flex-shrink: 0;
+  `,
+
+  approvalCommand: css`
+    font-family: ${token.fontFamilyCode};
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: ${token.colorBgContainer};
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadiusSM}px;
+    padding: 7px 8px;
+    max-height: 110px;
+    overflow-y: auto;
+  `,
+
+  approvalReason: css`
+    font-size: 12px;
+    color: ${token.colorTextSecondary};
+  `,
+
+  approvalActions: css`
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
   `,
 
   messages: css`
@@ -966,6 +1052,30 @@ function firstLine(value: string, limit = 220): string {
   return line.length > limit ? `${line.slice(0, limit)}...` : line
 }
 
+function parseApprovalMessage(message: string): Pick<ToolApprovalRequest, 'command' | 'reason'> {
+  const commandMatch = message.match(/命令[:：]\s*\n+([\s\S]*?)(?:\n\s*\n\s*原因[:：]|$)/)
+  const reasonMatch = message.match(/原因[:：]\s*([\s\S]*?)(?:\n\s*\n|$)/)
+  const command = commandMatch?.[1]?.trim()
+  const reason = reasonMatch?.[1]?.trim()
+  return {
+    command: command || undefined,
+    reason: reason || undefined,
+  }
+}
+
+function approvalRuleFromCommand(command: string): string {
+  return command.trim().replace(/\s+/g, ' ').slice(0, 240)
+}
+
+function approvalStatusLabel(status: ApprovalStatus): string {
+  if (status === 'pending') return '等待确认'
+  if (status === 'allowed') return '已允许'
+  if (status === 'remembered') return '已允许并记住'
+  if (status === 'blocked') return '已拒绝并阻止'
+  if (status === 'error') return '处理失败'
+  return '已拒绝'
+}
+
 function latestUserText(messages: AgentMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i]
@@ -1111,6 +1221,7 @@ export default function ChatPane({
   const [memorySuggestionDraft, setMemorySuggestionDraft] = useState('')
   const [runTimelineOpen, setRunTimelineOpen] = useState(false)
   const [runRecords, setRunRecords] = useState<RunRecord[]>([])
+  const [approvalRequests, setApprovalRequests] = useState<ToolApprovalRequest[]>([])
   // Follow the stream only while the user is at the bottom; scrolling up
   // pauses following so reading history isn't fought by auto-scroll.
   const [autoFollow, setAutoFollow] = useState(true)
@@ -1170,6 +1281,7 @@ export default function ChatPane({
       setMessages([])
       setToolExecutions({})
       setRunRecords([])
+      setApprovalRequests([])
       setMemorySuggestion(null)
       setMemorySuggestionDraft('')
       activeRunIdRef.current = null
@@ -1215,8 +1327,8 @@ export default function ChatPane({
     const off = api.pi.onEvent((event: PiRuntimeEvent) => {
       if (event.type === 'extension_ui_request') {
         const runId = activeRunIdRef.current
+        const timestamp = new Date().toISOString()
         if (runId) {
-          const timestamp = new Date().toISOString()
           setRunRecords((prev) =>
             prev.map((run) =>
               run.id === runId
@@ -1229,7 +1341,7 @@ export default function ChatPane({
                         type: 'event',
                         label:
                           event.method === 'confirm'
-                            ? '等待用户确认'
+                            ? '等待工具审批'
                             : event.method === 'notify'
                               ? '扩展通知'
                               : '扩展请求',
@@ -1244,25 +1356,20 @@ export default function ChatPane({
           )
         }
         if (event.method === 'confirm') {
-          Modal.confirm({
-            title: event.title,
-            content: <div style={{ whiteSpace: 'pre-wrap' }}>{event.message}</div>,
-            okText: '允许执行',
-            cancelText: '拒绝',
-            okButtonProps: { danger: true },
-            onOk: () =>
-              api.pi.extensionUiResponse({
-                type: 'extension_ui_response',
-                id: event.id,
-                confirmed: true,
-              }),
-            onCancel: () =>
-              api.pi.extensionUiResponse({
-                type: 'extension_ui_response',
-                id: event.id,
-                confirmed: false,
-              }),
-          })
+          const parsed = parseApprovalMessage(event.message)
+          setApprovalRequests((prev) => [
+            {
+              id: event.id,
+              runId,
+              title: event.title,
+              message: event.message,
+              command: parsed.command,
+              reason: parsed.reason,
+              createdAt: timestamp,
+              status: 'pending',
+            },
+            ...prev.filter((item) => item.id !== event.id),
+          ].slice(0, 8))
         } else if (event.method === 'notify') {
           const notify = event.notifyType === 'error' ? antdMessage.error : event.notifyType === 'warning' ? antdMessage.warning : antdMessage.info
           notify(event.message)
@@ -1365,6 +1472,13 @@ export default function ChatPane({
               )
             }
             activeRunIdRef.current = null
+            setApprovalRequests((prev) =>
+              prev.map((item) =>
+                item.runId === runId && item.status === 'pending'
+                  ? { ...item, status: 'denied', error: '运行已结束，审批已失效' }
+                  : item,
+              ),
+            )
           }
           setSending(false)
           api.git
@@ -1631,6 +1745,86 @@ export default function ChatPane({
 
   const latestRun = runRecords[0]
   const latestRunErrors = latestRun?.tools.filter((tool) => tool.status === 'error').length ?? 0
+  const pendingApprovals = approvalRequests.filter((item) => item.status === 'pending')
+
+  const updateApproval = useCallback((id: string, update: Partial<ToolApprovalRequest>) => {
+    setApprovalRequests((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...update } : item)),
+    )
+  }, [])
+
+  const appendApprovalTimeline = useCallback(
+    (approval: ToolApprovalRequest, label: string, status: RunStatus) => {
+      if (!approval.runId) return
+      const timestamp = new Date().toISOString()
+      setRunRecords((prev) =>
+        prev.map((run) =>
+          run.id === approval.runId
+            ? {
+                ...run,
+                timeline: [
+                  ...run.timeline,
+                  {
+                    id: `${timestamp}:approval:${approval.id}:${shortId()}`,
+                    type: 'event',
+                    label,
+                    detail: approval.command ?? firstLine(approval.message),
+                    timestamp,
+                    status,
+                  },
+                ],
+              }
+            : run,
+        ),
+      )
+    },
+    [],
+  )
+
+  const decideApproval = useCallback(
+    async (approval: ToolApprovalRequest, decision: ApprovalDecision) => {
+      if (approval.status !== 'pending') return
+
+      try {
+        if (decision === 'remember-allow' || decision === 'remember-block') {
+          if (!approval.command) {
+            throw new Error('这个审批没有可记住的命令')
+          }
+          const rule = approvalRuleFromCommand(approval.command)
+          const target = decision === 'remember-allow' ? 'commandAllowlist' : 'commandBlocklist'
+          const result = await api.securityPolicy.addRule({ target, rule })
+          if ('error' in result) throw new Error(result.error)
+        }
+
+        const confirmed = decision === 'allow-once' || decision === 'remember-allow'
+        await api.pi.extensionUiResponse({
+          type: 'extension_ui_response',
+          id: approval.id,
+          confirmed,
+        })
+
+        const nextStatus: ApprovalStatus =
+          decision === 'allow-once'
+            ? 'allowed'
+            : decision === 'remember-allow'
+              ? 'remembered'
+              : decision === 'remember-block'
+                ? 'blocked'
+                : 'denied'
+        updateApproval(approval.id, { status: nextStatus })
+        appendApprovalTimeline(
+          approval,
+          approvalStatusLabel(nextStatus),
+          confirmed ? 'done' : 'aborted',
+        )
+      } catch (err) {
+        const message = (err as Error).message ?? '审批处理失败'
+        updateApproval(approval.id, { status: 'pending', error: message })
+        antdMessage.error(message)
+      }
+    },
+    [appendApprovalTimeline, updateApproval],
+  )
 
   const copyRunTimeline = useCallback(async () => {
     if (runRecords.length === 0) return
@@ -1664,6 +1858,13 @@ export default function ChatPane({
                 ],
               }
             : run,
+        ),
+      )
+      setApprovalRequests((prev) =>
+        prev.map((item) =>
+          item.runId === runId && item.status === 'pending'
+            ? { ...item, status: 'denied', error: '用户停止运行，审批已取消' }
+            : item,
         ),
       )
     }
@@ -1718,10 +1919,12 @@ export default function ChatPane({
           toolExecutionCount: Object.keys(toolExecutions).length,
           runningTool,
           runRecordCount: runRecords.length,
+          pendingApprovalCount: pendingApprovals.length,
           agentIssue: sanitizeForDiagnostics(agentIssue),
         },
         logs,
         toolExecutions: sanitizeForDiagnostics(toolExecutions),
+        approvalRequests: sanitizeForDiagnostics(approvalRequests),
         runRecords: sanitizeForDiagnostics(runRecords),
         messages: sanitizeForDiagnostics(messages.slice(-80)),
       }
@@ -1754,6 +1957,8 @@ export default function ChatPane({
     toolExecutions,
     runningTool,
     runRecords,
+    approvalRequests,
+    pendingApprovals.length,
   ])
 
   const exportCurrentSession = useCallback(
@@ -2603,6 +2808,54 @@ export default function ChatPane({
               <span>
                 {runningTool ? `正在执行 ${runningTool}` : '思考中'} · 已运行 {elapsed}s
               </span>
+            </div>
+          )}
+          {pendingApprovals.length > 0 && (
+            <div className={styles.approvalStack}>
+              {pendingApprovals.map((approval) => (
+                <div key={approval.id} className={styles.approvalCard}>
+                  <div className={styles.approvalHeader}>
+                    <ShieldAlert size={15} color={token.colorWarning} />
+                    <div className={styles.approvalTitle}>{approval.title}</div>
+                    <div className={styles.approvalMeta}>{formatClock(approval.createdAt)}</div>
+                  </div>
+                  <div className={styles.approvalCommand}>
+                    {approval.command ?? approval.message}
+                  </div>
+                  {approval.reason && (
+                    <div className={styles.approvalReason}>原因：{approval.reason}</div>
+                  )}
+                  {approval.error && (
+                    <div className={styles.approvalReason} style={{ color: token.colorError }}>
+                      {approval.error}
+                    </div>
+                  )}
+                  <div className={styles.approvalActions}>
+                    <Button size="small" onClick={() => decideApproval(approval, 'deny')}>
+                      拒绝
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      disabled={!approval.command}
+                      onClick={() => decideApproval(approval, 'remember-block')}
+                    >
+                      加入阻止
+                    </Button>
+                    <Button size="small" onClick={() => decideApproval(approval, 'allow-once')}>
+                      允许一次
+                    </Button>
+                    <Button
+                      size="small"
+                      type="primary"
+                      disabled={!approval.command}
+                      onClick={() => decideApproval(approval, 'remember-allow')}
+                    >
+                      始终允许
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
           {slashFilter !== null && slashMatches.length === 0 && (

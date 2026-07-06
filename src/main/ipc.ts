@@ -31,9 +31,11 @@ import {
   syncWorkspaceMemoryExtension,
 } from './workspace-memory'
 import {
+  appendSecurityPolicyRule,
   loadSecurityPolicy,
   saveSecurityPolicy,
   type SecurityPolicy,
+  type SecurityPolicyRuleTarget,
 } from './security-policy'
 
 export function registerIpcHandlers(): void {
@@ -143,6 +145,28 @@ export function registerIpcHandlers(): void {
       return { error: (err as Error).message ?? '保存安全策略失败' }
     }
   })
+  ipcMain.handle(
+    'securityPolicy:addRule',
+    (_e, payload: { target: SecurityPolicyRuleTarget; rule: string }) => {
+      try {
+        const result = appendSecurityPolicyRule(
+          payload.target,
+          payload.rule,
+          piClientManager.getWorkspacePath(),
+        )
+        appendAppLog('info', 'security.policy', 'Security policy rule added', {
+          scope: result.scope,
+          workspacePath: result.workspacePath,
+          target: payload.target,
+          rule: payload.rule,
+        })
+        return { ok: true, ...result }
+      } catch (err) {
+        appendAppLog('error', 'security.policy', 'Failed to add security policy rule', normalizeError(err))
+        return { error: (err as Error).message ?? '添加安全策略规则失败' }
+      }
+    },
+  )
 
   // ── Workspaces ───────────────────────────────────────────────────
   ipcMain.handle('workspace:list', () => loadSettings().recentWorkspaces)

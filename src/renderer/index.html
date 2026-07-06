@@ -37,6 +37,7 @@
           securityPolicy: {
             load: () => Promise.resolve({ scope: 'default', policy: { commandAllowlist: [], commandBlocklist: [], writeAllowlist: [], writeBlocklist: [], requireConfirmationForDangerousCommands: true, blockProtectedPaths: true, blockOutsideWorkspace: true } }),
             save: (policy) => Promise.resolve({ ok: true, scope: 'default', policy }),
+            addRule: ({ target, rule }) => Promise.resolve({ ok: true, scope: 'default', policy: { commandAllowlist: target === 'commandAllowlist' ? [rule] : [], commandBlocklist: target === 'commandBlocklist' ? [rule] : [], writeAllowlist: target === 'writeAllowlist' ? [rule] : [], writeBlocklist: target === 'writeBlocklist' ? [rule] : [], requireConfirmationForDangerousCommands: true, blockProtectedPaths: true, blockOutsideWorkspace: true } }),
           },
           workspace: {
             list: () => Promise.resolve([]),

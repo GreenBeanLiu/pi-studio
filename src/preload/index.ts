@@ -29,6 +29,8 @@ const api = {
   securityPolicy: {
     load: () => ipcRenderer.invoke('securityPolicy:load'),
     save: (policy: unknown) => ipcRenderer.invoke('securityPolicy:save', policy),
+    addRule: (payload: { target: string; rule: string }) =>
+      ipcRenderer.invoke('securityPolicy:addRule', payload),
   },
 
   workspace: {

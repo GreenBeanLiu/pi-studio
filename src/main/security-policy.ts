@@ -23,6 +23,19 @@ export type SecurityPolicyLoadResult = {
   policy: SecurityPolicy
 }
 
+export type SecurityPolicyRuleTarget =
+  | 'commandAllowlist'
+  | 'commandBlocklist'
+  | 'writeAllowlist'
+  | 'writeBlocklist'
+
+const SECURITY_POLICY_RULE_TARGETS = new Set<SecurityPolicyRuleTarget>([
+  'commandAllowlist',
+  'commandBlocklist',
+  'writeAllowlist',
+  'writeBlocklist',
+])
+
 export const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
   commandAllowlist: [],
   commandBlocklist: [],
@@ -124,4 +137,33 @@ export function saveSecurityPolicy(
   store.default = normalized
   saveStore(store)
   return { scope: 'default', policy: normalized }
+}
+
+export function appendSecurityPolicyRule(
+  target: SecurityPolicyRuleTarget,
+  rule: string,
+  workspacePath?: string | null,
+): SecurityPolicyLoadResult {
+  const cleanRule = rule.trim()
+  if (!cleanRule) throw new Error('Security policy rule cannot be empty')
+  if (!SECURITY_POLICY_RULE_TARGETS.has(target)) {
+    throw new Error(`Invalid security policy rule target: ${String(target)}`)
+  }
+
+  const store = loadStore()
+  const current = workspacePath ? store.workspaces[workspacePath] ?? store.default : store.default
+  const next = normalizePolicy(current)
+  if (!next[target].some((item) => item.toLowerCase() === cleanRule.toLowerCase())) {
+    next[target] = [...next[target], cleanRule]
+  }
+
+  if (workspacePath) {
+    store.workspaces[workspacePath] = next
+    saveStore(store)
+    return { scope: 'workspace', workspacePath, policy: next }
+  }
+
+  store.default = next
+  saveStore(store)
+  return { scope: 'default', policy: next }
 }
