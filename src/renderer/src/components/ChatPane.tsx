@@ -79,6 +79,12 @@ type RunRecord = {
   timeline: RunTimelineItem[]
 }
 
+type MemorySuggestion = {
+  id: string
+  createdAt: string
+  content: string
+}
+
 const useStyles = createStyles(({ token, css }) => ({
   pane: css`
     flex: 1;
@@ -539,6 +545,17 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  memorySuggestionHint: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillTertiary};
+    color: ${token.colorTextSecondary};
+    font-size: 12px;
+    line-height: 1.55;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  `,
+
   diffMetaBlock: css`
     border: 1px solid ${token.colorBorderSecondary};
     border-radius: ${token.borderRadius}px;
@@ -937,6 +954,64 @@ function runStatusColor(status: RunStatus, token: ReturnType<typeof useStyles>['
   return token.colorTextTertiary
 }
 
+function firstLine(value: string, limit = 220): string {
+  const line = value.replace(/\s+/g, ' ').trim()
+  return line.length > limit ? `${line.slice(0, limit)}...` : line
+}
+
+function latestUserText(messages: AgentMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]
+    if ((message as { role?: string }).role !== 'user') continue
+    return firstLine(textOf((message as { content: never }).content))
+  }
+  return ''
+}
+
+function uniqueList(items: string[], limit: number): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))].slice(0, limit)
+}
+
+function bashCommandOf(tool: RunToolRecord): string | null {
+  if (tool.toolName !== 'bash') return null
+  if (!tool.args || typeof tool.args !== 'object') return null
+  const command = (tool.args as Record<string, unknown>).command
+  return typeof command === 'string' ? firstLine(command, 160) : null
+}
+
+function buildMemorySuggestion(
+  workspace: Workspace | null,
+  messages: AgentMessage[],
+  run: RunRecord | undefined,
+  diff: GitDiffSnapshot | null,
+): MemorySuggestion | null {
+  const task = latestUserText(messages)
+  const changedFiles = uniqueList(diff?.files.map((file) => file.path) ?? [], 8)
+  const commands = uniqueList((run?.tools ?? []).map(bashCommandOf).filter((cmd): cmd is string => !!cmd), 5)
+  const tools = uniqueList((run?.tools ?? []).map((tool) => tool.toolName), 8)
+
+  if (!task && changedFiles.length === 0 && commands.length === 0 && tools.length === 0) {
+    return null
+  }
+
+  const createdAt = new Date().toISOString()
+  const lines = [
+    `## Session Note - ${createdAt.slice(0, 10)}`,
+    workspace?.name ? `- Workspace: ${workspace.name}` : null,
+    task ? `- Task: ${task}` : null,
+    run ? `- Outcome: ${runStatusLabel(run.status)}` : null,
+    changedFiles.length > 0 ? `- Files changed: ${changedFiles.join(', ')}` : null,
+    commands.length > 0 ? `- Commands used: ${commands.join(' | ')}` : null,
+    tools.length > 0 ? `- Tools used: ${tools.join(', ')}` : null,
+  ].filter((line): line is string => !!line)
+
+  return {
+    id: `${createdAt}:memory:${shortId()}`,
+    createdAt,
+    content: lines.join('\n'),
+  }
+}
+
 function sanitizeForDiagnostics(value: unknown, depth = 0): unknown {
   if (depth > 8) return '[max depth]'
   if (value == null) return value
@@ -1008,6 +1083,10 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [memorySaving, setMemorySaving] = useState(false)
   const [memoryPath, setMemoryPath] = useState('')
   const [memoryDraft, setMemoryDraft] = useState('')
+  const [memorySuggestionOpen, setMemorySuggestionOpen] = useState(false)
+  const [memorySuggestionSaving, setMemorySuggestionSaving] = useState(false)
+  const [memorySuggestion, setMemorySuggestion] = useState<MemorySuggestion | null>(null)
+  const [memorySuggestionDraft, setMemorySuggestionDraft] = useState('')
   const [runTimelineOpen, setRunTimelineOpen] = useState(false)
   const [runRecords, setRunRecords] = useState<RunRecord[]>([])
   // Follow the stream only while the user is at the bottom; scrolling up
@@ -1022,6 +1101,10 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   // (e.g. tool results) land in between.
   const streamingIndexRef = useRef<number | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
+  const messagesStateRef = useRef(messages)
+  const runRecordsRef = useRef(runRecords)
+  messagesStateRef.current = messages
+  runRecordsRef.current = runRecords
 
   useEffect(() => {
     // Switching workspaces kills the old agent subprocess, so its agent_end
@@ -1033,6 +1116,8 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       setMessages([])
       setToolExecutions({})
       setRunRecords([])
+      setMemorySuggestion(null)
+      setMemorySuggestionDraft('')
       activeRunIdRef.current = null
       return
     }
@@ -1177,11 +1262,22 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           break
         case 'agent_end':
           let completedRunId: string | null = null
+          let completedRunForMemory: RunRecord | undefined
           {
             const runId = activeRunIdRef.current
             const timestamp = new Date().toISOString()
             if (runId) {
               completedRunId = runId
+              const currentRun = runRecordsRef.current.find((run) => run.id === runId)
+              if (currentRun) {
+                const status: RunStatus =
+                  currentRun.status === 'aborted'
+                    ? 'aborted'
+                    : currentRun.tools.some((tool) => tool.status === 'error')
+                      ? 'error'
+                      : 'done'
+                completedRunForMemory = { ...currentRun, endedAt: timestamp, status }
+              }
               setRunRecords((prev) =>
                 prev.map((run) =>
                   run.id === runId
@@ -1220,6 +1316,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           api.git
             .diff()
             .then((result) => {
+              const snapshot = 'ok' in result ? result.snapshot : null
               if ('ok' in result && result.snapshot.status.trim()) {
                 setDiffSnapshot(result.snapshot)
                 setDiffOpen(true)
@@ -1248,8 +1345,31 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                   )
                 }
               }
+              const suggestion = buildMemorySuggestion(
+                workspaceRef.current,
+                messagesStateRef.current,
+                completedRunForMemory,
+                snapshot,
+              )
+              if (suggestion) {
+                setMemorySuggestion(suggestion)
+                setMemorySuggestionDraft(suggestion.content)
+                antdMessage.info('已生成 Workspace Memory 建议，可在“记忆建议”中确认')
+              }
             })
-            .catch(() => {})
+            .catch(() => {
+              const suggestion = buildMemorySuggestion(
+                workspaceRef.current,
+                messagesStateRef.current,
+                completedRunForMemory,
+                null,
+              )
+              if (suggestion) {
+                setMemorySuggestion(suggestion)
+                setMemorySuggestionDraft(suggestion.content)
+                antdMessage.info('已生成 Workspace Memory 建议，可在“记忆建议”中确认')
+              }
+            })
           if (!document.hasFocus()) {
             api.win.flash()
             try {
@@ -1640,6 +1760,37 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       setMemorySaving(false)
     }
   }, [workspace, memorySaving, memoryDraft])
+
+  const applyMemorySuggestion = useCallback(async () => {
+    if (!workspace || !memorySuggestionDraft.trim() || memorySuggestionSaving) return
+    setMemorySuggestionSaving(true)
+    try {
+      const loaded = await api.memory.load()
+      if ('error' in loaded) {
+        antdMessage.error(loaded.error)
+        return
+      }
+
+      const current = loaded.memory.content.trimEnd()
+      const nextContent = `${current}\n\n${memorySuggestionDraft.trim()}\n`
+      const saved = await api.memory.save(nextContent)
+      if ('error' in saved) {
+        antdMessage.error(saved.error)
+        return
+      }
+
+      setMemoryPath(saved.memory.path)
+      setMemoryDraft(saved.memory.content)
+      setMemorySuggestion(null)
+      setMemorySuggestionDraft('')
+      setMemorySuggestionOpen(false)
+      antdMessage.success('记忆建议已写入 Workspace Memory，下一轮任务生效')
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '保存记忆建议失败')
+    } finally {
+      setMemorySuggestionSaving(false)
+    }
+  }, [workspace, memorySuggestionDraft, memorySuggestionSaving])
 
   const openGitDiff = useCallback(async () => {
     if (!workspace) return
@@ -2144,6 +2295,58 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     </Modal>
   )
 
+  const memorySuggestionModal = (
+    <Modal
+      open={memorySuggestionOpen}
+      onCancel={() => setMemorySuggestionOpen(false)}
+      title="Workspace Memory 建议"
+      width={760}
+      centered
+      footer={[
+        <Button
+          key="discard"
+          onClick={() => {
+            setMemorySuggestion(null)
+            setMemorySuggestionDraft('')
+            setMemorySuggestionOpen(false)
+          }}
+        >
+          丢弃建议
+        </Button>,
+        <Button key="cancel" onClick={() => setMemorySuggestionOpen(false)}>
+          稍后处理
+        </Button>,
+        <Button
+          key="save"
+          type="primary"
+          loading={memorySuggestionSaving}
+          disabled={!memorySuggestionDraft.trim()}
+          onClick={applyMemorySuggestion}
+        >
+          写入记忆
+        </Button>,
+      ]}
+    >
+      {memorySuggestion ? (
+        <>
+          <div className={styles.memorySuggestionHint}>
+            Pi Studio 根据刚结束的任务生成了这段候选记忆。请编辑后再写入；保存后会追加到当前工作区的
+            .pi-studio/memory.md，并从下一轮任务开始注入上下文。
+          </div>
+          <textarea
+            className={styles.memoryTextarea}
+            value={memorySuggestionDraft}
+            onChange={(e) => setMemorySuggestionDraft(e.target.value)}
+            spellCheck={false}
+            style={{ minHeight: 260 }}
+          />
+        </>
+      ) : (
+        <Empty description="暂无记忆建议" />
+      )}
+    </Modal>
+  )
+
   const runTimelineModal = (
     <Modal
       open={runTimelineOpen}
@@ -2241,6 +2444,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     <div className={styles.pane}>
       {diffReviewModal}
       {workspaceMemoryModal}
+      {memorySuggestionModal}
       {runTimelineModal}
       {error && (
         <div className={styles.errorBanner}>
@@ -2443,6 +2647,17 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                 <button className={styles.modelChip} onClick={openWorkspaceMemory} title="编辑 Workspace Memory">
                   <FileText size={11} />
                   记忆
+                </button>
+              )}
+              {workspace && memorySuggestion && (
+                <button
+                  className={styles.modelChip}
+                  onClick={() => setMemorySuggestionOpen(true)}
+                  title="查看 Workspace Memory 建议"
+                  style={{ color: token.colorPrimary }}
+                >
+                  <Check size={11} />
+                  记忆建议
                 </button>
               )}
               {workspace && (
