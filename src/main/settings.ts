@@ -23,6 +23,8 @@ type SettingsData = {
   heliconeApiKey: string
   /** Blocks dangerous commands and writes to sensitive paths before tools execute */
   securityGuardEnabled: boolean
+  /** Enables bundled scout/planner/worker/reviewer subagent workflow prompts */
+  subagentsEnabled: boolean
   recentWorkspaces: Workspace[]
 }
 
@@ -35,6 +37,7 @@ const DEFAULTS: SettingsData = {
   tavilyApiKey: '',
   heliconeApiKey: '',
   securityGuardEnabled: true,
+  subagentsEnabled: true,
   recentWorkspaces: [],
 }
 
@@ -100,6 +103,8 @@ export function loadSettings(): SettingsData {
       typeof raw.securityGuardEnabled === 'boolean'
         ? raw.securityGuardEnabled
         : DEFAULTS.securityGuardEnabled,
+    subagentsEnabled:
+      typeof raw.subagentsEnabled === 'boolean' ? raw.subagentsEnabled : DEFAULTS.subagentsEnabled,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -117,6 +122,7 @@ export function saveSettings(
     | 'tavilyApiKey'
     | 'heliconeApiKey'
     | 'securityGuardEnabled'
+    | 'subagentsEnabled'
   >,
 ): void {
   const raw = readRaw()
@@ -129,6 +135,7 @@ export function saveSettings(
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
   raw.securityGuardEnabled = settings.securityGuardEnabled
+  raw.subagentsEnabled = settings.subagentsEnabled
 
   writeRaw(raw)
 }

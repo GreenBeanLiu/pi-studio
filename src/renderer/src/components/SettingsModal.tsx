@@ -13,6 +13,7 @@ type Settings = {
   tavilyApiKey: string
   heliconeApiKey: string
   securityGuardEnabled: boolean
+  subagentsEnabled: boolean
 }
 
 type Category = 'model' | 'tools' | 'about'
@@ -134,6 +135,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     tavilyApiKey: '',
     heliconeApiKey: '',
     securityGuardEnabled: true,
+    subagentsEnabled: true,
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -292,6 +294,23 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 />
                 <span className={styles.labelHint}>
                   改后需重新打开工作区生效。经 gateway.helicone.ai 转发到你当前的 API 端点，密钥仅通过环境变量传给子进程。
+                </span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  子 agent 工作流
+                  <span className={styles.labelHint}>启用 scout / planner / worker / reviewer 和斜杠命令</span>
+                </span>
+                <Switch
+                  checked={settings.subagentsEnabled}
+                  onChange={(checked) => patch({ subagentsEnabled: checked })}
+                  checkedChildren="开启"
+                  unCheckedChildren="关闭"
+                />
+                <span className={styles.labelHint}>
+                  修改后需重新打开工作区生效。默认提供 /implement、/scout-and-plan、/implement-and-review，用独立
+                  pi 子进程分担代码侦察、规划、实现和审查。
                 </span>
               </div>
 

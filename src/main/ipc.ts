@@ -15,6 +15,7 @@ import {
 } from './settings'
 import { piClientManager } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
+import { syncSubagentWorkflow } from './subagent-workflow'
 
 export function registerIpcHandlers(): void {
   // ── Window controls ──────────────────────────────────────────────
@@ -51,6 +52,7 @@ export function registerIpcHandlers(): void {
         tavilyApiKey: string
         heliconeApiKey: string
         securityGuardEnabled: boolean
+        subagentsEnabled: boolean
       },
     ) => {
       saveSettings(settings)
@@ -81,6 +83,11 @@ export function registerIpcHandlers(): void {
     writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey)
     syncWebSearchExtension(!!settings.tavilyApiKey)
     syncSecurityGuardExtension(settings.securityGuardEnabled)
+    try {
+      syncSubagentWorkflow(settings.subagentsEnabled)
+    } catch (err) {
+      console.warn('Failed to sync pi-studio subagent workflow:', err)
+    }
 
     try {
       await piClientManager.startWorkspace(

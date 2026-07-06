@@ -32,6 +32,7 @@ declare global {
           tavilyApiKey: string
           heliconeApiKey: string
           securityGuardEnabled: boolean
+          subagentsEnabled: boolean
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -43,6 +44,7 @@ declare global {
           tavilyApiKey: string
           heliconeApiKey: string
           securityGuardEnabled: boolean
+          subagentsEnabled: boolean
         }) => Promise<{ ok: boolean }>
       }
       workspace: {
