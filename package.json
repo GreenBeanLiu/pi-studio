@@ -7,7 +7,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && electron-builder --win --publish always"
+    "package": "electron-vite build && electron-builder --win --publish always",
+    "release:local": "node scripts/release-local.mjs",
+    "release:dry": "node scripts/release-local.mjs --dry-run --skip-build"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.10",
