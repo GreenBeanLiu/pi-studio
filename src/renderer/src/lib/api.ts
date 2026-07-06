@@ -71,6 +71,9 @@ declare global {
         switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
         rename: (name: string) => Promise<void>
         delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
+        exportCurrent: (
+          format: SessionExportFormat,
+        ) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
       }
       git: {
         diff: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
@@ -207,6 +210,8 @@ export type SessionInfo = {
   messageCount: number
   modified: string
 }
+
+export type SessionExportFormat = 'markdown' | 'json'
 
 export type GitDiffSnapshot = {
   status: string

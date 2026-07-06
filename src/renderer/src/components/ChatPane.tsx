@@ -33,6 +33,7 @@ import {
   type GitDiffSnapshot,
   type GitChangedFile,
   type PiRuntimeEvent,
+  type SessionExportFormat,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -753,6 +754,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const [diffOpen, setDiffOpen] = useState(false)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffSnapshot, setDiffSnapshot] = useState<GitDiffSnapshot | null>(null)
+  const [sessionExportLoading, setSessionExportLoading] = useState<SessionExportFormat | null>(null)
   // Follow the stream only while the user is at the bottom; scrolling up
   // pauses following so reading history isn't fought by auto-scroll.
   const [autoFollow, setAutoFollow] = useState(true)
@@ -1058,6 +1060,26 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     runningTool,
   ])
 
+  const exportCurrentSession = useCallback(
+    async (format: SessionExportFormat) => {
+      if (!workspace || sessionExportLoading) return
+      setSessionExportLoading(format)
+      try {
+        const result = await api.sessions.exportCurrent(format)
+        if ('error' in result) {
+          antdMessage.error(result.error)
+        } else if ('ok' in result) {
+          antdMessage.success(format === 'json' ? '会话 JSON 已导出' : '会话 Markdown 已导出')
+        }
+      } catch (err) {
+        antdMessage.error((err as Error).message ?? '导出会话失败')
+      } finally {
+        setSessionExportLoading(null)
+      }
+    },
+    [workspace, sessionExportLoading],
+  )
+
   const openGitDiff = useCallback(async () => {
     if (!workspace) return
     setDiffOpen(true)
@@ -1356,6 +1378,29 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 
       <Button size="small" block loading={compacting} onClick={handleCompact}>
         立即压缩上下文
+      </Button>
+    </div>
+  )
+
+  const sessionExportPanel = (
+    <div className={styles.paramsPanel} style={{ width: 180 }}>
+      <Button
+        size="small"
+        block
+        loading={sessionExportLoading === 'markdown'}
+        onClick={() => exportCurrentSession('markdown')}
+      >
+        <FileText size={13} />
+        Markdown
+      </Button>
+      <Button
+        size="small"
+        block
+        loading={sessionExportLoading === 'json'}
+        onClick={() => exportCurrentSession('json')}
+      >
+        <Download size={13} />
+        JSON
       </Button>
     </div>
   )
@@ -1695,6 +1740,18 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                   <Download size={11} />
                   诊断包
                 </button>
+              )}
+              {workspace && (
+                <Popover
+                  trigger={['click']}
+                  placement="top"
+                  content={sessionExportPanel}
+                >
+                  <button className={styles.modelChip} title="导出当前会话">
+                    <FileText size={11} />
+                    会话
+                  </button>
+                </Popover>
               )}
               {workspace && (
                 <button className={styles.modelChip} onClick={openGitDiff} title="查看工作区变更">

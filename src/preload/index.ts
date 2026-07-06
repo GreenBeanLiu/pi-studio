@@ -38,6 +38,8 @@ const api = {
     switch: (sessionPath: string) => ipcRenderer.invoke('sessions:switch', sessionPath),
     rename: (name: string) => ipcRenderer.invoke('sessions:rename', name),
     delete: (sessionPath: string) => ipcRenderer.invoke('sessions:delete', sessionPath),
+    exportCurrent: (format: 'markdown' | 'json') =>
+      ipcRenderer.invoke('sessions:exportCurrent', format),
   },
 
   git: {

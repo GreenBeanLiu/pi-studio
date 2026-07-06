@@ -2,7 +2,12 @@ import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
 import { existsSync, writeFileSync } from 'fs'
 import { dirname, resolve, sep } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import { listSessions, deleteSession } from './pi-sessions'
+import {
+  listSessions,
+  deleteSession,
+  buildSessionExport,
+  type SessionExportFormat,
+} from './pi-sessions'
 import { syncWebSearchExtension } from './web-search-extension'
 import {
   loadSettings,
@@ -187,6 +192,37 @@ export function registerIpcHandlers(): void {
     if (state.sessionFile === sessionPath) return { error: '不能删除当前会话' }
     deleteSession(sessionPath)
     return { ok: true }
+  })
+  ipcMain.handle('sessions:exportCurrent', async (event, format: SessionExportFormat) => {
+    const state = await piClientManager.getState()
+    if (!state.sessionFile) return { error: '当前会话还没有可导出的记录' }
+    const normalizedFormat: SessionExportFormat = format === 'json' ? 'json' : 'markdown'
+
+    try {
+      const exported = buildSessionExport(state.sessionFile, normalizedFormat)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const result = await dialog.showSaveDialog(win!, {
+        title: normalizedFormat === 'json' ? '导出会话 JSON' : '导出会话 Markdown',
+        defaultPath: exported.fileName,
+        filters:
+          normalizedFormat === 'json'
+            ? [{ name: 'JSON', extensions: ['json'] }]
+            : [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+      })
+
+      if (result.canceled || !result.filePath) return { cancelled: true }
+
+      writeFileSync(result.filePath, exported.content, 'utf-8')
+      appendAppLog('info', 'sessions.export', 'Session exported', {
+        path: result.filePath,
+        format: normalizedFormat,
+        sessionFile: state.sessionFile,
+      })
+      return { ok: true, path: result.filePath }
+    } catch (err) {
+      appendAppLog('error', 'sessions.export', 'Session export failed', normalizeError(err))
+      return { error: (err as Error).message ?? '导出会话失败' }
+    }
   })
 
   ipcMain.handle('git:diff', async () => {

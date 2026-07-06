@@ -1,4 +1,4 @@
-import { readdirSync, createReadStream, unlinkSync } from 'fs'
+import { readdirSync, createReadStream, readFileSync, unlinkSync } from 'fs'
 import { stat } from 'fs/promises'
 import { join, resolve } from 'path'
 import { createInterface } from 'readline'
@@ -23,6 +23,12 @@ export type SessionInfo = {
 }
 
 type SessionEntry = Record<string, unknown>
+export type SessionExportFormat = 'markdown' | 'json'
+
+export type SessionExport = {
+  fileName: string
+  content: string
+}
 
 function parseLine(line: string): SessionEntry | null {
   const trimmed = line.trim()
@@ -119,4 +125,145 @@ export async function listSessions(sessionDir: string, cwd: string): Promise<Ses
 
 export function deleteSession(filePath: string): void {
   unlinkSync(filePath)
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 72)
+}
+
+function stringifyBlock(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function contentToMarkdown(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return stringifyBlock(content)
+
+  return content
+    .map((block) => {
+      if (!block || typeof block !== 'object') return stringifyBlock(block)
+      const item = block as Record<string, unknown>
+      if (item.type === 'text') return typeof item.text === 'string' ? item.text : ''
+      if (item.type === 'thinking') {
+        const thinking = typeof item.thinking === 'string' ? item.thinking.trim() : ''
+        return thinking ? `<details><summary>思考过程</summary>\n\n${thinking}\n\n</details>` : ''
+      }
+      if (item.type === 'image') return '[图片]'
+      if (item.type === 'toolCall') {
+        const name = typeof item.name === 'string' ? item.name : 'tool'
+        const id = typeof item.id === 'string' ? item.id : ''
+        return [
+          `**工具调用：${name}${id ? ` (${id})` : ''}**`,
+          '',
+          '```json',
+          stringifyBlock(item.arguments ?? {}),
+          '```',
+        ].join('\n')
+      }
+      return [
+        `**${String(item.type ?? 'content')}**`,
+        '',
+        '```json',
+        stringifyBlock(item),
+        '```',
+      ].join('\n')
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function readSessionEntries(filePath: string): SessionEntry[] {
+  return readFileSync(filePath, 'utf-8')
+    .split(/\r?\n/)
+    .map(parseLine)
+    .filter((entry): entry is SessionEntry => entry !== null)
+}
+
+function buildMarkdown(entries: SessionEntry[], exportedAt: string): string {
+  const header = entries.find((entry) => entry.type === 'session')
+  const infoEntries = entries.filter((entry) => entry.type === 'session_info')
+  const name = [...infoEntries].reverse().find((entry) => typeof entry.name === 'string')?.name
+  const messages = entries.filter((entry) => entry.type === 'message')
+  const title = typeof name === 'string' && name.trim() ? name.trim() : 'Pi Studio Session'
+  const cwd = typeof header?.cwd === 'string' ? header.cwd : ''
+  const id = typeof header?.id === 'string' ? header.id : ''
+
+  const roleCounts = messages.reduce<Record<string, number>>((acc, entry) => {
+    const message = entry.message as Record<string, unknown> | undefined
+    const role = typeof message?.role === 'string' ? message.role : 'unknown'
+    acc[role] = (acc[role] ?? 0) + 1
+    return acc
+  }, {})
+
+  const lines = [
+    `# ${title}`,
+    '',
+    `- 导出时间：${exportedAt}`,
+    id ? `- Session ID：${id}` : '',
+    cwd ? `- Workspace：${cwd}` : '',
+    `- 消息数：${messages.length}`,
+    `- 角色统计：${Object.entries(roleCounts).map(([role, count]) => `${role} ${count}`).join(' / ') || '无'}`,
+    '',
+    '## 对话记录',
+    '',
+  ].filter(Boolean)
+
+  for (const entry of messages) {
+    const message = entry.message as Record<string, unknown> | undefined
+    if (!message) continue
+    const role = typeof message.role === 'string' ? message.role : 'unknown'
+    const timestamp =
+      typeof message.timestamp === 'number'
+        ? new Date(message.timestamp).toISOString()
+        : typeof entry.timestamp === 'string'
+          ? entry.timestamp
+          : ''
+    const titleRole =
+      role === 'user'
+        ? '用户'
+        : role === 'assistant'
+          ? '助手'
+          : role === 'toolResult'
+            ? `工具结果：${typeof message.toolName === 'string' ? message.toolName : 'tool'}`
+            : role
+    lines.push(`### ${titleRole}${timestamp ? ` · ${timestamp}` : ''}`, '')
+    if (role === 'toolResult') {
+      if (message.isError) lines.push('> 工具执行失败', '')
+      lines.push('```text', contentToMarkdown(message.content), '```', '')
+    } else {
+      lines.push(contentToMarkdown(message.content), '')
+    }
+  }
+
+  return `${lines.join('\n').trim()}\n`
+}
+
+export function buildSessionExport(filePath: string, format: SessionExportFormat): SessionExport {
+  const entries = readSessionEntries(filePath)
+  const header = entries.find((entry) => entry.type === 'session')
+  const infoEntries = entries.filter((entry) => entry.type === 'session_info')
+  const name = [...infoEntries].reverse().find((entry) => typeof entry.name === 'string')?.name
+  const id = typeof header?.id === 'string' ? header.id : 'session'
+  const exportedAt = new Date().toISOString()
+  const baseName = safeFileName(
+    typeof name === 'string' && name.trim() ? name.trim() : `pi-session-${id.slice(0, 8)}`,
+  )
+
+  if (format === 'json') {
+    return {
+      fileName: `${baseName || 'pi-session'}.json`,
+      content: `${JSON.stringify({ exportedAt, sourceFile: filePath, entries }, null, 2)}\n`,
+    }
+  }
+
+  return {
+    fileName: `${baseName || 'pi-session'}.md`,
+    content: buildMarkdown(entries, exportedAt),
+  }
 }
