@@ -42,6 +42,8 @@ const api = {
 
   git: {
     diff: () => ipcRenderer.invoke('git:diff'),
+    discardChanges: () => ipcRenderer.invoke('git:discardChanges'),
+    showFile: (path: string) => ipcRenderer.invoke('git:showFile', path),
   },
 
   pi: {

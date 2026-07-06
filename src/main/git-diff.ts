@@ -6,11 +6,20 @@ const OUTPUT_LIMIT = 300_000
 
 export type GitDiffSnapshot = {
   status: string
+  files: GitChangedFile[]
   unstagedStat: string
   unstagedDiff: string
   stagedStat: string
   stagedDiff: string
   truncated: boolean
+}
+
+export type GitChangedFile = {
+  path: string
+  originalPath?: string
+  statusCode: string
+  staged: boolean
+  unstaged: boolean
 }
 
 function trimOutput(value: string): { value: string; truncated: boolean } {
@@ -19,6 +28,29 @@ function trimOutput(value: string): { value: string; truncated: boolean } {
     value: `${value.slice(0, OUTPUT_LIMIT)}\n...[truncated ${value.length - OUTPUT_LIMIT} chars]`,
     truncated: true,
   }
+}
+
+function parseStatusFiles(status: string): GitChangedFile[] {
+  return status
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const stagedCode = line[0] ?? ' '
+      const unstagedCode = line[1] ?? ' '
+      const rawPath = line.slice(3)
+      const renameSep = rawPath.indexOf(' -> ')
+      const originalPath = renameSep === -1 ? undefined : rawPath.slice(0, renameSep)
+      const path = renameSep === -1 ? rawPath : rawPath.slice(renameSep + 4)
+
+      return {
+        path,
+        originalPath,
+        statusCode: `${stagedCode}${unstagedCode}`,
+        staged: stagedCode !== ' ' && stagedCode !== '?',
+        unstaged: unstagedCode !== ' ' || stagedCode === '?',
+      }
+    })
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -54,10 +86,16 @@ export async function getGitDiffSnapshot(cwd: string): Promise<GitDiffSnapshot> 
 
   return {
     status: parts.status.value,
+    files: parseStatusFiles(status),
     unstagedStat: parts.unstagedStat.value,
     unstagedDiff: parts.unstagedDiff.value,
     stagedStat: parts.stagedStat.value,
     stagedDiff: parts.stagedDiff.value,
     truncated: Object.values(parts).some((part) => part.truncated),
   }
+}
+
+export async function discardGitChanges(cwd: string): Promise<void> {
+  await git(cwd, ['reset', '--hard'])
+  await git(cwd, ['clean', '-fd'])
 }

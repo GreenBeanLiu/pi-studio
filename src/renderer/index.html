@@ -19,7 +19,9 @@
             delete: () => Promise.resolve({ ok: true }),
           },
           git: {
-            diff: () => Promise.resolve({ ok: true, snapshot: { status: '', unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
+            diff: () => Promise.resolve({ ok: true, snapshot: { status: '', files: [], unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
+            discardChanges: () => Promise.resolve({ ok: true, snapshot: { status: '', files: [], unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
+            showFile: () => Promise.resolve({ ok: true }),
           },
           app: { version: () => Promise.resolve('0.1.0-preview') },
           diagnostics: {

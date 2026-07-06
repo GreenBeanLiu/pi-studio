@@ -17,6 +17,9 @@ import {
   FileText,
   Download,
   GitCompare,
+  ExternalLink,
+  RotateCcw,
+  ShieldCheck,
 } from 'lucide-react'
 import {
   api,
@@ -28,6 +31,7 @@ import {
   type ThinkingLevel,
   type QueueMode,
   type GitDiffSnapshot,
+  type GitChangedFile,
   type PiRuntimeEvent,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
@@ -369,6 +373,105 @@ const useStyles = createStyles(({ token, css }) => ({
     margin-bottom: 12px;
   `,
 
+  reviewHeader: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  `,
+
+  reviewTitle: css`
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  `,
+
+  reviewName: css`
+    font-size: 14px;
+    font-weight: 600;
+    color: ${token.colorText};
+  `,
+
+  reviewHint: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+  `,
+
+  reviewBody: css`
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    gap: 12px;
+    min-height: 420px;
+  `,
+
+  reviewSidebar: css`
+    min-width: 0;
+    border-right: 1px solid ${token.colorBorderSecondary};
+    padding-right: 12px;
+  `,
+
+  fileList: css`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 58vh;
+    overflow-y: auto;
+  `,
+
+  fileRow: css`
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 26px;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    border-radius: ${token.borderRadiusSM}px;
+    color: ${token.colorTextSecondary};
+
+    &:hover {
+      background: ${token.colorFillTertiary};
+      color: ${token.colorText};
+    }
+  `,
+
+  fileStatus: css`
+    font-family: ${token.fontFamilyCode};
+    font-size: 11px;
+    color: ${token.colorTextTertiary};
+  `,
+
+  filePath: css`
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-family: ${token.fontFamilyCode};
+  `,
+
+  fileAction: css`
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: ${token.borderRadiusSM}px;
+    background: transparent;
+    color: ${token.colorTextTertiary};
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &:hover {
+      background: ${token.colorFillSecondary};
+      color: ${token.colorText};
+    }
+  `,
+
+  reviewDiffPane: css`
+    min-width: 0;
+  `,
+
   diffMetaBlock: css`
     border: 1px solid ${token.colorBorderSecondary};
     border-radius: ${token.borderRadius}px;
@@ -618,6 +721,15 @@ function diagnosticFileName(workspaceName: string): string {
   return `pi-studio-diagnostics-${safeName}-${stamp}.json`
 }
 
+function gitStatusLabel(file: GitChangedFile): string {
+  if (file.statusCode === '??') return 'NEW'
+  if (file.statusCode.includes('D')) return 'DEL'
+  if (file.statusCode.includes('R')) return 'REN'
+  if (file.statusCode.includes('A')) return 'ADD'
+  if (file.statusCode.includes('M')) return 'MOD'
+  return file.statusCode.trim() || 'CHG'
+}
+
 export default function ChatPane({ workspace, starting = false }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -740,6 +852,16 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           break
         case 'agent_end':
           setSending(false)
+          api.git
+            .diff()
+            .then((result) => {
+              if ('ok' in result && result.snapshot.status.trim()) {
+                setDiffSnapshot(result.snapshot)
+                setDiffOpen(true)
+                antdMessage.info('Agent 修改了工作区，请检查后接受或回滚')
+              }
+            })
+            .catch(() => {})
           if (!document.hasFocus()) {
             api.win.flash()
             try {
@@ -955,6 +1077,46 @@ export default function ChatPane({ workspace, starting = false }: Props) {
       setDiffLoading(false)
     }
   }, [workspace])
+
+  const acceptGitChanges = useCallback(() => {
+    setDiffOpen(false)
+    antdMessage.success('已接受当前工作区变更')
+  }, [])
+
+  const openChangedFile = useCallback(async (file: GitChangedFile) => {
+    try {
+      const result = await api.git.showFile(file.path)
+      if ('error' in result) antdMessage.error(result.error)
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '打开文件失败')
+    }
+  }, [])
+
+  const discardGitChanges = useCallback(() => {
+    Modal.confirm({
+      title: '回滚当前工作区变更？',
+      content: '这会执行 git reset --hard 并删除未跟踪文件，当前未提交的代码修改会丢失。',
+      okText: '回滚变更',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDiffLoading(true)
+        try {
+          const result = await api.git.discardChanges()
+          if ('error' in result) {
+            antdMessage.error(result.error)
+            return
+          }
+          setDiffSnapshot(result.snapshot)
+          antdMessage.success('工作区变更已回滚')
+        } catch (err) {
+          antdMessage.error((err as Error).message ?? '回滚工作区变更失败')
+        } finally {
+          setDiffLoading(false)
+        }
+      },
+    })
+  }, [])
 
   // While the agent runs, Enter queues a follow-up and Ctrl+Enter steers
   // (interrupts); when idle both are a plain prompt.
@@ -1219,85 +1381,136 @@ export default function ChatPane({ workspace, starting = false }: Props) {
 
   const isEmpty = messages.length === 0
   const hasGitChanges = !!diffSnapshot?.status.trim()
+  const changedFiles = diffSnapshot?.files ?? []
+  const stagedCount = changedFiles.filter((file) => file.staged).length
+  const unstagedCount = changedFiles.filter((file) => file.unstaged).length
+  const diffReviewModal = (
+    <Modal
+      open={diffOpen}
+      onCancel={() => setDiffOpen(false)}
+      title="工作区变更审批"
+      width={1120}
+      centered
+      footer={[
+        <Button key="refresh" onClick={openGitDiff} loading={diffLoading}>
+          刷新
+        </Button>,
+        <Button key="discard" danger disabled={!hasGitChanges || diffLoading} onClick={discardGitChanges}>
+          <RotateCcw size={13} />
+          回滚变更
+        </Button>,
+        <Button key="accept" type="primary" disabled={!hasGitChanges || diffLoading} onClick={acceptGitChanges}>
+          <ShieldCheck size={13} />
+          接受变更
+        </Button>,
+      ]}
+    >
+      {diffLoading ? (
+        <div style={{ padding: 32, display: 'flex', justifyContent: 'center' }}>
+          <Spin size="small" />
+        </div>
+      ) : !diffSnapshot ? (
+        <Empty description="暂无 Git 信息" />
+      ) : !hasGitChanges ? (
+        <Empty description="工作区没有变更" />
+      ) : (
+        <>
+          <div className={styles.reviewHeader}>
+            <div className={styles.reviewTitle}>
+              <div className={styles.reviewName}>{workspace?.name ?? 'Workspace'}</div>
+              <div className={styles.reviewHint}>
+                {changedFiles.length} 个文件变更，未暂存 {unstagedCount}，已暂存 {stagedCount}
+              </div>
+            </div>
+            <div className={styles.reviewHint}>
+              接受会保留当前变更；回滚会丢弃未提交修改和未跟踪文件。
+            </div>
+          </div>
+
+          {diffSnapshot.truncated && (
+            <div className={styles.errorText} style={{ marginBottom: 12 }}>
+              Diff 内容较大，已截断显示。完整内容可在终端用 git diff 查看。
+            </div>
+          )}
+
+          <div className={styles.reviewBody}>
+            <div className={styles.reviewSidebar}>
+              <div className={styles.diffMetaBlock} style={{ marginBottom: 10 }}>
+                <div className={styles.diffMetaTitle}>文件</div>
+                <div className={styles.fileList}>
+                  {changedFiles.map((file) => (
+                    <div key={`${file.statusCode}:${file.path}`} className={styles.fileRow}>
+                      <span className={styles.fileStatus}>{gitStatusLabel(file)}</span>
+                      <span
+                        className={styles.filePath}
+                        title={file.originalPath ? `${file.originalPath} -> ${file.path}` : file.path}
+                      >
+                        {file.path}
+                      </span>
+                      <button
+                        className={styles.fileAction}
+                        onClick={() => openChangedFile(file)}
+                        title="在文件夹中显示"
+                      >
+                        <ExternalLink size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={styles.diffMetaBlock}>
+                <div className={styles.diffMetaTitle}>统计</div>
+                <pre className={styles.diffPre} style={{ maxHeight: 150 }}>
+                  {[diffSnapshot.unstagedStat, diffSnapshot.stagedStat].filter(Boolean).join('\n') || '无'}
+                </pre>
+              </div>
+            </div>
+
+            <div className={styles.reviewDiffPane}>
+              <Tabs
+                items={[
+                  {
+                    key: 'unstaged',
+                    label: '未暂存 diff',
+                    children: diffSnapshot.unstagedDiff ? (
+                      <pre className={styles.diffPre}>{diffSnapshot.unstagedDiff}</pre>
+                    ) : (
+                      <Empty description="没有未暂存 diff" />
+                    ),
+                  },
+                  {
+                    key: 'staged',
+                    label: '已暂存 diff',
+                    children: diffSnapshot.stagedDiff ? (
+                      <pre className={styles.diffPre}>{diffSnapshot.stagedDiff}</pre>
+                    ) : (
+                      <Empty description="没有已暂存 diff" />
+                    ),
+                  },
+                  {
+                    key: 'status',
+                    label: '状态',
+                    children: <pre className={styles.diffPre}>{diffSnapshot.status || '无'}</pre>,
+                  },
+                ]}
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </Modal>
+  )
 
   return (
     <div className={styles.pane}>
+      {diffReviewModal}
       {error && (
         <div className={styles.errorBanner}>
           <span style={{ flex: 1 }}>{error}</span>
           <button className={styles.errorDismiss} onClick={() => setError(null)}>✕</button>
         </div>
       )}
-
-      <Modal
-        open={diffOpen}
-        onCancel={() => setDiffOpen(false)}
-        title="工作区变更"
-        width={980}
-        centered
-        footer={[
-          <Button key="refresh" onClick={openGitDiff} loading={diffLoading}>
-            刷新
-          </Button>,
-          <Button key="close" type="primary" onClick={() => setDiffOpen(false)}>
-            关闭
-          </Button>,
-        ]}
-      >
-        {diffLoading ? (
-          <div style={{ padding: 32, display: 'flex', justifyContent: 'center' }}>
-            <Spin size="small" />
-          </div>
-        ) : !diffSnapshot ? (
-          <Empty description="暂无 Git 信息" />
-        ) : !hasGitChanges ? (
-          <Empty description="工作区没有变更" />
-        ) : (
-          <>
-            <div className={styles.diffMeta}>
-              <div className={styles.diffMetaBlock}>
-                <div className={styles.diffMetaTitle}>状态</div>
-                <pre className={styles.diffPre} style={{ maxHeight: 120 }}>
-                  {diffSnapshot.status || '无'}
-                </pre>
-              </div>
-              <div className={styles.diffMetaBlock}>
-                <div className={styles.diffMetaTitle}>统计</div>
-                <pre className={styles.diffPre} style={{ maxHeight: 120 }}>
-                  {[diffSnapshot.unstagedStat, diffSnapshot.stagedStat].filter(Boolean).join('\n') || '无'}
-                </pre>
-              </div>
-            </div>
-            {diffSnapshot.truncated && (
-              <div className={styles.errorText} style={{ marginBottom: 12 }}>
-                Diff 内容较大，已截断显示。完整内容可在终端用 git diff 查看。
-              </div>
-            )}
-            <Tabs
-              items={[
-                {
-                  key: 'unstaged',
-                  label: '未暂存',
-                  children: diffSnapshot.unstagedDiff ? (
-                    <pre className={styles.diffPre}>{diffSnapshot.unstagedDiff}</pre>
-                  ) : (
-                    <Empty description="没有未暂存 diff" />
-                  ),
-                },
-                {
-                  key: 'staged',
-                  label: '已暂存',
-                  children: diffSnapshot.stagedDiff ? (
-                    <pre className={styles.diffPre}>{diffSnapshot.stagedDiff}</pre>
-                  ) : (
-                    <Empty description="没有已暂存 diff" />
-                  ),
-                },
-              ]}
-            />
-          </>
-        )}
-      </Modal>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <div

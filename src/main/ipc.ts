@@ -1,6 +1,6 @@
-import { ipcMain, BrowserWindow, app, dialog } from 'electron'
-import { writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
+import { existsSync, writeFileSync } from 'fs'
+import { dirname, resolve, sep } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { listSessions, deleteSession } from './pi-sessions'
 import { syncWebSearchExtension } from './web-search-extension'
@@ -17,7 +17,7 @@ import {
 import { piClientManager } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
-import { getGitDiffSnapshot } from './git-diff'
+import { discardGitChanges, getGitDiffSnapshot } from './git-diff'
 import { testProviderConnection } from './provider-test'
 import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
 
@@ -197,6 +197,47 @@ export function registerIpcHandlers(): void {
     } catch (err) {
       appendAppLog('warn', 'git.diff', 'Failed to read git diff snapshot', normalizeError(err))
       return { error: (err as Error).message ?? '读取 Git 变更失败' }
+    }
+  })
+  ipcMain.handle('git:discardChanges', async () => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return { error: 'No workspace is open' }
+    try {
+      const before = await getGitDiffSnapshot(cwd)
+      if (!before.status.trim()) return { ok: true, snapshot: before }
+      await discardGitChanges(cwd)
+      const snapshot = await getGitDiffSnapshot(cwd)
+      appendAppLog('warn', 'git.discard', 'Workspace changes discarded', {
+        cwd,
+        changedFiles: before.files.map((file) => file.path),
+      })
+      return { ok: true, snapshot }
+    } catch (err) {
+      appendAppLog('error', 'git.discard', 'Failed to discard workspace changes', normalizeError(err))
+      return { error: (err as Error).message ?? '回滚工作区变更失败' }
+    }
+  })
+  ipcMain.handle('git:showFile', async (_event, filePath: string) => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return { error: 'No workspace is open' }
+
+    const workspaceRoot = resolve(cwd)
+    const target = resolve(workspaceRoot, filePath)
+    const workspaceRootKey = workspaceRoot.toLowerCase()
+    const targetKey = target.toLowerCase()
+    if (targetKey !== workspaceRootKey && !targetKey.startsWith(`${workspaceRootKey}${sep}`)) {
+      return { error: '文件路径不在当前工作区内' }
+    }
+
+    try {
+      if (existsSync(target)) {
+        shell.showItemInFolder(target)
+      } else {
+        await shell.openPath(workspaceRoot)
+      }
+      return { ok: true }
+    } catch (err) {
+      return { error: (err as Error).message ?? '打开文件失败' }
     }
   })
 

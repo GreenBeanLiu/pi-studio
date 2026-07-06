@@ -74,6 +74,8 @@ declare global {
       }
       git: {
         diff: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
+        discardChanges: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
+        showFile: (path: string) => Promise<{ ok: true } | { error: string }>
       }
       pi: {
         prompt: (message: string, images?: ImageContent[]) => Promise<void>
@@ -208,11 +210,20 @@ export type SessionInfo = {
 
 export type GitDiffSnapshot = {
   status: string
+  files: GitChangedFile[]
   unstagedStat: string
   unstagedDiff: string
   stagedStat: string
   stagedDiff: string
   truncated: boolean
+}
+
+export type GitChangedFile = {
+  path: string
+  originalPath?: string
+  statusCode: string
+  staged: boolean
+  unstaged: boolean
 }
 
 export type {
