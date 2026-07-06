@@ -19,7 +19,7 @@ import {
   writeModelsOverride,
   type PiProvider,
 } from './settings'
-import { piClientManager } from './pi-client'
+import { piClientManager, type AgentStatusEvent } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
 import { discardGitChanges, getGitDiffSnapshot } from './git-diff'
@@ -37,6 +37,11 @@ import {
 } from './security-policy'
 
 export function registerIpcHandlers(): void {
+  const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
+    if (!win || win.isDestroyed()) return
+    win.webContents.send('agent:status', event)
+  }
+
   // ── Window controls ──────────────────────────────────────────────
   ipcMain.on('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
   ipcMain.on('win:maximize', (e) => {
@@ -184,6 +189,7 @@ export function registerIpcHandlers(): void {
         (agentEvent) => {
           if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
         },
+        (statusEvent) => sendAgentStatus(win, statusEvent),
       )
     } catch (err) {
       appendAppLog('error', 'workspace.open', 'Failed to start workspace', {

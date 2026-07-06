@@ -6,6 +6,11 @@ import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
 
 export type PiEventListener = (event: AgentEvent) => void
+export type AgentStatusEvent =
+  | { status: 'started'; cwd: string; restoredSession: boolean; sessionFile?: string }
+  | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
+  | { status: 'error'; cwd: string; message: string }
+export type AgentStatusListener = (event: AgentStatusEvent) => void
 
 type RpcClient = RpcClientType
 
@@ -56,6 +61,9 @@ class PiClientManager {
   private client: RpcClient | null = null
   private workspacePath: string | null = null
   private unsubscribe: (() => void) | null = null
+  private lastSessionFile: string | null = null
+  private activeRunId = 0
+  private expectedStopRunIds = new Set<number>()
 
   /** Pre-import the pi-coding-agent ESM graph so the first workspace open
    *  doesn't pay the module-load cost (hundreds of ms) on click. */
@@ -71,21 +79,54 @@ class PiClientManager {
     provider: string | undefined,
     model: string | undefined,
     onEvent: PiEventListener,
+    onStatus?: AgentStatusListener,
   ): Promise<void> {
+    const restoreSessionFile = this.workspacePath === cwd ? this.lastSessionFile : null
     await this.stop()
 
+    const runId = ++this.activeRunId
     const RpcClient = await loadRpcClient()
     const client = new RpcClient({ cwd, env, provider, model, cliPath: resolvePiCliPath() })
     await client.start()
-    this.attachAgentProcessLoggers(client, cwd)
+    this.attachAgentProcessLoggers(client, cwd, runId, onStatus)
 
     this.client = client
     this.workspacePath = cwd
     this.unsubscribe = client.onEvent(onEvent)
+
+    let restoredSession = false
+    if (restoreSessionFile) {
+      try {
+        const result = await client.switchSession(restoreSessionFile)
+        restoredSession = !(result as { cancelled?: boolean }).cancelled
+        if (restoredSession) this.lastSessionFile = restoreSessionFile
+      } catch (err) {
+        appendAppLog('warn', 'agent.restoreSession', 'Failed to restore previous session', {
+          cwd,
+          sessionFile: restoreSessionFile,
+          error: normalizeError(err),
+        })
+      }
+    }
+
+    try {
+      const state = await client.getState()
+      if (state?.sessionFile) this.lastSessionFile = state.sessionFile
+    } catch (err) {
+      appendAppLog('warn', 'agent.state', 'Failed to read initial agent state', normalizeError(err))
+    }
+
     appendAppLog('info', 'agent.start', 'Pi agent process started', {
       cwd,
       provider,
       modelConfigured: !!model,
+      restoredSession,
+    })
+    onStatus?.({
+      status: 'started',
+      cwd,
+      restoredSession,
+      sessionFile: this.lastSessionFile ?? undefined,
     })
   }
 
@@ -93,6 +134,7 @@ class PiClientManager {
     this.unsubscribe?.()
     this.unsubscribe = null
     if (this.client) {
+      this.expectedStopRunIds.add(this.activeRunId)
       await this.client.stop().catch(() => {})
       appendAppLog('info', 'agent.stop', 'Pi agent process stopped', {
         cwd: this.workspacePath,
@@ -111,7 +153,12 @@ class PiClientManager {
     return this.client
   }
 
-  private attachAgentProcessLoggers(client: RpcClient, cwd: string): void {
+  private attachAgentProcessLoggers(
+    client: RpcClient,
+    cwd: string,
+    runId: number,
+    onStatus?: AgentStatusListener,
+  ): void {
     const child = (client as unknown as { process?: AgentProcessLike }).process
     if (!child) return
 
@@ -122,17 +169,46 @@ class PiClientManager {
     })
 
     child.on('exit', (code, signal) => {
+      if (runId !== this.activeRunId) return
+      const expected = this.expectedStopRunIds.has(runId)
       appendAppLog(code === 0 ? 'info' : 'warn', 'agent.exit', 'Pi agent process exited', {
         cwd,
         code,
         signal,
+        expected,
       })
+      this.expectedStopRunIds.delete(runId)
+      if (!expected) {
+        this.unsubscribe?.()
+        this.unsubscribe = null
+        this.client = null
+        onStatus?.({
+          status: 'exited',
+          cwd,
+          code,
+          signal,
+          expected,
+          message:
+            code === null
+              ? `Agent process exited with signal ${signal ?? 'unknown'}`
+              : `Agent process exited with code ${code}`,
+        })
+      }
     })
 
     child.on('error', (err) => {
+      if (runId !== this.activeRunId) return
       appendAppLog('error', 'agent.process', 'Pi agent process error', {
         cwd,
         error: normalizeError(err),
+      })
+      this.unsubscribe?.()
+      this.unsubscribe = null
+      this.client = null
+      onStatus?.({
+        status: 'error',
+        cwd,
+        message: err.message ?? String(err),
       })
     })
   }
@@ -174,8 +250,10 @@ class PiClientManager {
     return this.require().newSession()
   }
 
-  getState(): ReturnType<RpcClient['getState']> {
-    return this.require().getState()
+  async getState(): Promise<Awaited<ReturnType<RpcClient['getState']>>> {
+    const state = await this.require().getState()
+    if (state?.sessionFile) this.lastSessionFile = state.sessionFile
+    return state
   }
 
   getMessages(): ReturnType<RpcClient['getMessages']> {

@@ -35,13 +35,20 @@ import {
   type GitChangedFile,
   type PiRuntimeEvent,
   type SessionExportFormat,
+  type AgentStatusEvent,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
+
+type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
 
 type Props = {
   workspace: Workspace | null
   /** Agent subprocess is still booting for this workspace */
   starting?: boolean
+  /** Non-recovering agent process failure reported by the main process */
+  agentIssue?: AgentIssue | null
+  restarting?: boolean
+  onRestartAgent?: () => void
 }
 
 type RunStatus = 'running' | 'done' | 'error' | 'aborted'
@@ -1054,7 +1061,22 @@ function gitStatusLabel(file: GitChangedFile): string {
   return file.statusCode.trim() || 'CHG'
 }
 
-export default function ChatPane({ workspace, starting = false }: Props) {
+function agentIssueMessage(issue: AgentIssue): string {
+  if (issue.status === 'exited') {
+    const detail =
+      issue.code === null ? `signal ${issue.signal ?? 'unknown'}` : `exit code ${issue.code}`
+    return `Agent 进程已退出（${detail}）。当前会话记录仍保留，重启 agent 后可继续。`
+  }
+  return `Agent 进程异常：${issue.message}`
+}
+
+export default function ChatPane({
+  workspace,
+  starting = false,
+  agentIssue = null,
+  restarting = false,
+  onRestartAgent,
+}: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
@@ -1105,6 +1127,38 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const runRecordsRef = useRef(runRecords)
   messagesStateRef.current = messages
   runRecordsRef.current = runRecords
+
+  useEffect(() => {
+    if (!agentIssue) return
+    setSending(false)
+    const runId = activeRunIdRef.current
+    activeRunIdRef.current = null
+    if (!runId) return
+
+    const timestamp = new Date().toISOString()
+    setRunRecords((prev) =>
+      prev.map((run) =>
+        run.id === runId
+          ? {
+              ...run,
+              status: 'error',
+              endedAt: timestamp,
+              timeline: [
+                ...run.timeline,
+                {
+                  id: `${runId}:agent-disconnect:${shortId()}`,
+                  type: 'event',
+                  label: 'Agent 已断开',
+                  detail: agentIssueMessage(agentIssue),
+                  timestamp,
+                  status: 'error',
+                },
+              ],
+            }
+          : run,
+      ),
+    )
+  }, [agentIssue])
 
   useEffect(() => {
     // Switching workspaces kills the old agent subprocess, so its agent_end
@@ -1664,6 +1718,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           toolExecutionCount: Object.keys(toolExecutions).length,
           runningTool,
           runRecordCount: runRecords.length,
+          agentIssue: sanitizeForDiagnostics(agentIssue),
         },
         logs,
         toolExecutions: sanitizeForDiagnostics(toolExecutions),
@@ -1688,6 +1743,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     workspace,
     sending,
     compacting,
+    agentIssue,
     thinking,
     steeringMode,
     followUpMode,
@@ -1857,7 +1913,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
   const sendMessage = useCallback(
     async (mode: 'queue' | 'steer' = 'queue') => {
       const text = input.trim()
-      if ((!text && images.length === 0) || !workspace) return
+      if ((!text && images.length === 0) || !workspace || starting || agentIssue) return
       const imgs = images.length > 0 ? images : undefined
       setInput('')
       setImages([])
@@ -1876,7 +1932,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
         if (!sending) setSending(false)
       }
     },
-    [input, images, sending, workspace],
+    [input, images, sending, workspace, starting, agentIssue],
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -2452,6 +2508,16 @@ export default function ChatPane({ workspace, starting = false }: Props) {
           <button className={styles.errorDismiss} onClick={() => setError(null)}>✕</button>
         </div>
       )}
+      {agentIssue && (
+        <div className={styles.errorBanner}>
+          <span style={{ flex: 1 }}>{agentIssueMessage(agentIssue)}</span>
+          {onRestartAgent && (
+            <Button size="small" type="primary" loading={restarting} onClick={onRestartAgent}>
+              重启 agent
+            </Button>
+          )}
+        </div>
+      )}
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <div
@@ -2605,14 +2671,16 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                   ? '请先打开一个工作区'
                   : starting
                     ? '正在启动 agent…'
-                    : sending
-                      ? 'Agent 运行中，Enter 排队 · Ctrl+Enter 立即插话'
-                      : '向 agent 描述任务，/ 唤起命令，可粘贴截图'
+                    : agentIssue
+                      ? 'Agent 已断开，请重启后继续'
+                      : sending
+                        ? 'Agent 运行中，Enter 排队 · Ctrl+Enter 立即插话'
+                        : '向 agent 描述任务，/ 唤起命令，可粘贴截图'
               }
               rows={1}
               style={{ fieldSizing: 'content' } as React.CSSProperties}
               className={styles.inputTextarea}
-              disabled={!workspace || starting}
+              disabled={!workspace || starting || !!agentIssue}
             />
             <div className={styles.inputControls}>
               {workspace && (
@@ -2691,7 +2759,7 @@ export default function ChatPane({ workspace, starting = false }: Props) {
               )}
               <button
                 onClick={() => sendMessage('queue')}
-                disabled={(!input.trim() && images.length === 0) || !workspace}
+                disabled={(!input.trim() && images.length === 0) || !workspace || starting || !!agentIssue}
                 className={styles.sendBtn}
                 title={sending ? '排队（跑完后执行）' : '发送'}
                 style={{

@@ -90,6 +90,11 @@ const api = {
       ipcRenderer.on('pi:event', handler)
       return () => ipcRenderer.off('pi:event', handler)
     },
+    onStatus: (cb: (event: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+      ipcRenderer.on('agent:status', handler)
+      return () => ipcRenderer.off('agent:status', handler)
+    },
   },
 
   update: {

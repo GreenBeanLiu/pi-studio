@@ -114,6 +114,7 @@ declare global {
         setAutoCompaction: (enabled: boolean) => Promise<void>
         compact: () => Promise<unknown>
         onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
+        onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
       }
       update: {
         onAvailable: (cb: (data: { version: string }) => void) => () => void
@@ -237,6 +238,11 @@ export type ExtensionUiResponse =
   | { type: 'extension_ui_response'; id: string; cancelled: true }
 
 export type PiRuntimeEvent = AgentEvent | ExtensionUiRequest
+
+export type AgentStatusEvent =
+  | { status: 'started'; cwd: string; restoredSession: boolean; sessionFile?: string }
+  | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
+  | { status: 'error'; cwd: string; message: string }
 
 export type SessionInfo = {
   path: string

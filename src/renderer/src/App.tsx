@@ -7,13 +7,15 @@ import SessionSidebar from './components/SessionSidebar'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
 import WorkspacePicker from './components/WorkspacePicker'
-import { api, type Workspace } from './lib/api'
+import { api, type AgentStatusEvent, type Workspace } from './lib/api'
 
 type UpdateState =
   | { status: 'idle' }
   | { status: 'available'; version: string }
   | { status: 'downloaded'; version: string }
   | { status: 'error'; message: string }
+
+type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
 
 const useStyles = createStyles(({ token, css }) => ({
   shell: css`
@@ -46,6 +48,8 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle' })
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [opening, setOpening] = useState(false)
+  const [restartingAgent, setRestartingAgent] = useState(false)
+  const [agentIssue, setAgentIssue] = useState<AgentIssue | null>(null)
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)
 
@@ -78,12 +82,29 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     }
   }, [])
 
+  useEffect(() => {
+    const off = api.pi.onStatus((event) => {
+      if (!workspace || event.cwd !== workspace.path) return
+      if (event.status === 'started') {
+        setAgentIssue(null)
+        setRestartingAgent(false)
+        return
+      }
+      if (event.status === 'exited' && event.expected) return
+      setAgentIssue(event)
+      setRestartingAgent(false)
+      api.win.flash()
+    })
+    return off
+  }, [workspace?.path])
+
   // Optimistic open: close the picker immediately and show a "starting"
   // chat pane — the agent subprocess takes 1–3s to boot, and blocking the
   // modal on it reads as a UI freeze.
   async function openWorkspace(path: string) {
     const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path
     setWorkspaceError(null)
+    setAgentIssue(null)
     setShowWorkspacePicker(false)
     setOpening(true)
     setWorkspace({ path, name, lastOpenedAt: new Date().toISOString() })
@@ -102,6 +123,20 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       }
       return
     }
+    setRecentWorkspaces(result.recentWorkspaces)
+    setSessionEpoch((n) => n + 1)
+  }
+
+  async function restartAgent() {
+    if (!workspace || opening || restartingAgent) return
+    setRestartingAgent(true)
+    const result = await api.workspace.open(workspace.path)
+    setRestartingAgent(false)
+    if ('error' in result) {
+      setAgentIssue({ status: 'error', cwd: workspace.path, message: result.error })
+      return
+    }
+    setAgentIssue(null)
     setRecentWorkspaces(result.recentWorkspaces)
     setSessionEpoch((n) => n + 1)
   }
@@ -144,7 +179,10 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           <ChatPane
             key={`${workspace?.path ?? ''}#${sessionEpoch}`}
             workspace={workspace}
-            starting={opening}
+            starting={opening || restartingAgent}
+            agentIssue={agentIssue}
+            restarting={restartingAgent}
+            onRestartAgent={restartAgent}
           />
         </DesktopLayoutContainer>
       </div>
