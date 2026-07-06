@@ -22,6 +22,12 @@ declare global {
       app: {
         version: () => Promise<string>
       }
+      diagnostics: {
+        save: (payload: {
+          defaultPath: string
+          content: string
+        }) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
+      }
       settings: {
         load: () => Promise<{
           provider: PiProvider

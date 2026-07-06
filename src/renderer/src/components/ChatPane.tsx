@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createStyles } from 'antd-style'
-import { Spin, Popover, Segmented, Switch, Button } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button, message as antdMessage } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -15,6 +15,7 @@ import {
   SlashSquare,
   Puzzle,
   FileText,
+  Download,
 } from 'lucide-react'
 import {
   api,
@@ -541,6 +542,43 @@ function textOf(content: string | { type: string; text?: string }[]): string {
     .join('')
 }
 
+function truncateString(value: string): string {
+  return value.length > 4000 ? `${value.slice(0, 4000)}\n...[truncated ${value.length - 4000} chars]` : value
+}
+
+function sanitizeForDiagnostics(value: unknown, depth = 0): unknown {
+  if (depth > 8) return '[max depth]'
+  if (value == null) return value
+  if (typeof value === 'string') return truncateString(value)
+  if (typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map((item) => sanitizeForDiagnostics(item, depth + 1))
+
+  const output: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = key.toLowerCase()
+    if (
+      normalized === 'data' ||
+      normalized.includes('apikey') ||
+      normalized.includes('api_key') ||
+      normalized.includes('authorization') ||
+      normalized.includes('password') ||
+      normalized.includes('secret') ||
+      normalized.includes('token')
+    ) {
+      output[key] = '[redacted]'
+      continue
+    }
+    output[key] = sanitizeForDiagnostics(item, depth + 1)
+  }
+  return output
+}
+
+function diagnosticFileName(workspaceName: string): string {
+  const safeName = workspaceName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 48) || 'workspace'
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `pi-studio-diagnostics-${safeName}-${stamp}.json`
+}
+
 export default function ChatPane({ workspace, starting = false }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -738,6 +776,83 @@ export default function ChatPane({ workspace, starting = false }: Props) {
     const running = Object.values(toolExecutions).filter((t) => t.status === 'running')
     return running.length > 0 ? running[running.length - 1].toolName : null
   }, [toolExecutions])
+
+  const exportDiagnostics = useCallback(async () => {
+    if (!workspace) return
+
+    try {
+      const [state, appVersion, settings] = await Promise.all([
+        api.pi.getState().catch(() => null),
+        api.app.version().catch(() => 'unknown'),
+        api.settings.load().catch(() => null),
+      ])
+      const diagnostic = {
+        exportedAt: new Date().toISOString(),
+        app: {
+          version: appVersion,
+        },
+        workspace: {
+          name: workspace.name,
+          path: workspace.path,
+        },
+        settings: settings
+          ? {
+              provider: settings.provider,
+              model: settings.model,
+              baseUrlConfigured: !!settings.baseUrl,
+              apiKeyConfigured: !!settings.apiKey,
+              tavilyConfigured: !!settings.tavilyApiKey,
+              heliconeConfigured: !!settings.heliconeApiKey,
+              securityGuardEnabled: settings.securityGuardEnabled,
+              subagentsEnabled: settings.subagentsEnabled,
+            }
+          : null,
+        session: sanitizeForDiagnostics(state),
+        runtime: {
+          sending,
+          compacting,
+          thinking,
+          steeringMode,
+          followUpMode,
+          autoCompaction,
+          currentModel,
+          commandCount: commands.length,
+          commands,
+          messageCount: messages.length,
+          toolExecutionCount: Object.keys(toolExecutions).length,
+          runningTool,
+        },
+        toolExecutions: sanitizeForDiagnostics(toolExecutions),
+        messages: sanitizeForDiagnostics(messages.slice(-80)),
+      }
+
+      const result = await api.diagnostics.save({
+        defaultPath: diagnosticFileName(workspace.name),
+        content: JSON.stringify(diagnostic, null, 2),
+      })
+
+      if ('error' in result) {
+        antdMessage.error(result.error)
+      } else if ('ok' in result) {
+        antdMessage.success('诊断包已导出')
+      }
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '导出诊断包失败')
+    }
+  }, [
+    workspace,
+    sending,
+    compacting,
+    thinking,
+    steeringMode,
+    followUpMode,
+    autoCompaction,
+    currentModel,
+    commands,
+    messages,
+    toolExecutions,
+    runningTool,
+  ])
 
   // While the agent runs, Enter queues a follow-up and Ctrl+Enter steers
   // (interrupts); when idle both are a plain prompt.
@@ -1188,6 +1303,12 @@ export default function ChatPane({ workspace, starting = false }: Props) {
                     <ChevronDown size={11} />
                   </button>
                 </Popover>
+              )}
+              {workspace && (
+                <button className={styles.modelChip} onClick={exportDiagnostics} title="导出诊断包">
+                  <Download size={11} />
+                  诊断包
+                </button>
               )}
               <div style={{ flex: 1 }} />
               {sending && (

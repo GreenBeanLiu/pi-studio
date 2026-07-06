@@ -14,6 +14,11 @@ const api = {
     version: () => ipcRenderer.invoke('app:version'),
   },
 
+  diagnostics: {
+    save: (payload: { defaultPath: string; content: string }) =>
+      ipcRenderer.invoke('diagnostics:save', payload),
+  },
+
   settings: {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (s: unknown) => ipcRenderer.invoke('settings:save', s),

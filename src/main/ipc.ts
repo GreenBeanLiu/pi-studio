@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow, app, dialog } from 'electron'
+import { writeFileSync } from 'fs'
 import { dirname } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { listSessions, deleteSession } from './pi-sessions'
@@ -36,6 +37,32 @@ export function registerIpcHandlers(): void {
 
   // ── App ──────────────────────────────────────────────────────────
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle(
+    'diagnostics:save',
+    async (
+      event,
+      payload: {
+        defaultPath: string
+        content: string
+      },
+    ) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const result = await dialog.showSaveDialog(win!, {
+        title: '导出诊断包',
+        defaultPath: payload.defaultPath,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      })
+
+      if (result.canceled || !result.filePath) return { cancelled: true }
+
+      try {
+        writeFileSync(result.filePath, payload.content, 'utf-8')
+        return { ok: true, path: result.filePath }
+      } catch (err) {
+        return { error: (err as Error).message ?? '导出诊断包失败' }
+      }
+    },
+  )
 
   // ── Settings ────────────────────────────────────────────────────
   ipcMain.handle('settings:load', () => loadSettings())
