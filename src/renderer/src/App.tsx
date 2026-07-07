@@ -3,6 +3,7 @@ import { createStyles } from 'antd-style'
 import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
 import ChatPane from './components/ChatPane'
+import WorkflowPage from './components/WorkflowPage'
 import SessionSidebar from './components/SessionSidebar'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
@@ -16,6 +17,7 @@ type UpdateState =
   | { status: 'error'; message: string }
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
+type ActiveView = 'chat' | 'workflows'
 
 const useStyles = createStyles(({ token, css }) => ({
   shell: css`
@@ -51,7 +53,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [restartingAgent, setRestartingAgent] = useState(false)
   const [agentIssue, setAgentIssue] = useState<AgentIssue | null>(null)
   const [diagnosticsExporter, setDiagnosticsExporter] = useState<(() => void) | null>(null)
-  const [workflowDemoNonce, setWorkflowDemoNonce] = useState(0)
+  const [activeView, setActiveView] = useState<ActiveView>('chat')
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)
 
@@ -148,15 +150,6 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     setRecentWorkspaces(next)
   }
 
-  function triggerWorkflowDemo() {
-    if (!workspace) {
-      setWorkspaceError('请先打开一个工作区，再运行工作流 demo。')
-      setShowWorkspacePicker(true)
-      return
-    }
-    setWorkflowDemoNonce((n) => n + 1)
-  }
-
   function closeSettings() {
     setShowSettings(false)
     if (!workspace && !opening) setShowWorkspacePicker(true)
@@ -175,29 +168,39 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       <div className={styles.contentRow}>
         <NavRail
           workspace={workspace}
+          activeView={activeView}
           appearance={appearance}
           onSwitchWorkspace={() => setShowWorkspacePicker(true)}
+          onChat={() => setActiveView('chat')}
+          onWorkflows={() => setActiveView('workflows')}
           onSettings={() => setShowSettings(true)}
-          onWorkflowDemo={triggerWorkflowDemo}
           onToggleTheme={onToggleTheme}
         />
-        {workspace && !opening && (
+        {activeView === 'chat' && workspace && !opening && (
           <SessionSidebar
             workspace={workspace}
             onSessionChanged={() => setSessionEpoch((n) => n + 1)}
           />
         )}
         <DesktopLayoutContainer>
-          <ChatPane
-            key={`${workspace?.path ?? ''}#${sessionEpoch}`}
-            workspace={workspace}
-            starting={opening || restartingAgent}
-            agentIssue={agentIssue}
-            restarting={restartingAgent}
-            onRestartAgent={restartAgent}
-            onDiagnosticsExporterChange={(exporter) => setDiagnosticsExporter(() => exporter)}
-            workflowDemoNonce={workflowDemoNonce}
-          />
+          {activeView === 'chat' ? (
+            <ChatPane
+              key={`${workspace?.path ?? ''}#${sessionEpoch}`}
+              workspace={workspace}
+              starting={opening || restartingAgent}
+              agentIssue={agentIssue}
+              restarting={restartingAgent}
+              onRestartAgent={restartAgent}
+              onDiagnosticsExporterChange={(exporter) => setDiagnosticsExporter(() => exporter)}
+            />
+          ) : (
+            <WorkflowPage
+              workspace={workspace}
+              starting={opening || restartingAgent}
+              agentIssue={agentIssue}
+              onOpenWorkspace={() => setShowWorkspacePicker(true)}
+            />
+          )}
         </DesktopLayoutContainer>
       </div>
 

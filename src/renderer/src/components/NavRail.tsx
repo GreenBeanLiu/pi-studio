@@ -1,7 +1,7 @@
 import { createStyles } from 'antd-style'
 import { ActionIcon } from '@lobehub/ui'
 import { Tooltip } from 'antd'
-import { FolderOpen, Settings, Sun, Moon, Workflow } from 'lucide-react'
+import { FolderOpen, MessageSquare, Settings, Sun, Moon, Workflow } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -21,6 +21,11 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-shrink: 0;
     margin-bottom: 4px;
     color: ${token.colorTextSecondary};
+  `,
+
+  iconBtnActive: css`
+    color: ${token.colorPrimary};
+    background: ${token.colorPrimaryBg};
   `,
 
   spacer: css`
@@ -73,22 +78,26 @@ const useStyles = createStyles(({ token, css }) => ({
 
 type Props = {
   workspace: Workspace | null
+  activeView: 'chat' | 'workflows'
   appearance: 'dark' | 'light'
   onSwitchWorkspace: () => void
-  onWorkflowDemo: () => void
+  onChat: () => void
+  onWorkflows: () => void
   onSettings: () => void
   onToggleTheme: () => void
 }
 
 export default function NavRail({
   workspace,
+  activeView,
   appearance,
   onSwitchWorkspace,
-  onWorkflowDemo,
+  onChat,
+  onWorkflows,
   onSettings,
   onToggleTheme,
 }: Props) {
-  const { styles } = useStyles()
+  const { styles, cx } = useStyles()
 
   const initial = workspace?.name.slice(0, 1).toUpperCase() ?? ''
 
@@ -104,10 +113,18 @@ export default function NavRail({
       </Tooltip>
 
       <ActionIcon
-        className={styles.iconBtn}
+        className={cx(styles.iconBtn, activeView === 'chat' && styles.iconBtnActive)}
+        icon={<MessageSquare size={15} />}
+        title="聊天"
+        onClick={onChat}
+        size={{ blockSize: 36, borderRadius: 8 }}
+      />
+
+      <ActionIcon
+        className={cx(styles.iconBtn, activeView === 'workflows' && styles.iconBtnActive)}
         icon={<Workflow size={15} />}
-        title="工作流 Demo"
-        onClick={onWorkflowDemo}
+        title="工作流"
+        onClick={onWorkflows}
         size={{ blockSize: 36, borderRadius: 8 }}
       />
 

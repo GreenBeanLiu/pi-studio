@@ -7,6 +7,8 @@ import { piClientManager } from './pi-client'
 import { appendAppLog, attachWindowLoggers, installProcessLoggers, normalizeError } from './app-log'
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+const UPDATE_RETRY_DELAY_MS = 30 * 1000
+const UPDATE_MAX_RETRIES = 3
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -18,22 +20,55 @@ function broadcast(channel: string, payload: unknown): void {
 // handler must only ever be registered once, so this can't live in
 // createWindow.
 function setupAutoUpdater(): void {
+  let retryCount = 0
+  let retryTimer: NodeJS.Timeout | null = null
+  let checkInFlight = false
+
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.logger = null // suppress default logger noise
 
+  const isTransientUpdateError = (err: unknown): boolean => {
+    const message = err instanceof Error ? err.message : String(err)
+    return /ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED|ERR_NETWORK_IO_SUSPENDED|ETIMEDOUT|ECONNRESET|ENOTFOUND/i.test(
+      message,
+    )
+  }
+
+  const scheduleRetry = (err: unknown): boolean => {
+    if (!isTransientUpdateError(err) || retryCount >= UPDATE_MAX_RETRIES) return false
+    retryCount += 1
+    if (retryTimer) clearTimeout(retryTimer)
+    appendAppLog('warn', 'updater', 'Update check transient failure; retrying', {
+      ...normalizeError(err),
+      retryCount,
+      retryDelayMs: UPDATE_RETRY_DELAY_MS,
+    })
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      check()
+    }, UPDATE_RETRY_DELAY_MS)
+    return true
+  }
+
   autoUpdater.on('update-available', (info) => {
+    retryCount = 0
     appendAppLog('info', 'updater', 'Update available', { version: info.version })
     broadcast('update:available', { version: info.version })
   })
 
   autoUpdater.on('update-downloaded', (info) => {
+    retryCount = 0
     appendAppLog('info', 'updater', 'Update downloaded', { version: info.version })
     broadcast('update:downloaded', { version: info.version })
   })
 
   autoUpdater.on('error', (err) => {
-    // Surface the error to the renderer so the user can see it
+    if (checkInFlight) {
+      appendAppLog('warn', 'updater', 'Auto update emitted an error during active check', normalizeError(err))
+      return
+    }
+    if (scheduleRetry(err)) return
     appendAppLog('error', 'updater', 'Auto update failed', normalizeError(err))
     broadcast('update:error', { message: err.message ?? String(err) })
   })
@@ -47,11 +82,22 @@ function setupAutoUpdater(): void {
     autoUpdater.quitAndInstall(true, true)
   })
 
-  const check = (): void => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      appendAppLog('error', 'updater', 'Update check failed', normalizeError(err))
-      broadcast('update:error', { message: err.message ?? String(err) })
-    })
+  function check(): void {
+    if (checkInFlight) return
+    checkInFlight = true
+    autoUpdater
+      .checkForUpdates()
+      .then(() => {
+        retryCount = 0
+      })
+      .catch((err) => {
+        if (scheduleRetry(err)) return
+        appendAppLog('error', 'updater', 'Update check failed', normalizeError(err))
+        broadcast('update:error', { message: err.message ?? String(err) })
+      })
+      .finally(() => {
+        checkInFlight = false
+      })
   }
 
   // 启动后 3 秒再检查，避免影响启动速度；之后每 4 小时查一次

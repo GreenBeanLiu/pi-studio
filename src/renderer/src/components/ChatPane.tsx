@@ -51,7 +51,6 @@ type Props = {
   restarting?: boolean
   onRestartAgent?: () => void
   onDiagnosticsExporterChange?: (exporter: (() => void) | null) => void
-  workflowDemoNonce?: number
 }
 
 type RunStatus = 'running' | 'done' | 'error' | 'aborted'
@@ -1189,7 +1188,6 @@ export default function ChatPane({
   restarting = false,
   onRestartAgent,
   onDiagnosticsExporterChange,
-  workflowDemoNonce = 0,
 }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
@@ -1238,7 +1236,6 @@ export default function ChatPane({
   // (e.g. tool results) land in between.
   const streamingIndexRef = useRef<number | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
-  const lastWorkflowDemoNonceRef = useRef(0)
   const messagesStateRef = useRef(messages)
   const runRecordsRef = useRef(runRecords)
   messagesStateRef.current = messages
@@ -1970,16 +1967,6 @@ export default function ChatPane({
     onDiagnosticsExporterChange?.(workspace ? exportDiagnostics : null)
     return () => onDiagnosticsExporterChange?.(null)
   }, [workspace, exportDiagnostics, onDiagnosticsExporterChange])
-
-  useEffect(() => {
-    if (!workflowDemoNonce || !workspace || starting || agentIssue) return
-    if (lastWorkflowDemoNonceRef.current === workflowDemoNonce) return
-    lastWorkflowDemoNonceRef.current = workflowDemoNonce
-    setInput('/scout-and-plan 先查看这个项目的结构，给出下一步开发计划，不要修改文件')
-    setSlashDismissed(false)
-    requestAnimationFrame(() => inputRef.current?.focus())
-    antdMessage.info('已填入工作流 demo，可直接发送')
-  }, [workflowDemoNonce, workspace, starting, agentIssue])
 
   const exportCurrentSession = useCallback(
     async (format: SessionExportFormat) => {

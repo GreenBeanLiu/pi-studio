@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, copyFileSync, statSync } from 'fs'
-import { dirname, join, resolve } from 'path'
+import { dirname, join, relative, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { spawnSync } from 'child_process'
 
@@ -191,7 +191,9 @@ function releaseExists() {
 
 function publishRelease(artifacts) {
   const notes = `pi-studio ${version} release.`
-  const assetArgs = [artifacts.exe, artifacts.blockmap, artifacts.latestYml]
+  const assetArgs = [artifacts.exe, artifacts.blockmap, artifacts.latestYml].map((artifact) =>
+    relative(root, artifact).replace(/\\/g, '/'),
+  )
 
   if (releaseExists()) {
     run('gh', ['release', 'upload', tag, ...assetArgs, '--clobber'])
