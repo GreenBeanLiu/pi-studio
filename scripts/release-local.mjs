@@ -7,6 +7,8 @@ import { spawnSync } from 'child_process'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
 const distDir = join(root, 'dist')
+const RELEASE_RETRY_COUNT = 5
+const RELEASE_RETRY_DELAY_MS = 5000
 
 const args = new Set(process.argv.slice(2))
 const dryRun = args.has('--dry-run')
@@ -51,7 +53,8 @@ function logStep(message) {
 
 function run(command, commandArgs, options = {}) {
   const printable = [command, ...commandArgs].join(' ')
-  const useShell = process.platform === 'win32' && command === 'pnpm'
+  const isPnpm = command === 'pnpm'
+  const useShell = process.platform === 'win32' && isPnpm
   if (dryRun) {
     console.log(`[dry-run] ${printable}`)
     return ''
@@ -60,6 +63,7 @@ function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: root,
     encoding: 'utf-8',
+    env: isPnpm ? { ...process.env, CI: 'true', npm_config_confirm_modules_purge: 'false' } : process.env,
     stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     shell: useShell,
   })
@@ -76,12 +80,34 @@ function output(command, commandArgs) {
   return run(command, commandArgs, { capture: true })
 }
 
+function sleep(ms) {
+  if (dryRun) return
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+function retryStep(label, fn) {
+  let lastError
+  for (let attempt = 1; attempt <= RELEASE_RETRY_COUNT; attempt += 1) {
+    try {
+      return fn()
+    } catch (err) {
+      lastError = err
+      if (attempt === RELEASE_RETRY_COUNT) break
+      console.warn(`${label} failed, retrying ${attempt}/${RELEASE_RETRY_COUNT - 1}: ${err.message ?? err}`)
+      sleep(RELEASE_RETRY_DELAY_MS)
+    }
+  }
+  throw lastError
+}
+
 function commandExists(command, commandArgs = ['--version']) {
   if (dryRun) return true
-  const useShell = process.platform === 'win32' && command === 'pnpm'
+  const isPnpm = command === 'pnpm'
+  const useShell = process.platform === 'win32' && isPnpm
   const result = spawnSync(command, commandArgs, {
     cwd: root,
     encoding: 'utf-8',
+    env: isPnpm ? { ...process.env, CI: 'true', npm_config_confirm_modules_purge: 'false' } : process.env,
     stdio: 'ignore',
     shell: useShell,
   })
@@ -108,6 +134,12 @@ function ensureTag() {
 function pushHeadAndTag() {
   run('git', ['push', 'origin', 'HEAD'])
   run('git', ['push', 'origin', tag])
+}
+
+function waitForRemoteTag() {
+  retryStep(`Waiting for remote tag ${tag}`, () => {
+    run('git', ['ls-remote', '--exit-code', '--tags', 'origin', tag], { capture: true })
+  })
 }
 
 function parseLatestYml() {
@@ -195,25 +227,29 @@ function publishRelease(artifacts) {
     relative(root, artifact).replace(/\\/g, '/'),
   )
 
-  if (releaseExists()) {
-    run('gh', ['release', 'upload', tag, ...assetArgs, '--clobber'])
-  } else {
-    run('gh', [
-      'release',
-      'create',
-      tag,
-      ...assetArgs,
-      '--title',
-      `pi-studio ${tag}`,
-      '--notes',
-      notes,
-      '--latest',
-    ])
-  }
+  retryStep(`Publishing ${tag}`, () => {
+    if (releaseExists()) {
+      run('gh', ['release', 'upload', tag, ...assetArgs, '--clobber'])
+    } else {
+      run('gh', [
+        'release',
+        'create',
+        tag,
+        ...assetArgs,
+        '--title',
+        `pi-studio ${tag}`,
+        '--notes',
+        notes,
+        '--latest',
+      ])
+    }
+  })
 }
 
 function verifyRelease(artifacts) {
-  const json = output('gh', ['release', 'view', tag, '--json', 'assets,isDraft,isPrerelease,url'])
+  const json = retryStep(`Verifying release ${tag}`, () =>
+    output('gh', ['release', 'view', tag, '--json', 'assets,isDraft,isPrerelease,url']),
+  )
   if (dryRun) return
   const release = JSON.parse(json)
   if (release.isDraft || release.isPrerelease) {
@@ -272,6 +308,7 @@ const artifacts = dryRun
 logStep('Tagging and pushing current HEAD')
 ensureTag()
 pushHeadAndTag()
+waitForRemoteTag()
 
 logStep(`Publishing ${tag} to ${owner}/${repo}`)
 publishRelease(artifacts)
