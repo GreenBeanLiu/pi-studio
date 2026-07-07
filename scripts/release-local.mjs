@@ -51,6 +51,7 @@ function logStep(message) {
 
 function run(command, commandArgs, options = {}) {
   const printable = [command, ...commandArgs].join(' ')
+  const useShell = process.platform === 'win32' && command === 'pnpm'
   if (dryRun) {
     console.log(`[dry-run] ${printable}`)
     return ''
@@ -60,7 +61,7 @@ function run(command, commandArgs, options = {}) {
     cwd: root,
     encoding: 'utf-8',
     stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-    shell: process.platform === 'win32',
+    shell: useShell,
   })
 
   if (result.status !== 0) {
@@ -77,11 +78,12 @@ function output(command, commandArgs) {
 
 function commandExists(command, commandArgs = ['--version']) {
   if (dryRun) return true
+  const useShell = process.platform === 'win32' && command === 'pnpm'
   const result = spawnSync(command, commandArgs, {
     cwd: root,
     encoding: 'utf-8',
     stdio: 'ignore',
-    shell: process.platform === 'win32',
+    shell: useShell,
   })
   return result.status === 0
 }
@@ -98,7 +100,6 @@ function ensureTag() {
   const hasTag = dryRun ? false : spawnSync('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}`], {
     cwd: root,
     stdio: 'ignore',
-    shell: process.platform === 'win32',
   }).status === 0
 
   if (!hasTag) run('git', ['tag', tag])
@@ -184,7 +185,6 @@ function releaseExists() {
   const result = spawnSync('gh', ['release', 'view', tag], {
     cwd: root,
     stdio: 'ignore',
-    shell: process.platform === 'win32',
   })
   return result.status === 0
 }
