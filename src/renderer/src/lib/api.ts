@@ -125,6 +125,13 @@ declare global {
         onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
         onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
       }
+      imageGen: {
+        health: () => Promise<ImageGenHealth>
+        generate: (payload: {
+          prompt: string
+          engine: ImageGenEngine
+        }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
+      }
       update: {
         onAvailable: (cb: (data: { version: string }) => void) => () => void
         onDownloaded: (cb: (data: { version: string }) => void) => () => void
@@ -136,6 +143,16 @@ declare global {
 }
 
 export type PiProvider = 'anthropic' | 'openai'
+
+export type ImageGenEngine = 'openai' | 'comfy'
+
+export type ImageGenHealth = {
+  ok: boolean
+  keyConfigured: boolean
+  comfy: boolean
+  model: string
+  r2: boolean
+}
 
 export type ProviderConnectionResult =
   | { ok: true; message: string; details?: string }

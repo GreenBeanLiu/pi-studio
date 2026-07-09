@@ -1,7 +1,7 @@
 import { createStyles } from 'antd-style'
 import { ActionIcon } from '@lobehub/ui'
 import { Tooltip } from 'antd'
-import { FolderOpen, MessageSquare, Settings, Sun, Moon, Workflow } from 'lucide-react'
+import { FolderOpen, MessageSquare, Settings, Sun, Moon, Workflow, Image } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -78,11 +78,12 @@ const useStyles = createStyles(({ token, css }) => ({
 
 type Props = {
   workspace: Workspace | null
-  activeView: 'chat' | 'workflows'
+  activeView: 'chat' | 'workflows' | 'imagegen'
   appearance: 'dark' | 'light'
   onSwitchWorkspace: () => void
   onChat: () => void
   onWorkflows: () => void
+  onImageGen: () => void
   onSettings: () => void
   onToggleTheme: () => void
 }
@@ -94,6 +95,7 @@ export default function NavRail({
   onSwitchWorkspace,
   onChat,
   onWorkflows,
+  onImageGen,
   onSettings,
   onToggleTheme,
 }: Props) {
@@ -125,6 +127,14 @@ export default function NavRail({
         icon={<Workflow size={15} />}
         title="工作流"
         onClick={onWorkflows}
+        size={{ blockSize: 36, borderRadius: 8 }}
+      />
+
+      <ActionIcon
+        className={cx(styles.iconBtn, activeView === 'imagegen' && styles.iconBtnActive)}
+        icon={<Image size={15} />}
+        title="图像生成"
+        onClick={onImageGen}
         size={{ blockSize: 36, borderRadius: 8 }}
       />
 

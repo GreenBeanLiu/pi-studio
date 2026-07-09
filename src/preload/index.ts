@@ -100,6 +100,12 @@ const api = {
     },
   },
 
+  imageGen: {
+    health: () => ipcRenderer.invoke('imageGen:health'),
+    generate: (payload: { prompt: string; engine: 'openai' | 'comfy' }) =>
+      ipcRenderer.invoke('imageGen:generate', payload),
+  },
+
   update: {
     onAvailable: (cb: (data: { version: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)

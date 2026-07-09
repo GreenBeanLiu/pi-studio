@@ -4,6 +4,7 @@ import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
 import ChatPane from './components/ChatPane'
 import WorkflowPage from './components/WorkflowPage'
+import ImageGenPage from './components/ImageGenPage'
 import SessionSidebar from './components/SessionSidebar'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
@@ -17,7 +18,7 @@ type UpdateState =
   | { status: 'error'; message: string }
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
-type ActiveView = 'chat' | 'workflows'
+type ActiveView = 'chat' | 'workflows' | 'imagegen'
 
 const useStyles = createStyles(({ token, css }) => ({
   shell: css`
@@ -173,6 +174,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           onSwitchWorkspace={() => setShowWorkspacePicker(true)}
           onChat={() => setActiveView('chat')}
           onWorkflows={() => setActiveView('workflows')}
+          onImageGen={() => setActiveView('imagegen')}
           onSettings={() => setShowSettings(true)}
           onToggleTheme={onToggleTheme}
         />
@@ -193,13 +195,15 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
               onRestartAgent={restartAgent}
               onDiagnosticsExporterChange={(exporter) => setDiagnosticsExporter(() => exporter)}
             />
-          ) : (
+          ) : activeView === 'workflows' ? (
             <WorkflowPage
               workspace={workspace}
               starting={opening || restartingAgent}
               agentIssue={agentIssue}
               onOpenWorkspace={() => setShowWorkspacePicker(true)}
             />
+          ) : (
+            <ImageGenPage />
           )}
         </DesktopLayoutContainer>
       </div>
