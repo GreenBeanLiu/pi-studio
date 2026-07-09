@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Button, Input, Popconfirm, Switch, Tooltip, App as AntApp } from 'antd'
+import { Button, Input, Popconfirm, Spin, Switch, Tooltip, App as AntApp } from 'antd'
 import {
   Image as ImageIcon,
   Cloud,
@@ -57,6 +57,9 @@ type Current = {
   prompt: string
   historyId?: string
 }
+
+/** 进行中的生成任务,在历史区占一个转圈的格子。 */
+type PendingGen = { key: string; prompt: string; engine: string }
 
 const useStyles = createStyles(({ token, css }) => ({
   page: css`
@@ -172,6 +175,27 @@ const useStyles = createStyles(({ token, css }) => ({
       border-color: ${token.colorPrimary};
     }
   `,
+  pendingCell: css`
+    aspect-ratio: 1;
+    border-radius: ${token.borderRadius}px;
+    border: 1px dashed ${token.colorPrimaryBorder};
+    background: ${token.colorFillTertiary};
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px;
+
+    span.pending-label {
+      font-size: 11px;
+      color: ${token.colorTextTertiary};
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  `,
   histTag: css`
     position: absolute;
     left: 4px;
@@ -206,10 +230,10 @@ function ImageGenInner() {
   const [prompt, setPrompt] = useState('')
   const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
-  const [loading, setLoading] = useState(false)
   const [comfyBusy, setComfyBusy] = useState(false)
   const [current, setCurrent] = useState<Current | null>(null)
   const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
+  const [pending, setPending] = useState<PendingGen[]>([])
   const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
 
   async function refreshHealth() {
@@ -260,27 +284,34 @@ function ImageGenInner() {
 
   async function generate() {
     const text = prompt.trim()
-    if (!text || loading) return
+    if (!text || pending.length >= 3) return
     const preset = STYLE_PRESETS.find((p) => p.id === presetId)
     const full = preset?.suffix
       ? `${text}, ${preset.suffix}. High quality, sharp, no watermark, no text.`
       : `${text}. High quality, sharp, no watermark, no text.`
+    const isEdit = !!baseImage
+    const refUrls = baseImage ? [baseImage] : undefined
 
-    setLoading(true)
+    // 任务进历史区转圈,按钮立即释放,可连续下多个任务(上限 3 并发)
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const engineTag =
+      engine === 'comfy' ? (isEdit ? 'comfy-edit' : 'comfy') : isEdit ? 'cloud-edit' : 'cloud'
+    setPending((p) => [{ key, prompt: text, engine: engineTag }, ...p])
+
     try {
       const r = await api.imageGen.generate({
         prompt: full,
         engine,
-        ...(baseImage ? { referenceUrls: [baseImage] } : {}),
+        ...(refUrls ? { referenceUrls: refUrls } : {}),
       })
       if ('error' in r) {
         message.error(r.error)
         return
       }
       setCurrent({ src: r.dataUrl, publicUrl: r.publicUrl, prompt: text })
-      refreshHistory()
+      await refreshHistory()
     } finally {
-      setLoading(false)
+      setPending((p) => p.filter((x) => x.key !== key))
     }
   }
 
@@ -306,7 +337,9 @@ function ImageGenInner() {
   const engineLabel = (e: string) =>
     e.startsWith('cloud') ? '云' : e.startsWith('comfy') ? '本' : e
   const canGenerate =
-    !loading && !!prompt.trim() && (engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
+    pending.length < 3 &&
+    !!prompt.trim() &&
+    (engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
 
   return (
     <div className={styles.page}>
@@ -406,14 +439,9 @@ function ImageGenInner() {
           <div className={styles.offline}>没有可用引擎——打开上面的 ComfyUI 开关即可。</div>
         )}
 
-        <Button type="primary" loading={loading} disabled={!canGenerate} onClick={generate}>
-          {loading
-            ? baseImage
-              ? '修改中…'
-              : '生成中…'
-            : baseImage
-              ? '修改这张图'
-              : '生成'}
+        <Button type="primary" disabled={!canGenerate} onClick={generate}>
+          {baseImage ? '修改这张图' : '生成'}
+          {pending.length > 0 ? `(${pending.length} 个进行中)` : ''}
         </Button>
       </section>
 
@@ -424,10 +452,8 @@ function ImageGenInner() {
           ) : (
             <div className={styles.empty}>
               <ImageIcon size={40} strokeWidth={1.2} />
-              {loading
-                ? engine === 'comfy'
-                  ? '正在生成…(本地引擎约 10~20 秒)'
-                  : '正在生成…(云端约 30~60 秒)'
+              {pending.length > 0
+                ? `${pending.length} 个任务生成中…(本地约 10~20 秒,云端约 30~60 秒)`
                 : '生成的图会显示在这里,下面是历史记录'}
             </div>
           )}
@@ -464,10 +490,20 @@ function ImageGenInner() {
           </div>
         )}
 
-        {history.length > 0 && (
+        {(history.length > 0 || pending.length > 0) && (
           <>
-            <span className={styles.label}>历史记录({history.length})</span>
+            <span className={styles.label}>
+              历史记录({history.length}
+              {pending.length > 0 ? ` · ${pending.length} 个生成中` : ''})
+            </span>
             <div className={styles.historyGrid}>
+              {pending.map((p) => (
+                <div key={p.key} className={styles.pendingCell} title={p.prompt}>
+                  <Spin size="small" />
+                  <span className="pending-label">{p.prompt}</span>
+                  <span className="pending-label">{engineLabel(p.engine)}·生成中</span>
+                </div>
+              ))}
               {history.map((h) => (
                 <div
                   key={h.id}
