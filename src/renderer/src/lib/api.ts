@@ -131,6 +131,8 @@ declare global {
           prompt: string
           engine: ImageGenEngine
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
+        comfyStart: () => Promise<{ ok: true } | { error: string }>
+        comfyStop: () => Promise<{ ok: boolean; external: boolean }>
       }
       update: {
         onAvailable: (cb: (data: { version: string }) => void) => () => void
@@ -150,6 +152,7 @@ export type ImageGenHealth = {
   ok: boolean
   keyConfigured: boolean
   comfy: boolean
+  comfyManaged: boolean
   model: string
   r2: boolean
 }

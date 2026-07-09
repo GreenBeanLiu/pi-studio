@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Button, Input, Tooltip, App as AntApp } from 'antd'
+import { Button, Input, Switch, Tooltip, App as AntApp } from 'antd'
 import { Image as ImageIcon, Cloud, Monitor, Download, Link2, RefreshCw } from 'lucide-react'
 import { api, type ImageGenEngine, type ImageGenHealth } from '../lib/api'
 
@@ -148,6 +148,7 @@ function ImageGenInner() {
   const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [loading, setLoading] = useState(false)
+  const [comfyBusy, setComfyBusy] = useState(false)
   const [current, setCurrent] = useState<HistoryItem | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
 
@@ -167,6 +168,30 @@ function ImageGenInner() {
   }, [])
 
   const serviceUp = health?.ok ?? false
+
+  async function toggleComfy(on: boolean) {
+    if (comfyBusy) return
+    setComfyBusy(true)
+    try {
+      if (on) {
+        const r = await api.imageGen.comfyStart()
+        if ('error' in r) {
+          message.error(r.error)
+        } else {
+          message.success('ComfyUI 已启动')
+          setEngine('comfy')
+        }
+      } else {
+        const r = await api.imageGen.comfyStop()
+        if (!r.ok && r.external) {
+          message.warning('ComfyUI 是在 pi-studio 外部启动的,请从启动它的地方关闭')
+        }
+      }
+    } finally {
+      await refreshHealth()
+      setComfyBusy(false)
+    }
+  }
 
   async function generate() {
     const text = prompt.trim()
@@ -224,6 +249,27 @@ function ImageGenInner() {
           ))}
         </div>
 
+        <span className={styles.label}>ComfyUI(本地引擎)</span>
+        <div className={styles.chips}>
+          <Tooltip
+            title={
+              health?.comfy && !health.comfyManaged
+                ? '由 pi-studio 外部启动,只能从启动它的地方关闭'
+                : ''
+            }
+          >
+            <Switch
+              checked={health?.comfy ?? false}
+              loading={comfyBusy}
+              disabled={!!health?.comfy && !health.comfyManaged}
+              checkedChildren="运行中"
+              unCheckedChildren="已关闭"
+              onChange={toggleComfy}
+            />
+          </Tooltip>
+          {comfyBusy && <span className={styles.label}>启动要加载模型,约 10~30 秒…</span>}
+        </div>
+
         <span className={styles.label}>引擎</span>
         <div className={styles.chips}>
           <Tooltip title={health?.keyConfigured ? '' : '图像服务未配置云端 API Key'}>
@@ -253,14 +299,8 @@ function ImageGenInner() {
           </Tooltip>
         </div>
 
-        {!serviceUp && (
-          <div className={styles.offline}>
-            没有可用引擎。启动本地 ComfyUI 即可:
-            <br />
-            D:\Works\ComfyUI&gt; .venv\Scripts\python.exe main.py --port 8188
-            <br />
-            (云端引擎可选,需 icon-studio 后端在运行)
-          </div>
+        {!serviceUp && !comfyBusy && (
+          <div className={styles.offline}>没有可用引擎——打开上面的 ComfyUI 开关即可。</div>
         )}
 
         <Button

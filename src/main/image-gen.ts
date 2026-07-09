@@ -1,11 +1,19 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
+import { spawn, type ChildProcess } from 'child_process'
+import { existsSync } from 'fs'
+import { join } from 'path'
 
 // 本地图像生成:直连 ComfyUI(唯一硬依赖,默认 8188)。
 // 云端 gpt-image-2 走 icon-studio 后端(5301),它没开就置灰——可选增强,不是前提。
 const COMFY_BASE = (process.env.PI_COMFY_BASE || 'http://127.0.0.1:8188').replace(/\/$/, '')
+const COMFY_DIR = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
 const COMFY_CKPT = process.env.PI_COMFY_CHECKPOINT || 'sd_xl_base_1.0.safetensors'
 const COMFY_TIMEOUT_MS = 150_000
 const ICON_STUDIO = (process.env.PI_IMAGE_SERVICE || 'http://127.0.0.1:5301').replace(/\/$/, '')
+
+// pi-studio 托管的 ComfyUI 子进程(用户在图像页开关);应用退出时一并结束。
+// 若 8188 上已有外部启动的 ComfyUI,直接用,不托管也不负责停止。
+let comfyProc: ChildProcess | null = null
 
 const NEGATIVE =
   'text, letters, words, watermark, signature, blurry, lowres, jpeg artifacts, frame, border, cropped, deformed'
@@ -14,6 +22,8 @@ export type ImageGenHealth = {
   ok: boolean
   keyConfigured: boolean
   comfy: boolean
+  /** ComfyUI 是否由 pi-studio 托管(true 才允许从界面停止) */
+  comfyManaged: boolean
   model: string
   r2: boolean
 }
@@ -98,7 +108,14 @@ async function probe(url: string, ms = 1500): Promise<Response | null> {
   }
 }
 
+const comfyUp = async (): Promise<boolean> => !!(await probe(`${COMFY_BASE}/system_stats`))
+
 export function registerImageGenHandlers(): void {
+  app.on('will-quit', () => {
+    comfyProc?.kill()
+    comfyProc = null
+  })
+
   ipcMain.handle('imageGen:health', async (): Promise<ImageGenHealth> => {
     const [comfyRes, iconRes] = await Promise.all([
       probe(`${COMFY_BASE}/system_stats`),
@@ -110,10 +127,49 @@ export function registerImageGenHandlers(): void {
     return {
       ok: comfy || keyConfigured,
       comfy,
+      comfyManaged: comfyProc != null && comfyProc.exitCode === null,
       keyConfigured,
       model: typeof icon?.model === 'string' ? icon.model : '',
       r2: !!icon?.r2,
     }
+  })
+
+  ipcMain.handle('imageGen:comfyStart', async (): Promise<{ ok: true } | { error: string }> => {
+    if (await comfyUp()) return { ok: true }
+    const py = join(COMFY_DIR, '.venv', 'Scripts', 'python.exe')
+    if (!existsSync(py)) return { error: `找不到 ComfyUI 环境: ${py}` }
+
+    if (!comfyProc || comfyProc.exitCode !== null) {
+      const port = new URL(COMFY_BASE).port || '8188'
+      comfyProc = spawn(py, ['main.py', '--port', port], {
+        cwd: COMFY_DIR,
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      comfyProc.on('exit', () => {
+        comfyProc = null
+      })
+    }
+
+    const deadline = Date.now() + 90_000
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500))
+      if (await comfyUp()) return { ok: true }
+      if (!comfyProc) return { error: 'ComfyUI 进程启动后立即退出,请在 ComfyUI 目录手动启动排查' }
+    }
+    comfyProc?.kill()
+    comfyProc = null
+    return { error: 'ComfyUI 启动超时(90s)' }
+  })
+
+  ipcMain.handle('imageGen:comfyStop', async (): Promise<{ ok: boolean; external: boolean }> => {
+    if (comfyProc) {
+      comfyProc.kill()
+      comfyProc = null
+      return { ok: true, external: false }
+    }
+    // 不是本应用启动的进程,不越权去杀
+    return { ok: false, external: await comfyUp() }
   })
 
   ipcMain.handle(
