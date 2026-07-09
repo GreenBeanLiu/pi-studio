@@ -3,13 +3,16 @@ import { spawn, type ChildProcess } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
 
-// 本地图像生成:直连 ComfyUI(唯一硬依赖,默认 8188)。
-// 云端 gpt-image-2 走 icon-studio 后端(5301),它没开就置灰——可选增强,不是前提。
+// 本地引擎:直连 ComfyUI(默认 8188,可由本应用托管启停)。
+// 云端引擎:VPS 中继(trail-api)→ trigger.dev 跑 gpt-image-2 → R2,SSE 拿结果。
 const COMFY_BASE = (process.env.PI_COMFY_BASE || 'http://127.0.0.1:8188').replace(/\/$/, '')
 const COMFY_DIR = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
 const COMFY_CKPT = process.env.PI_COMFY_CHECKPOINT || 'sd_xl_base_1.0.safetensors'
 const COMFY_TIMEOUT_MS = 150_000
-const ICON_STUDIO = (process.env.PI_IMAGE_SERVICE || 'http://127.0.0.1:5301').replace(/\/$/, '')
+const CLOUD_RELAY = (process.env.PI_CLOUD_IMAGE_RELAY || 'http://trail-api.glanger.xyz:8000').replace(/\/$/, '')
+// 防扫描白嫖的共享 key(烧在客户端,防的是爬虫不是逆向)
+const CLOUD_KEY = process.env.PI_CLOUD_IMAGE_KEY || '8f3b404477548a7a59223fceec483bae'
+const CLOUD_TIMEOUT_MS = 320_000
 
 // pi-studio 托管的 ComfyUI 子进程(用户在图像页开关);应用退出时一并结束。
 // 若 8188 上已有外部启动的 ComfyUI,直接用,不托管也不负责停止。
@@ -108,6 +111,51 @@ async function probe(url: string, ms = 1500): Promise<Response | null> {
   }
 }
 
+/** 云端生成:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
+async function cloudGenerate(prompt: string): Promise<ImageGenResult> {
+  const resp = await fetch(`${CLOUD_RELAY}/imagegen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
+    body: JSON.stringify({ prompt }),
+    signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
+  })
+  if (!resp.ok || !resp.body) {
+    const text = await resp.text().catch(() => '')
+    return { error: `云端中继 ${resp.status}: ${text.slice(0, 200)}` }
+  }
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+
+    let sep: number
+    while ((sep = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, sep)
+      buf = buf.slice(sep + 2)
+      const event = /^event: (.+)$/m.exec(block)?.[1]
+      const dataRaw = /^data: (.+)$/m.exec(block)?.[1]
+      if (!event || !dataRaw) continue
+      const data = JSON.parse(dataRaw)
+
+      if (event === 'error') return { error: data.message || '云端生成失败' }
+      if (event === 'result') {
+        const url = data.urls?.[0]
+        if (!url) return { error: '云端任务完成但没有返回图片 URL' }
+        const img = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+        if (!img.ok) return { error: `下载结果图失败(${img.status})` }
+        const b64 = Buffer.from(await img.arrayBuffer()).toString('base64')
+        return { dataUrl: `data:image/png;base64,${b64}`, publicUrl: url }
+      }
+      // event: status — 阶段进度,目前不透传到 UI
+    }
+  }
+  return { error: '云端连接在收到结果前断开了' }
+}
+
 const comfyUp = async (): Promise<boolean> => !!(await probe(`${COMFY_BASE}/system_stats`))
 
 export function registerImageGenHandlers(): void {
@@ -117,20 +165,20 @@ export function registerImageGenHandlers(): void {
   })
 
   ipcMain.handle('imageGen:health', async (): Promise<ImageGenHealth> => {
-    const [comfyRes, iconRes] = await Promise.all([
+    const [comfyRes, cloudRes] = await Promise.all([
       probe(`${COMFY_BASE}/system_stats`),
-      probe(`${ICON_STUDIO}/api/health`),
+      probe(`${CLOUD_RELAY}/imagegen/health`, 3000),
     ])
-    const icon = iconRes ? ((await iconRes.json()) as Record<string, unknown>) : null
+    const cloud = cloudRes ? ((await cloudRes.json()) as Record<string, unknown>) : null
     const comfy = !!comfyRes
-    const keyConfigured = !!icon?.keyConfigured
+    const cloudOk = !!cloud?.ok
     return {
-      ok: comfy || keyConfigured,
+      ok: comfy || cloudOk,
       comfy,
       comfyManaged: comfyProc != null && comfyProc.exitCode === null,
-      keyConfigured,
-      model: typeof icon?.model === 'string' ? icon.model : '',
-      r2: !!icon?.r2,
+      keyConfigured: cloudOk,
+      model: typeof cloud?.model === 'string' ? cloud.model : '',
+      r2: cloudOk,
     }
   })
 
@@ -177,24 +225,14 @@ export function registerImageGenHandlers(): void {
     async (_e, payload: { prompt: string; engine: 'openai' | 'comfy' }): Promise<ImageGenResult> => {
       try {
         if (payload.engine === 'comfy') return await comfyGenerate(payload.prompt)
-
-        // 云端引擎:经由 icon-studio 后端(带 R2 上传)
-        const r = await fetch(`${ICON_STUDIO}/api/gen`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(COMFY_TIMEOUT_MS),
-        })
-        const j = await r.json()
-        if (!r.ok) return { error: j?.error || `生成服务 ${r.status}` }
-        return { dataUrl: j.dataUrl, publicUrl: j.publicUrl ?? null }
+        return await cloudGenerate(payload.prompt)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         return {
           error: msg.includes('fetch failed')
             ? payload.engine === 'comfy'
-              ? 'ComfyUI 未运行:cd D:\\Works\\ComfyUI && .venv\\Scripts\\python.exe main.py --port 8188'
-              : '云端引擎需要 icon-studio 后端在运行(pnpm start)'
+              ? 'ComfyUI 未运行,打开图像页的 ComfyUI 开关即可'
+              : '连不上云端图像服务(trail-api.glanger.xyz:8000)'
             : msg,
         }
       }
