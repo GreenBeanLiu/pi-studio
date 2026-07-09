@@ -33,11 +33,22 @@ export type ImageGenHealth = {
 
 export type ImageGenResult = { dataUrl: string; publicUrl: string | null } | { error: string }
 
-/** SDXL 文生图 workflow(ComfyUI API 格式),与 icon-studio 的保持一致。 */
-function buildWorkflow(prompt: string, seed: number): Record<string, unknown> {
-  return {
+export type ImageGenHistoryItem = {
+  id: string
+  prompt: string
+  engine: string
+  provider: string | null
+  url: string
+  created_at: number
+}
+
+/**
+ * SDXL workflow(ComfyUI API 格式)。
+ * refImageName 传了就是 img2img:LoadImage → VAEEncode 得到初始 latent,降低 denoise 保留原图结构。
+ */
+function buildWorkflow(prompt: string, seed: number, refImageName?: string): Record<string, unknown> {
+  const wf: Record<string, unknown> = {
     4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: COMFY_CKPT } },
-    5: { class_type: 'EmptyLatentImage', inputs: { width: 1024, height: 1024, batch_size: 1 } },
     6: { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['4', 1] } },
     7: { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE, clip: ['4', 1] } },
     3: {
@@ -48,24 +59,47 @@ function buildWorkflow(prompt: string, seed: number): Record<string, unknown> {
         cfg: 7,
         sampler_name: 'dpmpp_2m',
         scheduler: 'karras',
-        denoise: 1,
+        // img2img:0.7 = 语义修改能生效、构图仍可辨;再低改不动,再高丢构图
+        denoise: refImageName ? 0.7 : 1,
         model: ['4', 0],
         positive: ['6', 0],
         negative: ['7', 0],
-        latent_image: ['5', 0],
+        latent_image: refImageName ? ['11', 0] : ['5', 0],
       },
     },
     8: { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
     9: { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: 'pi-studio' } },
   }
+  if (refImageName) {
+    wf[10] = { class_type: 'LoadImage', inputs: { image: refImageName } }
+    wf[11] = { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } }
+  } else {
+    wf[5] = { class_type: 'EmptyLatentImage', inputs: { width: 1024, height: 1024, batch_size: 1 } }
+  }
+  return wf
 }
 
-async function comfyGenerate(prompt: string): Promise<ImageGenResult> {
+/** 把参考图(公网 URL)喂给 ComfyUI:下载 → POST /upload/image → 返回服务端文件名。 */
+async function comfyUploadRef(refUrl: string): Promise<string> {
+  const img = await fetch(refUrl, { signal: AbortSignal.timeout(60_000) })
+  if (!img.ok) throw new Error(`下载参考图失败(${img.status})`)
+  const blob = new Blob([await img.arrayBuffer()], { type: 'image/png' })
+  const form = new FormData()
+  form.append('image', blob, `ref-${Date.now()}.png`)
+  form.append('overwrite', 'true')
+  const up = await fetch(`${COMFY_BASE}/upload/image`, { method: 'POST', body: form })
+  if (!up.ok) throw new Error(`ComfyUI 上传参考图失败(${up.status})`)
+  const j = (await up.json()) as { name: string; subfolder?: string }
+  return j.subfolder ? `${j.subfolder}/${j.name}` : j.name
+}
+
+async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenResult> {
   const seed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)
+  const refName = refUrl ? await comfyUploadRef(refUrl) : undefined
   const submit = await fetch(`${COMFY_BASE}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: buildWorkflow(prompt, seed) }),
+    body: JSON.stringify({ prompt: buildWorkflow(prompt, seed, refName) }),
   })
   if (!submit.ok) {
     return { error: `ComfyUI /prompt ${submit.status}: ${(await submit.text()).slice(0, 300)}` }
@@ -111,12 +145,12 @@ async function probe(url: string, ms = 1500): Promise<Response | null> {
   }
 }
 
-/** 云端生成:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
-async function cloudGenerate(prompt: string): Promise<ImageGenResult> {
+/** 云端生成/改图:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
+async function cloudGenerate(prompt: string, referenceUrls?: string[]): Promise<ImageGenResult> {
   const resp = await fetch(`${CLOUD_RELAY}/imagegen`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, ...(referenceUrls?.length ? { referenceUrls } : {}) }),
     signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
   })
   if (!resp.ok || !resp.body) {
@@ -222,10 +256,38 @@ export function registerImageGenHandlers(): void {
 
   ipcMain.handle(
     'imageGen:generate',
-    async (_e, payload: { prompt: string; engine: 'openai' | 'comfy' }): Promise<ImageGenResult> => {
+    async (
+      _e,
+      payload: { prompt: string; engine: 'openai' | 'comfy'; referenceUrls?: string[] },
+    ): Promise<ImageGenResult> => {
       try {
-        if (payload.engine === 'comfy') return await comfyGenerate(payload.prompt)
-        return await cloudGenerate(payload.prompt)
+        if (payload.engine === 'comfy') {
+          const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0])
+          // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
+          if ('dataUrl' in r) {
+            try {
+              const rec = await fetch(`${CLOUD_RELAY}/imagegen/history`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
+                body: JSON.stringify({
+                  prompt: payload.prompt,
+                  engine: payload.referenceUrls?.length ? 'comfy-edit' : 'comfy',
+                  provider: 'sdxl-local',
+                  image_base64: r.dataUrl.split(',', 2)[1],
+                }),
+                signal: AbortSignal.timeout(60_000),
+              })
+              if (rec.ok) {
+                const j = (await rec.json()) as { url?: string }
+                if (j.url) return { ...r, publicUrl: j.url }
+              }
+            } catch {
+              // 云端不可达时本地照常出图,只是不留档
+            }
+          }
+          return r
+        }
+        return await cloudGenerate(payload.prompt, payload.referenceUrls)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         return {
@@ -235,6 +297,35 @@ export function registerImageGenHandlers(): void {
               : '连不上云端图像服务(trail-api.glanger.xyz:8000)'
             : msg,
         }
+      }
+    },
+  )
+
+  ipcMain.handle('imageGen:history', async (): Promise<ImageGenHistoryItem[] | { error: string }> => {
+    try {
+      const r = await fetch(`${CLOUD_RELAY}/imagegen/history?limit=60`, {
+        headers: { 'X-API-Key': CLOUD_KEY },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!r.ok) return { error: `历史接口 ${r.status}` }
+      return (await r.json()) as ImageGenHistoryItem[]
+    } catch {
+      return { error: '连不上云端历史服务' }
+    }
+  })
+
+  ipcMain.handle(
+    'imageGen:historyDelete',
+    async (_e, id: string): Promise<{ ok: boolean }> => {
+      try {
+        const r = await fetch(`${CLOUD_RELAY}/imagegen/history/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'X-API-Key': CLOUD_KEY },
+          signal: AbortSignal.timeout(8000),
+        })
+        return { ok: r.ok }
+      } catch {
+        return { ok: false }
       }
     },
   )

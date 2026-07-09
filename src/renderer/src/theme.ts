@@ -14,9 +14,9 @@ const sharedTokens = {
   borderRadiusLG: 12,
   borderRadiusSM: 6,
   borderRadiusXS: 4,
-  fontSize: 15,
-  fontSizeSM: 13,
-  fontSizeLG: 17,
+  fontSize: 16,
+  fontSizeSM: 14,
+  fontSizeLG: 18,
   lineHeight: 1.7,
   // Latin glyphs render in Geist; CJK falls through to Microsoft YaHei UI
   // (native + crispest on Windows) — moved ahead of the PingFang/Harmony

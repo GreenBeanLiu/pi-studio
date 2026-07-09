@@ -102,8 +102,10 @@ const api = {
 
   imageGen: {
     health: () => ipcRenderer.invoke('imageGen:health'),
-    generate: (payload: { prompt: string; engine: 'openai' | 'comfy' }) =>
+    generate: (payload: { prompt: string; engine: 'openai' | 'comfy'; referenceUrls?: string[] }) =>
       ipcRenderer.invoke('imageGen:generate', payload),
+    history: () => ipcRenderer.invoke('imageGen:history'),
+    historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
     comfyStart: () => ipcRenderer.invoke('imageGen:comfyStart'),
     comfyStop: () => ipcRenderer.invoke('imageGen:comfyStop'),
   },

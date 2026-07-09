@@ -1,8 +1,23 @@
 import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Button, Input, Switch, Tooltip, App as AntApp } from 'antd'
-import { Image as ImageIcon, Cloud, Monitor, Download, Link2, RefreshCw } from 'lucide-react'
-import { api, type ImageGenEngine, type ImageGenHealth } from '../lib/api'
+import { Button, Input, Popconfirm, Switch, Tooltip, App as AntApp } from 'antd'
+import {
+  Image as ImageIcon,
+  Cloud,
+  Monitor,
+  Download,
+  Link2,
+  RefreshCw,
+  Brush,
+  Trash2,
+  X,
+} from 'lucide-react'
+import {
+  api,
+  type ImageGenEngine,
+  type ImageGenHealth,
+  type ImageGenHistoryItem,
+} from '../lib/api'
 
 /** 与 icon-studio 一致的风格预设(拼接到 prompt 后,英文更稳)。 */
 const STYLE_PRESETS = [
@@ -35,7 +50,13 @@ const STYLE_PRESETS = [
   },
 ]
 
-type HistoryItem = { dataUrl: string; publicUrl: string | null; prompt: string }
+/** 当前预览:刚生成的图(dataUrl)或历史里的图(url)。 */
+type Current = {
+  src: string
+  publicUrl: string | null
+  prompt: string
+  historyId?: string
+}
 
 const useStyles = createStyles(({ token, css }) => ({
   page: css`
@@ -47,7 +68,7 @@ const useStyles = createStyles(({ token, css }) => ({
     background: ${token.colorBgLayout};
   `,
   panel: css`
-    width: 340px;
+    width: 360px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -59,13 +80,32 @@ const useStyles = createStyles(({ token, css }) => ({
     overflow-y: auto;
   `,
   label: css`
-    font-size: 12px;
+    font-size: 13px;
     color: ${token.colorTextSecondary};
   `,
   chips: css`
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    align-items: center;
+  `,
+  baseChip: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px dashed ${token.colorPrimaryBorder};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorPrimaryBg};
+    font-size: 13px;
+    color: ${token.colorPrimaryText};
+
+    img {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
   `,
   preview: css`
     flex: 1;
@@ -81,7 +121,7 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
   stage: css`
     flex: 1;
-    min-height: 0;
+    min-height: 320px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -100,33 +140,52 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
+    font-size: 14px;
   `,
   actions: css`
     display: flex;
     gap: 8px;
     justify-content: center;
-  `,
-  history: css`
-    display: flex;
-    gap: 8px;
     flex-wrap: wrap;
+  `,
+  historyGrid: css`
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 8px;
+  `,
+  historyCell: css`
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: ${token.borderRadius}px;
+    overflow: hidden;
+    cursor: pointer;
+    border: 2px solid transparent;
 
     img {
-      width: 64px;
-      height: 64px;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
-      border-radius: ${token.borderRadius}px;
-      cursor: pointer;
-      border: 2px solid transparent;
-      &:hover {
-        border-color: ${token.colorPrimary};
-      }
+      display: block;
     }
+
+    &:hover {
+      border-color: ${token.colorPrimary};
+    }
+  `,
+  histTag: css`
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 5px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
   `,
   offline: css`
     color: ${token.colorWarning};
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.6;
   `,
 }))
@@ -149,13 +208,13 @@ function ImageGenInner() {
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [loading, setLoading] = useState(false)
   const [comfyBusy, setComfyBusy] = useState(false)
-  const [current, setCurrent] = useState<HistoryItem | null>(null)
-  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [current, setCurrent] = useState<Current | null>(null)
+  const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
+  const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
 
   async function refreshHealth() {
     const h = await api.imageGen.health()
     setHealth(h)
-    // 默认引擎:本地可用优先本地(免费),否则云端
     setEngine((prev) => {
       if (prev === 'comfy' && !h.comfy && h.keyConfigured) return 'openai'
       if (prev === 'openai' && !h.keyConfigured && h.comfy) return 'comfy'
@@ -163,8 +222,14 @@ function ImageGenInner() {
     })
   }
 
+  async function refreshHistory() {
+    const r = await api.imageGen.history()
+    if (Array.isArray(r)) setHistory(r)
+  }
+
   useEffect(() => {
     refreshHealth()
+    refreshHistory()
   }, [])
 
   const serviceUp = health?.ok ?? false
@@ -203,14 +268,17 @@ function ImageGenInner() {
 
     setLoading(true)
     try {
-      const r = await api.imageGen.generate({ prompt: full, engine })
+      const r = await api.imageGen.generate({
+        prompt: full,
+        engine,
+        ...(baseImage ? { referenceUrls: [baseImage] } : {}),
+      })
       if ('error' in r) {
         message.error(r.error)
         return
       }
-      const item: HistoryItem = { ...r, prompt: text }
-      setCurrent(item)
-      setHistory((h) => [item, ...h].slice(0, 12))
+      setCurrent({ src: r.dataUrl, publicUrl: r.publicUrl, prompt: text })
+      refreshHistory()
     } finally {
       setLoading(false)
     }
@@ -219,21 +287,56 @@ function ImageGenInner() {
   function download() {
     if (!current) return
     const a = document.createElement('a')
-    a.href = current.dataUrl
+    a.href = current.src
     a.download = `pi-image-${Date.now()}.png`
     a.click()
   }
 
+  async function deleteHistoryItem(item: ImageGenHistoryItem) {
+    const r = await api.imageGen.historyDelete(item.id)
+    if (!r.ok) {
+      message.error('删除失败')
+      return
+    }
+    setHistory((h) => h.filter((x) => x.id !== item.id))
+    if (current?.historyId === item.id) setCurrent(null)
+    if (baseImage === item.url) setBaseImage(null)
+  }
+
+  const engineLabel = (e: string) =>
+    e.startsWith('cloud') ? '云' : e.startsWith('comfy') ? '本' : e
+  const canGenerate =
+    !loading && !!prompt.trim() && (engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
+
   return (
     <div className={styles.page}>
       <section className={styles.panel}>
-        <span className={styles.label}>描述你想要的图</span>
+        <span className={styles.label}>
+          {baseImage ? '描述怎么修改这张图' : '描述你想要的图'}
+        </span>
         <Input.TextArea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="例如:一座雪山下的湖泊,晨雾 / a cyberpunk city street at night"
+          placeholder={
+            baseImage
+              ? '例如:改成夜晚场景 / 把背景换成雪山 / make it watercolor style'
+              : '例如:一座雪山下的湖泊,晨雾 / a cyberpunk city street at night'
+          }
           autoSize={{ minRows: 4, maxRows: 8 }}
         />
+
+        {baseImage && (
+          <div className={styles.baseChip}>
+            <img src={baseImage} alt="base" />
+            <span style={{ flex: 1 }}>基于这张图修改</span>
+            <Button
+              size="small"
+              type="text"
+              icon={<X size={13} />}
+              onClick={() => setBaseImage(null)}
+            />
+          </div>
+        )}
 
         <span className={styles.label}>风格</span>
         <div className={styles.chips}>
@@ -272,7 +375,7 @@ function ImageGenInner() {
 
         <span className={styles.label}>引擎</span>
         <div className={styles.chips}>
-          <Tooltip title={health?.keyConfigured ? '' : '图像服务未配置云端 API Key'}>
+          <Tooltip title={health?.keyConfigured ? '' : '云端图像服务不可达'}>
             <Button
               size="small"
               type={engine === 'openai' ? 'primary' : 'default'}
@@ -283,7 +386,7 @@ function ImageGenInner() {
               云端 {health?.model || ''}
             </Button>
           </Tooltip>
-          <Tooltip title={health?.comfy ? '' : 'ComfyUI 未运行(127.0.0.1:8188)'}>
+          <Tooltip title={health?.comfy ? '' : 'ComfyUI 未运行,打开上面的开关'}>
             <Button
               size="small"
               type={engine === 'comfy' ? 'primary' : 'default'}
@@ -303,38 +406,33 @@ function ImageGenInner() {
           <div className={styles.offline}>没有可用引擎——打开上面的 ComfyUI 开关即可。</div>
         )}
 
-        <Button
-          type="primary"
-          loading={loading}
-          disabled={!serviceUp || !prompt.trim()}
-          onClick={generate}
-        >
-          {loading ? '生成中…' : '生成'}
+        <Button type="primary" loading={loading} disabled={!canGenerate} onClick={generate}>
+          {loading
+            ? baseImage
+              ? '修改中…'
+              : '生成中…'
+            : baseImage
+              ? '修改这张图'
+              : '生成'}
         </Button>
-
-        {history.length > 0 && (
-          <>
-            <span className={styles.label}>本次会话历史</span>
-            <div className={styles.history}>
-              {history.map((h, i) => (
-                <img key={i} src={h.dataUrl} title={h.prompt} onClick={() => setCurrent(h)} />
-              ))}
-            </div>
-          </>
-        )}
       </section>
 
       <section className={styles.preview}>
         <div className={styles.stage}>
           {current ? (
-            <img src={current.dataUrl} alt={current.prompt} />
+            <img src={current.src} alt={current.prompt} title={current.prompt} />
           ) : (
             <div className={styles.empty}>
               <ImageIcon size={40} strokeWidth={1.2} />
-              {loading ? '正在生成…(本地引擎约 10~20 秒)' : '生成的图会显示在这里'}
+              {loading
+                ? engine === 'comfy'
+                  ? '正在生成…(本地引擎约 10~20 秒)'
+                  : '正在生成…(云端约 30~60 秒)'
+                : '生成的图会显示在这里,下面是历史记录'}
             </div>
           )}
         </div>
+
         {current && (
           <div className={styles.actions}>
             <Button icon={<Download size={13} />} onClick={download}>
@@ -345,13 +443,63 @@ function ImageGenInner() {
                 icon={<Link2 size={13} />}
                 onClick={() => {
                   navigator.clipboard.writeText(current.publicUrl!)
-                  message.success('已复制 R2 公网链接')
+                  message.success('已复制公网链接')
                 }}
               >
-                复制公网链接
+                复制链接
+              </Button>
+            )}
+            {current.publicUrl && (
+              <Button
+                icon={<Brush size={13} />}
+                onClick={() => {
+                  setBaseImage(current.publicUrl)
+                  setPrompt('')
+                  message.info('已设为底图,输入修改要求后点"修改这张图"')
+                }}
+              >
+                以此图修改
               </Button>
             )}
           </div>
+        )}
+
+        {history.length > 0 && (
+          <>
+            <span className={styles.label}>历史记录({history.length})</span>
+            <div className={styles.historyGrid}>
+              {history.map((h) => (
+                <div
+                  key={h.id}
+                  className={styles.historyCell}
+                  title={h.prompt}
+                  onClick={() =>
+                    setCurrent({ src: h.url, publicUrl: h.url, prompt: h.prompt, historyId: h.id })
+                  }
+                >
+                  <img src={h.url} alt={h.prompt} loading="lazy" />
+                  <span className={styles.histTag}>{engineLabel(h.engine)}</span>
+                  <Popconfirm
+                    title="删除这条记录?"
+                    onConfirm={(e) => {
+                      e?.stopPropagation()
+                      deleteHistoryItem(h)
+                    }}
+                    onPopupClick={(e) => e.stopPropagation()}
+                  >
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<Trash2 size={12} />}
+                      style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.4)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Popconfirm>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </section>
     </div>

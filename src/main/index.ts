@@ -107,10 +107,10 @@ function setupAutoUpdater(): void {
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
-    width: 1160,
-    height: 760,
-    minWidth: 820,
-    minHeight: 580,
+    width: 1480,
+    height: 920,
+    minWidth: 960,
+    minHeight: 640,
     show: false,
     frame: false,
     titleBarStyle: 'hidden',

@@ -185,7 +185,17 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           />
         )}
         <DesktopLayoutContainer>
-          {activeView === 'chat' ? (
+          {/* ChatPane 常驻不卸载(display 切换):agent 长任务运行中切去别的视图再回来,
+              运行状态/停止按钮/排队上下文都不能丢 */}
+          <div
+            style={{
+              display: activeView === 'chat' ? 'flex' : 'none',
+              flexDirection: 'column',
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+            }}
+          >
             <ChatPane
               key={`${workspace?.path ?? ''}#${sessionEpoch}`}
               workspace={workspace}
@@ -195,16 +205,16 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
               onRestartAgent={restartAgent}
               onDiagnosticsExporterChange={(exporter) => setDiagnosticsExporter(() => exporter)}
             />
-          ) : activeView === 'workflows' ? (
+          </div>
+          {activeView === 'workflows' && (
             <WorkflowPage
               workspace={workspace}
               starting={opening || restartingAgent}
               agentIssue={agentIssue}
               onOpenWorkspace={() => setShowWorkspacePicker(true)}
             />
-          ) : (
-            <ImageGenPage />
           )}
+          {activeView === 'imagegen' && <ImageGenPage />}
         </DesktopLayoutContainer>
       </div>
 

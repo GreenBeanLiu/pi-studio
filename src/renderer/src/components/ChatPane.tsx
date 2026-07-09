@@ -231,7 +231,7 @@ const useStyles = createStyles(({ token, css }) => ({
 
   messagesInner: css`
     width: 100%;
-    max-width: 900px;
+    max-width: 1120px;
     margin: 0 auto;
     padding: 16px 24px 88px;
     display: flex;
@@ -411,7 +411,7 @@ const useStyles = createStyles(({ token, css }) => ({
 
   inputAreaInner: css`
     width: 100%;
-    max-width: 900px;
+    max-width: 1120px;
     margin: 0 auto;
   `,
 
@@ -1312,6 +1312,9 @@ export default function ChatPane({
         if (s.steeringMode) setSteeringMode(s.steeringMode)
         if (s.followUpMode) setFollowUpMode(s.followUpMode)
         if (typeof s.autoCompactionEnabled === 'boolean') setAutoCompaction(s.autoCompactionEnabled)
+        // 组件重挂载(切视图/切会话)时从 agent 恢复真实运行状态,
+        // 否则 agent 还在跑但停止按钮消失、新输入被误当成新提问直发。
+        if (typeof s.isStreaming === 'boolean') setSending(s.isStreaming)
       })
       .catch(() => {})
   }, [workspace?.path])

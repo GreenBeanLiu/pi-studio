@@ -130,7 +130,10 @@ declare global {
         generate: (payload: {
           prompt: string
           engine: ImageGenEngine
+          referenceUrls?: string[]
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
+        history: () => Promise<ImageGenHistoryItem[] | { error: string }>
+        historyDelete: (id: string) => Promise<{ ok: boolean }>
         comfyStart: () => Promise<{ ok: true } | { error: string }>
         comfyStop: () => Promise<{ ok: boolean; external: boolean }>
       }
@@ -155,6 +158,15 @@ export type ImageGenHealth = {
   comfyManaged: boolean
   model: string
   r2: boolean
+}
+
+export type ImageGenHistoryItem = {
+  id: string
+  prompt: string
+  engine: string
+  provider: string | null
+  url: string
+  created_at: number
 }
 
 export type ProviderConnectionResult =
