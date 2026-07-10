@@ -29,7 +29,7 @@ type AgentProcessLike = {
 // `import` would become a `require()` that Node's exports resolution
 // rejects, so we load it lazily via dynamic `import()` instead — that always
 // goes through ESM resolution regardless of the caller's module format.
-async function loadRpcClient(): Promise<typeof RpcClientType> {
+export async function loadRpcClient(): Promise<typeof RpcClientType> {
   const mod = await import('@earendil-works/pi-coding-agent')
   return mod.RpcClient
 }
@@ -41,7 +41,7 @@ async function loadRpcClient(): Promise<typeof RpcClientType> {
 // here either (same exports-map problem as the dynamic import above), so we
 // walk the plain node_modules search paths instead — that mechanism doesn't
 // consult the package's "exports" map at all.
-function resolvePiCliPath(): string {
+export function resolvePiCliPath(): string {
   const searchPaths = require.resolve.paths('@earendil-works/pi-coding-agent') ?? []
   for (const base of searchPaths) {
     const candidate = join(base, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')

@@ -125,6 +125,18 @@ declare global {
         onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
         onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
       }
+      routines: {
+        list: () => Promise<{ routines: Routine[]; runs: RoutineRun[] }>
+        save: (
+          routine: Partial<Routine> &
+            Pick<Routine, 'name' | 'prompt' | 'workspacePath' | 'schedule' | 'notify'>,
+        ) => Promise<Routine[]>
+        delete: (id: string) => Promise<Routine[]>
+        toggle: (id: string, enabled: boolean) => Promise<Routine[]>
+        runNow: (id: string) => Promise<{ ok: true } | { error: string }>
+        running: () => Promise<string[]>
+        onRunFinished: (cb: (run: RoutineRun) => void) => () => void
+      }
       imageGen: {
         health: () => Promise<ImageGenHealth>
         generate: (payload: {
@@ -158,6 +170,37 @@ export type ImageGenHealth = {
   comfyManaged: boolean
   model: string
   r2: boolean
+}
+
+export type RoutineSchedule =
+  | { type: 'interval'; minutes: number }
+  | { type: 'hourly'; minute: number }
+  | { type: 'daily'; time: string }
+  | { type: 'weekly'; day: number; time: string }
+
+export type RoutineNotify = 'always' | 'error' | 'never'
+
+export type Routine = {
+  id: string
+  name: string
+  prompt: string
+  workspacePath: string
+  schedule: RoutineSchedule
+  enabled: boolean
+  notify: RoutineNotify
+  createdAt: number
+  lastRunAt?: number
+}
+
+export type RoutineRun = {
+  id: string
+  routineId: string
+  routineName: string
+  startedAt: number
+  endedAt: number
+  status: 'ok' | 'error' | 'timeout'
+  summary: string
+  error?: string
 }
 
 export type ImageGenHistoryItem = {

@@ -60,6 +60,9 @@ importers:
       antd-style:
         specifier: ^4.1.0
         version: 4.1.0(@types/react@18.3.31)(antd@6.4.5(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      dayjs:
+        specifier: ^1.11.21
+        version: 1.11.21
       electron:
         specifier: ^42.2.0
         version: 42.4.1

@@ -100,6 +100,20 @@ const api = {
     },
   },
 
+  routines: {
+    list: () => ipcRenderer.invoke('routines:list'),
+    save: (routine: unknown) => ipcRenderer.invoke('routines:save', routine),
+    delete: (id: string) => ipcRenderer.invoke('routines:delete', id),
+    toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('routines:toggle', id, enabled),
+    runNow: (id: string) => ipcRenderer.invoke('routines:runNow', id),
+    running: () => ipcRenderer.invoke('routines:running'),
+    onRunFinished: (cb: (run: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+      ipcRenderer.on('routines:runFinished', handler)
+      return () => ipcRenderer.off('routines:runFinished', handler)
+    },
+  },
+
   imageGen: {
     health: () => ipcRenderer.invoke('imageGen:health'),
     generate: (payload: { prompt: string; engine: 'openai' | 'comfy'; referenceUrls?: string[] }) =>

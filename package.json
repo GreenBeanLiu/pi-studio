@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.3.30",
+  "version": "0.3.31",
   "description": "Windows desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
@@ -32,6 +32,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "antd": "^6.4.3",
     "antd-style": "^4.1.0",
+    "dayjs": "^1.11.21",
     "electron": "^42.2.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",

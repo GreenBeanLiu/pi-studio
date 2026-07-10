@@ -3,7 +3,7 @@ import { createStyles } from 'antd-style'
 import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
 import ChatPane from './components/ChatPane'
-import WorkflowPage from './components/WorkflowPage'
+import RoutinesPage from './components/RoutinesPage'
 import ImageGenPage from './components/ImageGenPage'
 import SessionSidebar from './components/SessionSidebar'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
@@ -18,7 +18,7 @@ type UpdateState =
   | { status: 'error'; message: string }
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
-type ActiveView = 'chat' | 'workflows' | 'imagegen'
+type ActiveView = 'chat' | 'routines' | 'imagegen'
 
 const useStyles = createStyles(({ token, css }) => ({
   shell: css`
@@ -173,7 +173,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           appearance={appearance}
           onSwitchWorkspace={() => setShowWorkspacePicker(true)}
           onChat={() => setActiveView('chat')}
-          onWorkflows={() => setActiveView('workflows')}
+          onRoutines={() => setActiveView('routines')}
           onImageGen={() => setActiveView('imagegen')}
           onSettings={() => setShowSettings(true)}
           onToggleTheme={onToggleTheme}
@@ -206,14 +206,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
               onDiagnosticsExporterChange={(exporter) => setDiagnosticsExporter(() => exporter)}
             />
           </div>
-          {activeView === 'workflows' && (
-            <WorkflowPage
-              workspace={workspace}
-              starting={opening || restartingAgent}
-              agentIssue={agentIssue}
-              onOpenWorkspace={() => setShowWorkspacePicker(true)}
-            />
-          )}
+          {activeView === 'routines' && <RoutinesPage workspace={workspace} />}
           {activeView === 'imagegen' && <ImageGenPage />}
         </DesktopLayoutContainer>
       </div>

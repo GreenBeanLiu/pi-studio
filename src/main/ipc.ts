@@ -38,9 +38,11 @@ import {
   type SecurityPolicyRuleTarget,
 } from './security-policy'
 import { registerImageGenHandlers } from './image-gen'
+import { registerRoutines } from './routines'
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
+  registerRoutines()
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return

@@ -1,7 +1,7 @@
 import { createStyles } from 'antd-style'
 import { ActionIcon } from '@lobehub/ui'
 import { Tooltip } from 'antd'
-import { FolderOpen, MessageSquare, Settings, Sun, Moon, Workflow, Image } from 'lucide-react'
+import { FolderOpen, MessageSquare, Settings, Sun, Moon, CalendarClock, Image } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -78,11 +78,11 @@ const useStyles = createStyles(({ token, css }) => ({
 
 type Props = {
   workspace: Workspace | null
-  activeView: 'chat' | 'workflows' | 'imagegen'
+  activeView: 'chat' | 'routines' | 'imagegen'
   appearance: 'dark' | 'light'
   onSwitchWorkspace: () => void
   onChat: () => void
-  onWorkflows: () => void
+  onRoutines: () => void
   onImageGen: () => void
   onSettings: () => void
   onToggleTheme: () => void
@@ -94,7 +94,7 @@ export default function NavRail({
   appearance,
   onSwitchWorkspace,
   onChat,
-  onWorkflows,
+  onRoutines,
   onImageGen,
   onSettings,
   onToggleTheme,
@@ -123,10 +123,10 @@ export default function NavRail({
       />
 
       <ActionIcon
-        className={cx(styles.iconBtn, activeView === 'workflows' && styles.iconBtnActive)}
-        icon={<Workflow size={15} />}
-        title="工作流"
-        onClick={onWorkflows}
+        className={cx(styles.iconBtn, activeView === 'routines' && styles.iconBtnActive)}
+        icon={<CalendarClock size={15} />}
+        title="例行任务"
+        onClick={onRoutines}
         size={{ blockSize: 36, borderRadius: 8 }}
       />
 
