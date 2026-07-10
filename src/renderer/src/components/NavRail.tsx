@@ -125,7 +125,7 @@ export default function NavRail({
       <ActionIcon
         className={cx(styles.iconBtn, activeView === 'routines' && styles.iconBtnActive)}
         icon={<CalendarClock size={15} />}
-        title="例行任务"
+        title="Workflow"
         onClick={onRoutines}
         size={{ blockSize: 36, borderRadius: 8 }}
       />

@@ -20,10 +20,18 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type Routine = {
+export type RoutineStep = {
   id: string
   name: string
   prompt: string
+}
+
+export type Routine = {
+  id: string
+  name: string
+  /** Retained only to migrate previously saved single-step routines. */
+  prompt?: string
+  steps: RoutineStep[]
   workspacePath: string
   schedule: RoutineSchedule
   enabled: boolean
@@ -58,7 +66,15 @@ function loadStore(): Store {
   try {
     if (existsSync(storePath())) {
       const raw = JSON.parse(readFileSync(storePath(), 'utf8')) as Partial<Store>
-      return { routines: raw.routines ?? [], runs: raw.runs ?? [] }
+      const routines = (raw.routines ?? []).map((routine) => {
+        const current = routine as Routine
+        if (Array.isArray(current.steps) && current.steps.length > 0) return current
+        return {
+          ...current,
+          steps: [{ id: randomUUID(), name: '\u6b65\u9aa4 1', prompt: current.prompt ?? '' }],
+        }
+      })
+      return { routines, runs: raw.runs ?? [] }
     }
   } catch (err) {
     appendAppLog('warn', 'routines.load', 'Failed to load routines store', normalizeError(err))
@@ -120,6 +136,25 @@ export function scheduleLabel(s: RoutineSchedule): string {
 
 const running = new Set<string>()
 
+function latestAssistantText(
+  messages: Array<{ role?: string; content?: Array<{ type?: string; text?: string }> | string }>,
+): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role !== 'assistant') continue
+    const text = Array.isArray(message.content)
+      ? message.content
+          .filter((block) => block.type === 'text' && block.text)
+          .map((block) => block.text)
+          .join('\n')
+      : typeof message.content === 'string'
+        ? message.content
+        : ''
+    if (text.trim()) return text.trim()
+  }
+  return ''
+}
+
 async function executeRoutine(store: Store, routine: Routine): Promise<void> {
   if (running.has(routine.id) || running.size >= MAX_CONCURRENT) return
   running.add(routine.id)
@@ -151,7 +186,10 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
 
     try {
       await client.start()
-      await new Promise<void>((resolve, reject) => {
+      const stepSummaries: string[] = []
+      let previousOutput = ''
+      for (const [index, step] of routine.steps.entries()) {
+        await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           status = 'timeout'
           reject(new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`))
@@ -163,7 +201,10 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
             resolve()
           }
         })
-        client.prompt(routine.prompt).catch((err: unknown) => {
+        const prompt = index === 0
+          ? step.prompt
+          : `${step.prompt}\n\nPrevious step (${routine.steps[index - 1].name}) result:\n${previousOutput.slice(0, 4000)}`
+        client.prompt(prompt).catch((err: unknown) => {
           clearTimeout(timer)
           off()
           reject(err instanceof Error ? err : new Error(String(err)))
@@ -190,7 +231,11 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
           break
         }
       }
-      if (!summary) summary = '(任务完成,无文本输出)'
+      if (!summary) summary = '(no text output)'
+      previousOutput = summary
+      stepSummaries.push(`Step ${index + 1} - ${step.name}\n${summary}`)
+      }
+      summary = stepSummaries.join('\n\n').slice(0, 4000) || '(no text output)'
     } finally {
       await client.stop().catch(() => {})
     }
@@ -259,15 +304,18 @@ export function registerRoutines(): void {
 
   ipcMain.handle(
     'routines:save',
-    (_e, routine: Partial<Routine> & Pick<Routine, 'name' | 'prompt' | 'workspacePath' | 'schedule' | 'notify'>) => {
+    (_e, routine: Partial<Routine> & Pick<Routine, 'name' | 'steps' | 'workspacePath' | 'schedule' | 'notify'>) => {
+      const steps = (routine.steps ?? []).filter((step) => step.name.trim() && step.prompt.trim())
+      if (steps.length === 0) throw new Error('Workflow needs at least one step')
       const existing = routine.id ? store.routines.find((r) => r.id === routine.id) : undefined
       if (existing) {
-        Object.assign(existing, routine)
+        Object.assign(existing, { ...routine, steps })
       } else {
         const fresh = {
           enabled: true,
           createdAt: Date.now(),
           ...routine,
+          steps,
           id: randomUUID(),
         } as Routine
         // 新任务从下一个周期开始:把"当前已过的槽"标记为已消费,

@@ -129,7 +129,7 @@ declare global {
         list: () => Promise<{ routines: Routine[]; runs: RoutineRun[] }>
         save: (
           routine: Partial<Routine> &
-            Pick<Routine, 'name' | 'prompt' | 'workspacePath' | 'schedule' | 'notify'>,
+            Pick<Routine, 'name' | 'steps' | 'workspacePath' | 'schedule' | 'notify'>,
         ) => Promise<Routine[]>
         delete: (id: string) => Promise<Routine[]>
         toggle: (id: string, enabled: boolean) => Promise<Routine[]>
@@ -180,10 +180,17 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type Routine = {
+export type RoutineStep = {
   id: string
   name: string
   prompt: string
+}
+
+export type Routine = {
+  id: string
+  name: string
+  prompt?: string
+  steps: RoutineStep[]
   workspacePath: string
   schedule: RoutineSchedule
   enabled: boolean

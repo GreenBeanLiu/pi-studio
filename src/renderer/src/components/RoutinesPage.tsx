@@ -15,12 +15,13 @@ import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
 dayjs.extend(customParseFormat)
-import { CalendarClock, Play, Pencil, Trash2, Plus, CheckCircle2, XCircle, Clock3 } from 'lucide-react'
+import { CalendarClock, Play, Pencil, Trash2, Plus, CheckCircle2, XCircle, Clock3, ArrowDown, ArrowUp } from 'lucide-react'
 import {
   api,
   type Routine,
   type RoutineNotify,
   type RoutineRun,
+  type RoutineStep,
   type RoutineSchedule,
   type Workspace,
 } from '../lib/api'
@@ -43,7 +44,7 @@ export function scheduleLabel(s: RoutineSchedule): string {
 type FormState = {
   id?: string
   name: string
-  prompt: string
+  steps: RoutineStep[]
   workspacePath: string
   scheduleType: RoutineSchedule['type']
   minutes: number
@@ -53,9 +54,14 @@ type FormState = {
   notify: RoutineNotify
 }
 
+const createStep = (name = '', prompt = ''): RoutineStep => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  name,
+  prompt,
+})
 const emptyForm = (workspacePath: string): FormState => ({
   name: '',
-  prompt: '',
+  steps: [createStep()],
   workspacePath,
   scheduleType: 'daily',
   minutes: 60,
@@ -221,28 +227,48 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
   async function saveForm() {
     if (!form) return
-    if (!form.name.trim() || !form.prompt.trim() || !form.workspacePath.trim()) {
-      message.warning('名称、任务内容、工作区都不能为空')
+    const steps = form.steps.filter((step) => step.name.trim() && step.prompt.trim())
+    if (!form.name.trim() || !form.workspacePath.trim() || steps.length === 0) {
+      message.warning('Please provide a name, workspace, and at least one complete step')
       return
     }
     const next = await api.routines.save({
       ...(form.id ? { id: form.id } : {}),
       name: form.name.trim(),
-      prompt: form.prompt.trim(),
+      steps,
       workspacePath: form.workspacePath.trim(),
       schedule: buildSchedule(form),
       notify: form.notify,
     })
     setRoutines(next)
     setForm(null)
-    message.success('已保存')
+    message.success('Saved')
+  }
+
+  function updateStep(id: string, patch: Partial<Pick<RoutineStep, 'name' | 'prompt'>>) {
+    if (!form) return
+    setForm({ ...form, steps: form.steps.map((step) => (step.id === id ? { ...step, ...patch } : step)) })
+  }
+
+  function moveStep(index: number, direction: -1 | 1) {
+    if (!form) return
+    const nextIndex = index + direction
+    if (nextIndex < 0 || nextIndex >= form.steps.length) return
+    const steps = [...form.steps]
+    ;[steps[index], steps[nextIndex]] = [steps[nextIndex], steps[index]]
+    setForm({ ...form, steps })
+  }
+
+  function deleteStep(id: string) {
+    if (!form) return
+    setForm({ ...form, steps: form.steps.filter((step) => step.id !== id) })
   }
 
   function editRoutine(r: Routine) {
     setForm({
       id: r.id,
       name: r.name,
-      prompt: r.prompt,
+      steps: r.steps?.length ? r.steps : [createStep('Step 1', r.prompt ?? '')],
       workspacePath: r.workspacePath,
       scheduleType: r.schedule.type,
       minutes: r.schedule.type === 'interval' ? r.schedule.minutes : 60,
@@ -277,7 +303,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       <section className={`${styles.col} ${styles.left}`}>
         <div className={styles.colTitle}>
           <CalendarClock size={16} />
-          例行任务({routines.length})
+          Workflows ({routines.length})
           <div style={{ flex: 1 }} />
           <Button
             size="small"
@@ -291,19 +317,36 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
         {form && (
           <div className={styles.card}>
-            <span className={styles.label}>名称</span>
+            <span className={styles.label}>Name</span>
             <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="例如:服务器晨检"
+              placeholder="Workflow name"
             />
-            <span className={styles.label}>任务内容(交给 agent 执行的指令)</span>
-            <Input.TextArea
-              value={form.prompt}
-              onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-              placeholder={'例如:ssh 到 trailai-cn,检查 trailai 服务状态、磁盘用量、\n最近的错误日志,汇总成一份简短的健康报告。'}
-              autoSize={{ minRows: 4, maxRows: 10 }}
-            />
+            <span className={styles.label}>{`\u6b65\u9aa4 (${form.steps.length})`}</span>
+            {form.steps.map((step, index) => (
+              <div key={step.id} className={styles.card} style={{ padding: 10 }}>
+                <div className={styles.formRow}>
+                  <Input
+                    value={step.name}
+                    onChange={(e) => updateStep(step.id, { name: e.target.value })}
+                    placeholder="Step name"
+                  />
+                  <Button size="small" type="text" icon={<ArrowUp size={13} />} disabled={index === 0} onClick={() => moveStep(index, -1)} />
+                  <Button size="small" type="text" icon={<ArrowDown size={13} />} disabled={index === form.steps.length - 1} onClick={() => moveStep(index, 1)} />
+                  <Button size="small" type="text" danger icon={<Trash2 size={13} />} disabled={form.steps.length === 1} onClick={() => deleteStep(step.id)} />
+                </div>
+                <Input.TextArea
+                  value={step.prompt}
+                  onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
+                  placeholder="Instruction for this node"
+                  autoSize={{ minRows: 3, maxRows: 8 }}
+                />
+              </div>
+            ))}
+            <Button size="small" type="dashed" icon={<Plus size={13} />} onClick={() => setForm({ ...form, steps: [...form.steps, createStep()] })}>
+              Add step
+            </Button>
             <span className={styles.label}>工作区(agent 的运行目录)</span>
             <div className={styles.formRow}>
               <Input
@@ -388,13 +431,13 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         )}
 
         {routines.length === 0 && !form && (
-          <Empty description="还没有例行任务,点右上角新建" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          <Empty description="No workflows yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         )}
 
         {routines.map((r) => (
           <div key={r.id} className={styles.card}>
             <div className={styles.cardHead}>
-              <span className="name" title={r.prompt}>
+              <span className="name" title={r.steps.map((step) => step.name).join(', ')}>
                 {r.name}
               </span>
               {runningIds.includes(r.id) && <Tag color="processing">执行中</Tag>}
@@ -405,7 +448,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
               />
             </div>
             <div className={styles.cardMeta}>
-              <Tag>{scheduleLabel(r.schedule)}</Tag>
+              <Tag>{scheduleLabel(r.schedule)}</Tag>`n              <Tag color="blue">{r.steps.length} steps</Tag>
               <span>{r.workspacePath}</span>
               {r.lastRunAt && <span>上次: {new Date(r.lastRunAt).toLocaleString()}</span>}
               <div style={{ flex: 1 }} />
