@@ -39,10 +39,12 @@ import {
 } from './security-policy'
 import { registerImageGenHandlers } from './image-gen'
 import { registerRoutines } from './routines'
+import { registerChannels } from './channels'
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
   registerRoutines()
+  registerChannels()
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return
@@ -115,6 +117,11 @@ export function registerIpcHandlers(): void {
         heliconeApiKey: string
         securityGuardEnabled: boolean
         subagentsEnabled: boolean
+        feishuWebhookUrl: string
+        feishuSecret: string
+        feishuAppId: string
+        feishuAppSecret: string
+        feishuChatId: string
       },
     ) => {
       saveSettings(settings)

@@ -112,13 +112,24 @@ const api = {
       ipcRenderer.on('routines:runFinished', handler)
       return () => ipcRenderer.off('routines:runFinished', handler)
     },
+    onStepProgress: (cb: (progress: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+      ipcRenderer.on('routines:stepProgress', handler)
+      return () => ipcRenderer.off('routines:stepProgress', handler)
+    },
+  },
+
+  channels: {
+    list: () => ipcRenderer.invoke('channels:list'),
+    save: (channels: unknown[]) => ipcRenderer.invoke('channels:save', channels),
+    test: (channel: unknown) => ipcRenderer.invoke('channels:test', channel),
   },
 
   imageGen: {
     health: () => ipcRenderer.invoke('imageGen:health'),
     generate: (payload: { prompt: string; engine: 'openai' | 'comfy'; referenceUrls?: string[] }) =>
       ipcRenderer.invoke('imageGen:generate', payload),
-    history: () => ipcRenderer.invoke('imageGen:history'),
+    history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),
     historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
     comfyStart: () => ipcRenderer.invoke('imageGen:comfyStart'),
     comfyStop: () => ipcRenderer.invoke('imageGen:comfyStop'),

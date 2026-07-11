@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
 import { Button, Input, Popconfirm, Spin, Switch, Tooltip, App as AntApp } from 'antd'
 import {
@@ -50,16 +50,19 @@ const STYLE_PRESETS = [
   },
 ]
 
-/** 当前预览:刚生成的图(dataUrl)或历史里的图(url)。 */
-type Current = {
-  src: string
-  publicUrl: string | null
-  prompt: string
-  historyId?: string
-}
-
 /** 进行中的生成任务,在历史区占一个转圈的格子。 */
 type PendingGen = { key: string; prompt: string; engine: string }
+
+/** 本次会话生成、但没有公网链接(云端不可达没留档)的图,只在本页存在。 */
+type SessionResult = {
+  key: string
+  src: string // dataUrl
+  prompt: string
+  engine: string
+  createdAt: number
+}
+
+const PAGE_SIZE = 60
 
 const useStyles = createStyles(({ token, css }) => ({
   page: css`
@@ -110,7 +113,7 @@ const useStyles = createStyles(({ token, css }) => ({
       border-radius: 4px;
     }
   `,
-  preview: css`
+  gallery: css`
     flex: 1;
     min-width: 0;
     display: flex;
@@ -122,47 +125,48 @@ const useStyles = createStyles(({ token, css }) => ({
     padding: 16px;
     overflow-y: auto;
   `,
-  stage: css`
-    flex: 1;
-    min-height: 320px;
+  galleryHead: css`
     display: flex;
     align-items: center;
-    justify-content: center;
-    border-radius: ${token.borderRadius}px;
-    background: ${token.colorFillQuaternary};
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: ${token.colorText};
 
-    img {
-      max-width: 100%;
-      max-height: 100%;
-      border-radius: ${token.borderRadius}px;
+    .sub {
+      font-weight: 400;
+      font-size: 12px;
+      color: ${token.colorTextTertiary};
     }
   `,
   empty: css`
+    flex: 1;
     color: ${token.colorTextQuaternary};
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     font-size: 14px;
   `,
-  actions: css`
-    display: flex;
-    gap: 8px;
-    justify-content: center;
-    flex-wrap: wrap;
-  `,
-  historyGrid: css`
+  grid: css`
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
   `,
-  historyCell: css`
+  card: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillQuaternary};
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  `,
+  cardImage: css`
     position: relative;
     aspect-ratio: 1;
-    border-radius: ${token.borderRadius}px;
-    overflow: hidden;
-    cursor: pointer;
-    border: 2px solid transparent;
+    cursor: zoom-in;
+    background: ${token.colorFillTertiary};
 
     img {
       width: 100%;
@@ -170,42 +174,85 @@ const useStyles = createStyles(({ token, css }) => ({
       object-fit: cover;
       display: block;
     }
-
-    &:hover {
-      border-color: ${token.colorPrimary};
-    }
   `,
-  pendingCell: css`
-    aspect-ratio: 1;
-    border-radius: ${token.borderRadius}px;
-    border: 1px dashed ${token.colorPrimaryBorder};
-    background: ${token.colorFillTertiary};
+  cardBody: css`
+    padding: 8px 10px;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
     gap: 6px;
-    padding: 6px;
+  `,
+  cardPrompt: css`
+    font-size: 12px;
+    line-height: 1.5;
+    color: ${token.colorTextSecondary};
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    min-height: 36px;
+    word-break: break-word;
+  `,
+  cardMeta: css`
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 11px;
+    color: ${token.colorTextQuaternary};
 
-    span.pending-label {
-      font-size: 11px;
-      color: ${token.colorTextTertiary};
-      max-width: 100%;
+    .time {
+      flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
   `,
+  pendingBox: css`
+    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-bottom: 1px dashed ${token.colorPrimaryBorder};
+  `,
   histTag: css`
     position: absolute;
-    left: 4px;
-    bottom: 4px;
+    left: 5px;
+    bottom: 5px;
     font-size: 11px;
     line-height: 1;
     padding: 3px 5px;
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.55);
     color: #fff;
+  `,
+  loadState: css`
+    text-align: center;
+    font-size: 12px;
+    color: ${token.colorTextQuaternary};
+    padding: 8px 0 2px;
+  `,
+  /* 放大浮层:hover 版不拦截鼠标(否则会闪烁),点击固定版可点击/Esc 关闭 */
+  hoverPreview: css`
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0.45);
+
+    img {
+      max-width: 74vw;
+      max-height: 82vh;
+      border-radius: ${token.borderRadiusLG}px;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+    }
+  `,
+  pinnedPreview: css`
+    pointer-events: auto;
+    cursor: zoom-out;
   `,
   offline: css`
     color: ${token.colorWarning};
@@ -231,10 +278,18 @@ function ImageGenInner() {
   const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [comfyBusy, setComfyBusy] = useState(false)
-  const [current, setCurrent] = useState<Current | null>(null)
   const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
+  const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
   const [pending, setPending] = useState<PendingGen[]>([])
   const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
+  const [hoverSrc, setHoverSrc] = useState<string | null>(null)
+  const [pinnedSrc, setPinnedSrc] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [historyDone, setHistoryDone] = useState(false)
+
+  const galleryRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const limitRef = useRef(PAGE_SIZE)
 
   async function refreshHealth() {
     const h = await api.imageGen.health()
@@ -246,15 +301,50 @@ function ImageGenInner() {
     })
   }
 
-  async function refreshHistory() {
-    const r = await api.imageGen.history()
-    if (Array.isArray(r)) setHistory(r)
+  async function fetchHistory(limit: number) {
+    const r = await api.imageGen.history(limit)
+    if (Array.isArray(r)) {
+      setHistory(r)
+      setHistoryDone(r.length < limit)
+    }
+  }
+
+  async function loadMore() {
+    if (loadingMore || historyDone) return
+    setLoadingMore(true)
+    try {
+      limitRef.current += PAGE_SIZE
+      await fetchHistory(limitRef.current)
+    } finally {
+      setLoadingMore(false)
+    }
   }
 
   useEffect(() => {
     refreshHealth()
-    refreshHistory()
+    fetchHistory(limitRef.current)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPinnedSrc(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // 滚到底自动加载更多
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    const root = galleryRef.current
+    if (!sentinel || !root) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore()
+      },
+      { root, rootMargin: '200px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+    // loadMore 闭包依赖的状态都从 ref/setState 函数式读取之外,historyDone/loadingMore 变化时重建
+  }, [historyDone, loadingMore])
 
   const serviceUp = health?.ok ?? false
 
@@ -308,19 +398,40 @@ function ImageGenInner() {
         message.error(r.error)
         return
       }
-      setCurrent({ src: r.dataUrl, publicUrl: r.publicUrl, prompt: text })
-      await refreshHistory()
+      if (r.publicUrl) {
+        // 已留档云端,刷新历史就能看到
+        await fetchHistory(limitRef.current)
+      } else {
+        // 没有公网链接(云端不可达),本页临时保留,别丢图
+        setSessionResults((s) => [
+          { key, src: r.dataUrl, prompt: text, engine: engineTag, createdAt: Date.now() },
+          ...s,
+        ])
+      }
     } finally {
       setPending((p) => p.filter((x) => x.key !== key))
     }
   }
 
-  function download() {
-    if (!current) return
+  function downloadDataUrl(src: string) {
     const a = document.createElement('a')
-    a.href = current.src
+    a.href = src
     a.download = `pi-image-${Date.now()}.png`
     a.click()
+  }
+
+  async function downloadUrl(url: string) {
+    try {
+      const resp = await fetch(url)
+      if (!resp.ok) throw new Error(String(resp.status))
+      const blob = await resp.blob()
+      const obj = URL.createObjectURL(blob)
+      downloadDataUrl(obj)
+      setTimeout(() => URL.revokeObjectURL(obj), 10_000)
+    } catch {
+      navigator.clipboard.writeText(url)
+      message.warning('直接下载失败,已复制图片链接,可在浏览器打开保存')
+    }
   }
 
   async function deleteHistoryItem(item: ImageGenHistoryItem) {
@@ -330,16 +441,31 @@ function ImageGenInner() {
       return
     }
     setHistory((h) => h.filter((x) => x.id !== item.id))
-    if (current?.historyId === item.id) setCurrent(null)
     if (baseImage === item.url) setBaseImage(null)
+  }
+
+  function useAsBase(url: string) {
+    setBaseImage(url)
+    setPrompt('')
+    message.info('已设为底图,输入修改要求后点"修改这张图"')
   }
 
   const engineLabel = (e: string) =>
     e.startsWith('cloud') ? '云' : e.startsWith('comfy') ? '本' : e
+  const timeLabel = (ts: number) =>
+    new Date(ts > 1e12 ? ts : ts * 1000).toLocaleString(undefined, {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   const canGenerate =
     pending.length < 3 &&
     !!prompt.trim() &&
     (engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
+
+  const totalCount = history.length + sessionResults.length
+  const iconBtn = { size: 'small' as const, type: 'text' as const }
 
   return (
     <div className={styles.page}>
@@ -445,99 +571,126 @@ function ImageGenInner() {
         </Button>
       </section>
 
-      <section className={styles.preview}>
-        <div className={styles.stage}>
-          {current ? (
-            <img src={current.src} alt={current.prompt} title={current.prompt} />
-          ) : (
-            <div className={styles.empty}>
-              <ImageIcon size={40} strokeWidth={1.2} />
-              {pending.length > 0
-                ? `${pending.length} 个任务生成中…(本地约 10~20 秒,云端约 30~60 秒)`
-                : '生成的图会显示在这里,下面是历史记录'}
-            </div>
-          )}
+      <section className={styles.gallery} ref={galleryRef}>
+        <div className={styles.galleryHead}>
+          历史记录({totalCount})
+          {pending.length > 0 && <span className="sub">{pending.length} 个生成中…</span>}
+          <span className="sub" style={{ marginLeft: 'auto' }}>
+            悬停放大 · 滚动加载更多
+          </span>
         </div>
 
-        {current && (
-          <div className={styles.actions}>
-            <Button icon={<Download size={13} />} onClick={download}>
-              下载 PNG
-            </Button>
-            {current.publicUrl && (
-              <Button
-                icon={<Link2 size={13} />}
-                onClick={() => {
-                  navigator.clipboard.writeText(current.publicUrl!)
-                  message.success('已复制公网链接')
-                }}
-              >
-                复制链接
-              </Button>
-            )}
-            {current.publicUrl && (
-              <Button
-                icon={<Brush size={13} />}
-                onClick={() => {
-                  setBaseImage(current.publicUrl)
-                  setPrompt('')
-                  message.info('已设为底图,输入修改要求后点"修改这张图"')
-                }}
-              >
-                以此图修改
-              </Button>
-            )}
+        {totalCount === 0 && pending.length === 0 && (
+          <div className={styles.empty}>
+            <ImageIcon size={40} strokeWidth={1.2} />
+            还没有图,左边描述一下想要什么
           </div>
         )}
 
-        {(history.length > 0 || pending.length > 0) && (
-          <>
-            <span className={styles.label}>
-              历史记录({history.length}
-              {pending.length > 0 ? ` · ${pending.length} 个生成中` : ''})
-            </span>
-            <div className={styles.historyGrid}>
-              {pending.map((p) => (
-                <div key={p.key} className={styles.pendingCell} title={p.prompt}>
+        {(totalCount > 0 || pending.length > 0) && (
+          <div className={styles.grid}>
+            {pending.map((p) => (
+              <div key={p.key} className={styles.card} title={p.prompt}>
+                <div className={styles.pendingBox}>
                   <Spin size="small" />
-                  <span className="pending-label">{p.prompt}</span>
-                  <span className="pending-label">{engineLabel(p.engine)}·生成中</span>
+                  <span className={styles.cardMeta}>{engineLabel(p.engine)}·生成中</span>
                 </div>
-              ))}
-              {history.map((h) => (
+                <div className={styles.cardBody}>
+                  <div className={styles.cardPrompt}>{p.prompt}</div>
+                </div>
+              </div>
+            ))}
+
+            {sessionResults.map((s) => (
+              <div key={s.key} className={styles.card}>
                 <div
-                  key={h.id}
-                  className={styles.historyCell}
-                  title={h.prompt}
-                  onClick={() =>
-                    setCurrent({ src: h.url, publicUrl: h.url, prompt: h.prompt, historyId: h.id })
-                  }
+                  className={styles.cardImage}
+                  onMouseEnter={() => setHoverSrc(s.src)}
+                  onMouseLeave={() => setHoverSrc(null)}
+                  onClick={() => setPinnedSrc(s.src)}
+                >
+                  <img src={s.src} alt={s.prompt} />
+                  <span className={styles.histTag}>{engineLabel(s.engine)}·未留档</span>
+                </div>
+                <div className={styles.cardBody}>
+                  <div className={styles.cardPrompt} title={s.prompt}>
+                    {s.prompt}
+                  </div>
+                  <div className={styles.cardMeta}>
+                    <span className="time">{timeLabel(s.createdAt)}</span>
+                    <Tooltip title="下载 PNG">
+                      <Button {...iconBtn} icon={<Download size={13} />} onClick={() => downloadDataUrl(s.src)} />
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {history.map((h) => (
+              <div key={h.id} className={styles.card}>
+                <div
+                  className={styles.cardImage}
+                  onMouseEnter={() => setHoverSrc(h.url)}
+                  onMouseLeave={() => setHoverSrc(null)}
+                  onClick={() => setPinnedSrc(h.url)}
                 >
                   <img src={h.url} alt={h.prompt} loading="lazy" />
                   <span className={styles.histTag}>{engineLabel(h.engine)}</span>
-                  <Popconfirm
-                    title="删除这条记录?"
-                    onConfirm={(e) => {
-                      e?.stopPropagation()
-                      deleteHistoryItem(h)
-                    }}
-                    onPopupClick={(e) => e.stopPropagation()}
-                  >
-                    <Button
-                      size="small"
-                      type="text"
-                      danger
-                      icon={<Trash2 size={12} />}
-                      style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.4)' }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Popconfirm>
                 </div>
-              ))}
-            </div>
-          </>
+                <div className={styles.cardBody}>
+                  <div className={styles.cardPrompt} title={h.prompt}>
+                    {h.prompt}
+                  </div>
+                  <div className={styles.cardMeta}>
+                    <span className="time">{timeLabel(h.created_at)}</span>
+                    <Tooltip title="下载 PNG">
+                      <Button {...iconBtn} icon={<Download size={13} />} onClick={() => downloadUrl(h.url)} />
+                    </Tooltip>
+                    <Tooltip title="复制链接">
+                      <Button
+                        {...iconBtn}
+                        icon={<Link2 size={13} />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(h.url)
+                          message.success('已复制公网链接')
+                        }}
+                      />
+                    </Tooltip>
+                    <Tooltip title="以此图修改">
+                      <Button {...iconBtn} icon={<Brush size={13} />} onClick={() => useAsBase(h.url)} />
+                    </Tooltip>
+                    <Popconfirm title="删除这条记录?" onConfirm={() => deleteHistoryItem(h)}>
+                      <Button {...iconBtn} danger icon={<Trash2 size={13} />} />
+                    </Popconfirm>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div ref={sentinelRef} />
+        {totalCount > 0 && (
+          <div className={styles.loadState}>
+            {loadingMore ? <Spin size="small" /> : historyDone ? '没有更多了' : ''}
+          </div>
         )}
       </section>
+
+      {pinnedSrc ? (
+        <div
+          className={`${styles.hoverPreview} ${styles.pinnedPreview}`}
+          onClick={() => setPinnedSrc(null)}
+        >
+          <img src={pinnedSrc} alt="preview" />
+        </div>
+      ) : (
+        hoverSrc && (
+          <div className={styles.hoverPreview}>
+            <img src={hoverSrc} alt="preview" />
+          </div>
+        )
+      )}
     </div>
   )
 }

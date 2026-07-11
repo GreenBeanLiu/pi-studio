@@ -40,6 +40,11 @@ declare global {
           heliconeApiKey: string
           securityGuardEnabled: boolean
           subagentsEnabled: boolean
+          feishuWebhookUrl: string
+          feishuSecret: string
+          feishuAppId: string
+          feishuAppSecret: string
+          feishuChatId: string
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -52,6 +57,11 @@ declare global {
           heliconeApiKey: string
           securityGuardEnabled: boolean
           subagentsEnabled: boolean
+          feishuWebhookUrl: string
+          feishuSecret: string
+          feishuAppId: string
+          feishuAppSecret: string
+          feishuChatId: string
         }) => Promise<{ ok: boolean }>
         testConnection: (s: {
           provider: PiProvider
@@ -136,6 +146,12 @@ declare global {
         runNow: (id: string) => Promise<{ ok: true } | { error: string }>
         running: () => Promise<string[]>
         onRunFinished: (cb: (run: RoutineRun) => void) => () => void
+        onStepProgress: (cb: (progress: RoutineStepProgress) => void) => () => void
+      }
+      channels: {
+        list: () => Promise<Channel[]>
+        save: (channels: Channel[]) => Promise<Channel[]>
+        test: (channel: Channel) => Promise<{ ok: true } | { error: string }>
       }
       imageGen: {
         health: () => Promise<ImageGenHealth>
@@ -144,7 +160,7 @@ declare global {
           engine: ImageGenEngine
           referenceUrls?: string[]
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
-        history: () => Promise<ImageGenHistoryItem[] | { error: string }>
+        history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
         comfyStart: () => Promise<{ ok: true } | { error: string }>
         comfyStop: () => Promise<{ ok: boolean; external: boolean }>
@@ -180,10 +196,16 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
+export type RoutineStepType = 'agent' | 'imagegen' | 'notify'
+
 export type RoutineStep = {
   id: string
   name: string
-  prompt: string
+  type: RoutineStepType
+  prompt?: string
+  engine?: ImageGenEngine
+  channelId?: string
+  message?: string
 }
 
 export type Routine = {
@@ -195,8 +217,31 @@ export type Routine = {
   schedule: RoutineSchedule
   enabled: boolean
   notify: RoutineNotify
+  notifyChannelId?: string
   createdAt: number
   lastRunAt?: number
+}
+
+export type RoutineStepResult = {
+  id: string
+  name: string
+  status: 'ok' | 'error' | 'timeout' | 'skipped'
+  summary: string
+  imageUrl?: string
+  durationMs: number
+}
+
+export type ChannelType = 'feishu-webhook' | 'feishu-app' | 'webhook' | 'local'
+
+export type Channel = {
+  id: string
+  name: string
+  type: ChannelType
+  url?: string
+  secret?: string
+  appId?: string
+  appSecret?: string
+  chatId?: string
 }
 
 export type RoutineRun = {
@@ -207,7 +252,16 @@ export type RoutineRun = {
   endedAt: number
   status: 'ok' | 'error' | 'timeout'
   summary: string
+  steps?: RoutineStepResult[]
   error?: string
+}
+
+export type RoutineStepProgress = {
+  routineId: string
+  stepId: string
+  stepIndex: number
+  totalSteps: number
+  status: 'running' | 'ok' | 'error' | 'timeout'
 }
 
 export type ImageGenHistoryItem = {

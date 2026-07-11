@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createStyles } from 'antd-style'
+import { createStyles, cx } from 'antd-style'
 import {
   Button,
   Empty,
@@ -15,13 +15,34 @@ import dayjs from 'dayjs'
 import customParseFormat from 'dayjs/plugin/customParseFormat'
 
 dayjs.extend(customParseFormat)
-import { CalendarClock, Play, Pencil, Trash2, Plus, CheckCircle2, XCircle, Clock3, ArrowDown, ArrowUp } from 'lucide-react'
+import {
+  CalendarClock,
+  Play,
+  Pencil,
+  Trash2,
+  Plus,
+  CheckCircle2,
+  XCircle,
+  Clock3,
+  ArrowDown,
+  ArrowUp,
+  GitBranch,
+  Bell,
+  Bot,
+  Image as ImageIcon,
+  Circle,
+  MinusCircle,
+  Loader2,
+} from 'lucide-react'
 import {
   api,
+  type Channel,
   type Routine,
   type RoutineNotify,
   type RoutineRun,
   type RoutineStep,
+  type RoutineStepType,
+  type RoutineStepProgress,
   type RoutineSchedule,
   type Workspace,
 } from '../lib/api'
@@ -41,6 +62,18 @@ export function scheduleLabel(s: RoutineSchedule): string {
   }
 }
 
+const NOTIFY_LABEL: Record<RoutineNotify, string> = {
+  error: '仅失败时通知',
+  always: '每次都通知',
+  never: '从不通知',
+}
+
+const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot }> = {
+  agent: { label: '智能体', icon: Bot },
+  imagegen: { label: '生图', icon: ImageIcon },
+  notify: { label: '通知', icon: Bell },
+}
+
 type FormState = {
   id?: string
   name: string
@@ -52,12 +85,14 @@ type FormState = {
   time: string
   day: number
   notify: RoutineNotify
+  notifyChannelId?: string
 }
 
-const createStep = (name = '', prompt = ''): RoutineStep => ({
+const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  name,
-  prompt,
+  name: '',
+  type,
+  ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
 })
 const emptyForm = (workspacePath: string): FormState => ({
   name: '',
@@ -70,6 +105,9 @@ const emptyForm = (workspacePath: string): FormState => ({
   day: 1,
   notify: 'error',
 })
+
+/** 步骤在流程图里的显示状态:实时进度 > 最近一次运行结果 > 待机 */
+type StepDisplayStatus = 'idle' | 'running' | 'ok' | 'error' | 'timeout' | 'skipped'
 
 const useStyles = createStyles(({ token, css }) => ({
   page: css`
@@ -110,6 +148,11 @@ const useStyles = createStyles(({ token, css }) => ({
     font-size: 13px;
     color: ${token.colorTextSecondary};
   `,
+  hint: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    line-height: 1.6;
+  `,
   card: css`
     border: 1px solid ${token.colorBorderSecondary};
     border-radius: ${token.borderRadius}px;
@@ -117,6 +160,17 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     flex-direction: column;
     gap: 8px;
+  `,
+  cardClickable: css`
+    cursor: pointer;
+    transition: border-color 0.2s;
+
+    &:hover {
+      border-color: ${token.colorPrimaryBorderHover};
+    }
+  `,
+  cardSelected: css`
+    border-color: ${token.colorPrimary};
   `,
   cardHead: css`
     display: flex;
@@ -140,42 +194,145 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorTextTertiary};
     flex-wrap: wrap;
   `,
-  runItem: css`
-    border: 1px solid ${token.colorBorderSecondary};
-    border-radius: ${token.borderRadius}px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  `,
-  runHead: css`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: ${token.colorTextSecondary};
-
-    .rname {
-      font-weight: 600;
-      color: ${token.colorText};
-    }
-    .spacer {
-      flex: 1;
-    }
-  `,
-  runSummary: css`
-    font-size: 13px;
-    line-height: 1.7;
-    color: ${token.colorTextSecondary};
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 200px;
-    overflow-y: auto;
-  `,
   formRow: css`
     display: flex;
     gap: 8px;
     align-items: center;
+  `,
+
+  /* ── 流程图 ── */
+  flow: css`
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+  `,
+  node: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorFillQuaternary};
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  `,
+  nodeRunning: css`
+    border-color: ${token.colorPrimary};
+    box-shadow: 0 0 0 3px ${token.colorPrimaryBg};
+  `,
+  nodeOk: css`
+    border-color: ${token.colorSuccessBorder};
+  `,
+  nodeError: css`
+    border-color: ${token.colorErrorBorder};
+  `,
+  nodeTimeout: css`
+    border-color: ${token.colorWarningBorder};
+  `,
+  nodeSkipped: css`
+    border-style: dashed;
+    opacity: 0.65;
+  `,
+  nodeHead: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: ${token.colorText};
+    font-size: 13px;
+
+    .sname {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dur {
+      font-weight: 400;
+      font-size: 12px;
+      color: ${token.colorTextTertiary};
+    }
+  `,
+  nodeSub: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+  nodePrompt: css`
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    line-height: 1.6;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  `,
+  nodeSummary: css`
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: ${token.colorTextSecondary};
+    background: ${token.colorBgContainer};
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    padding: 8px 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 150px;
+    overflow-y: auto;
+  `,
+  nodeImage: css`
+    max-width: 260px;
+    max-height: 200px;
+    border-radius: ${token.borderRadius}px;
+    border: 1px solid ${token.colorBorderSecondary};
+    object-fit: cover;
+  `,
+  nodeErrText: css`
+    font-size: 12.5px;
+    color: ${token.colorError};
+    white-space: pre-wrap;
+    word-break: break-word;
+  `,
+  connector: css`
+    align-self: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: ${token.colorTextQuaternary};
+    padding: 2px 0;
+
+    .line {
+      width: 2px;
+      height: 12px;
+      background: ${token.colorBorder};
+    }
+    svg {
+      margin-top: -3px;
+    }
+  `,
+  spin: css`
+    animation: routine-spin 1s linear infinite;
+
+    @keyframes routine-spin {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  `,
+  lastRun: css`
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: ${token.colorTextTertiary};
+    flex-wrap: wrap;
   `,
 }))
 
@@ -194,7 +351,12 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   const [routines, setRoutines] = useState<Routine[]>([])
   const [runs, setRuns] = useState<RoutineRun[]>([])
   const [runningIds, setRunningIds] = useState<string[]>([])
+  const [channels, setChannels] = useState<Channel[]>([])
   const [form, setForm] = useState<FormState | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [stepProgress, setStepProgress] = useState<
+    Record<string, Record<string, RoutineStepProgress['status']>>
+  >({})
 
   async function refresh() {
     const data = await api.routines.list()
@@ -205,11 +367,27 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
   useEffect(() => {
     refresh()
-    const off = api.routines.onRunFinished((run) => {
+    api.channels.list().then(setChannels).catch(() => {})
+    const offRun = api.routines.onRunFinished((run) => {
       setRuns((prev) => [run, ...prev].slice(0, 100))
       setRunningIds((prev) => prev.filter((id) => id !== run.routineId))
+      // 跑完后用 run 里的每步结果显示,清掉实时进度
+      setStepProgress((prev) => {
+        const next = { ...prev }
+        delete next[run.routineId]
+        return next
+      })
     })
-    return off
+    const offStep = api.routines.onStepProgress((p) => {
+      setStepProgress((prev) => ({
+        ...prev,
+        [p.routineId]: { ...prev[p.routineId], [p.stepId]: p.status },
+      }))
+    })
+    return () => {
+      offRun()
+      offStep()
+    }
   }, [])
 
   function buildSchedule(f: FormState): RoutineSchedule {
@@ -225,11 +403,14 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     }
   }
 
+  const stepComplete = (s: RoutineStep): boolean =>
+    !!s.name.trim() && (s.type === 'notify' ? !!s.channelId : !!s.prompt?.trim())
+
   async function saveForm() {
     if (!form) return
-    const steps = form.steps.filter((step) => step.name.trim() && step.prompt.trim())
+    const steps = form.steps.filter(stepComplete)
     if (!form.name.trim() || !form.workspacePath.trim() || steps.length === 0) {
-      message.warning('Please provide a name, workspace, and at least one complete step')
+      message.warning('需要名称、工作区,以及至少一个完整的步骤(通知步骤要选渠道,其余要填提示词)')
       return
     }
     const next = await api.routines.save({
@@ -239,15 +420,37 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       workspacePath: form.workspacePath.trim(),
       schedule: buildSchedule(form),
       notify: form.notify,
+      ...(form.notifyChannelId ? { notifyChannelId: form.notifyChannelId } : {}),
     })
     setRoutines(next)
     setForm(null)
     message.success('Saved')
   }
 
-  function updateStep(id: string, patch: Partial<Pick<RoutineStep, 'name' | 'prompt'>>) {
+  function updateStep(id: string, patch: Partial<RoutineStep>) {
     if (!form) return
-    setForm({ ...form, steps: form.steps.map((step) => (step.id === id ? { ...step, ...patch } : step)) })
+    setForm({
+      ...form,
+      steps: form.steps.map((step) => (step.id === id ? { ...step, ...patch } : step)),
+    })
+  }
+
+  function changeStepType(id: string, type: RoutineStepType) {
+    if (!form) return
+    setForm({
+      ...form,
+      steps: form.steps.map((step) => {
+        if (step.id !== id) return step
+        return {
+          id: step.id,
+          name: step.name,
+          type,
+          ...(type !== 'notify' ? { prompt: step.prompt ?? '' } : {}),
+          ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
+          ...(type === 'notify' ? { channelId: step.channelId ?? channels[0]?.id, message: step.message ?? '' } : {}),
+        }
+      }),
+    })
   }
 
   function moveStep(index: number, direction: -1 | 1) {
@@ -268,7 +471,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     setForm({
       id: r.id,
       name: r.name,
-      steps: r.steps?.length ? r.steps : [createStep('Step 1', r.prompt ?? '')],
+      steps: r.steps?.length ? r.steps.map((s) => ({ ...s })) : [createStep()],
       workspacePath: r.workspacePath,
       scheduleType: r.schedule.type,
       minutes: r.schedule.type === 'interval' ? r.schedule.minutes : 60,
@@ -276,6 +479,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       time: 'time' in r.schedule ? r.schedule.time : '09:00',
       day: r.schedule.type === 'weekly' ? r.schedule.day : 1,
       notify: r.notify,
+      notifyChannelId: r.notifyChannelId,
     })
   }
 
@@ -285,8 +489,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       message.error(res.error)
       return
     }
+    setSelectedId(r.id)
     setRunningIds((prev) => [...prev, r.id])
-    message.info(`「${r.name}」开始执行,结果会出现在右侧收件箱`)
+    message.info(`「${r.name}」开始执行,右侧流程图会实时显示进度`)
   }
 
   const statusIcon = (s: RoutineRun['status']) =>
@@ -297,6 +502,69 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     ) : (
       <XCircle size={14} color="#f87171" />
     )
+
+  const selected = routines.find((r) => r.id === selectedId) ?? routines[0] ?? null
+  const latestRun = selected ? runs.find((run) => run.routineId === selected.id) : undefined
+  const liveProgress = selected ? stepProgress[selected.id] : undefined
+  const selectedRunning = selected ? runningIds.includes(selected.id) : false
+
+  function stepDisplay(step: RoutineStep): {
+    status: StepDisplayStatus
+    summary?: string
+    imageUrl?: string
+    durationMs?: number
+  } {
+    const live = liveProgress?.[step.id]
+    if (live) return { status: live }
+    // 正在执行但还没轮到的步骤不显示上一次的旧结果
+    if (selectedRunning) return { status: 'idle' }
+    const past = latestRun?.steps?.find((s) => s.id === step.id)
+    if (past) {
+      return { status: past.status, summary: past.summary, imageUrl: past.imageUrl, durationMs: past.durationMs }
+    }
+    return { status: 'idle' }
+  }
+
+  const stepIcon = (status: StepDisplayStatus) => {
+    switch (status) {
+      case 'running':
+        return <Loader2 size={14} className={styles.spin} color="#60a5fa" />
+      case 'ok':
+        return <CheckCircle2 size={14} color="#4ade80" />
+      case 'error':
+        return <XCircle size={14} color="#f87171" />
+      case 'timeout':
+        return <Clock3 size={14} color="#fbbf24" />
+      case 'skipped':
+        return <MinusCircle size={14} color="#9ca3af" />
+      default:
+        return <Circle size={14} color="#9ca3af" />
+    }
+  }
+
+  const nodeClass = (status: StepDisplayStatus) =>
+    cx(
+      styles.node,
+      status === 'running' && styles.nodeRunning,
+      status === 'ok' && styles.nodeOk,
+      status === 'error' && styles.nodeError,
+      status === 'timeout' && styles.nodeTimeout,
+      status === 'skipped' && styles.nodeSkipped,
+    )
+
+  const connector = (key: string) => (
+    <div key={key} className={styles.connector}>
+      <div className="line" />
+      <ArrowDown size={12} />
+    </div>
+  )
+
+  const channelName = (id?: string): string => channels.find((c) => c.id === id)?.name ?? '(渠道已删除)'
+
+  const stepTypeOptions = (Object.keys(STEP_TYPE_META) as RoutineStepType[]).map((t) => ({
+    value: t,
+    label: STEP_TYPE_META[t].label,
+  }))
 
   return (
     <div className={styles.page}>
@@ -323,10 +591,19 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Workflow name"
             />
-            <span className={styles.label}>{`\u6b65\u9aa4 (${form.steps.length})`}</span>
+            <span className={styles.label}>{`步骤 (${form.steps.length})`}</span>
+            <span className={styles.hint}>
+              {'节点间传值:{{prev.output}} 上一步输出、{{steps.步骤名.output}} 任意步骤输出、{{steps.步骤名.imageUrl}} 生图链接。智能体节点不写变量时自动接收上一步输出。'}
+            </span>
             {form.steps.map((step, index) => (
               <div key={step.id} className={styles.card} style={{ padding: 10 }}>
                 <div className={styles.formRow}>
+                  <Select
+                    value={step.type}
+                    onChange={(v) => changeStepType(step.id, v)}
+                    style={{ width: 96, flexShrink: 0 }}
+                    options={stepTypeOptions}
+                  />
                   <Input
                     value={step.name}
                     onChange={(e) => updateStep(step.id, { name: e.target.value })}
@@ -336,12 +613,48 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   <Button size="small" type="text" icon={<ArrowDown size={13} />} disabled={index === form.steps.length - 1} onClick={() => moveStep(index, 1)} />
                   <Button size="small" type="text" danger icon={<Trash2 size={13} />} disabled={form.steps.length === 1} onClick={() => deleteStep(step.id)} />
                 </div>
-                <Input.TextArea
-                  value={step.prompt}
-                  onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
-                  placeholder="Instruction for this node"
-                  autoSize={{ minRows: 3, maxRows: 8 }}
-                />
+                {step.type !== 'notify' && (
+                  <Input.TextArea
+                    value={step.prompt ?? ''}
+                    onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
+                    placeholder={step.type === 'imagegen' ? '画什么(支持 {{prev.output}} 等变量)' : 'Instruction for this node'}
+                    autoSize={{ minRows: 3, maxRows: 8 }}
+                  />
+                )}
+                {step.type === 'imagegen' && (
+                  <div className={styles.formRow}>
+                    <span className={styles.hint}>引擎</span>
+                    <Select
+                      value={step.engine ?? 'openai'}
+                      onChange={(v) => updateStep(step.id, { engine: v })}
+                      style={{ width: 200 }}
+                      options={[
+                        { value: 'openai', label: '云端 gpt-image-2' },
+                        { value: 'comfy', label: '本地 ComfyUI (SDXL)' },
+                      ]}
+                    />
+                  </div>
+                )}
+                {step.type === 'notify' && (
+                  <>
+                    <div className={styles.formRow}>
+                      <span className={styles.hint}>渠道</span>
+                      <Select
+                        value={step.channelId}
+                        onChange={(v) => updateStep(step.id, { channelId: v })}
+                        style={{ flex: 1 }}
+                        placeholder={channels.length ? '选择通知渠道' : '先去 设置→通知渠道 添加'}
+                        options={channels.map((c) => ({ value: c.id, label: c.name }))}
+                      />
+                    </div>
+                    <Input.TextArea
+                      value={step.message ?? ''}
+                      onChange={(e) => updateStep(step.id, { message: e.target.value })}
+                      placeholder={'发什么(支持 {{prev.output}} 等变量,留空 = 上一步输出)'}
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                    />
+                  </>
+                )}
               </div>
             ))}
             <Button size="small" type="dashed" icon={<Plus size={13} />} onClick={() => setForm({ ...form, steps: [...form.steps, createStep()] })}>
@@ -408,17 +721,29 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                 />
               )}
             </div>
-            <span className={styles.label}>通知</span>
-            <Select
-              value={form.notify}
-              onChange={(v) => setForm({ ...form, notify: v })}
-              style={{ width: 160 }}
-              options={[
-                { value: 'error', label: '仅失败时通知' },
-                { value: 'always', label: '每次都通知' },
-                { value: 'never', label: '从不通知' },
-              ]}
-            />
+            <span className={styles.label}>兜底通知(跑完汇总一张卡片,与流程里的通知节点独立)</span>
+            <div className={styles.formRow}>
+              <Select
+                value={form.notify}
+                onChange={(v) => setForm({ ...form, notify: v })}
+                style={{ width: 140 }}
+                options={[
+                  { value: 'error', label: '仅失败时通知' },
+                  { value: 'always', label: '每次都通知' },
+                  { value: 'never', label: '从不通知' },
+                ]}
+              />
+              {form.notify !== 'never' && (
+                <Select
+                  value={form.notifyChannelId}
+                  onChange={(v) => setForm({ ...form, notifyChannelId: v })}
+                  style={{ flex: 1 }}
+                  allowClear
+                  placeholder="默认第一个渠道"
+                  options={channels.map((c) => ({ value: c.id, label: c.name }))}
+                />
+              )}
+            </div>
             <div className={styles.formRow} style={{ justifyContent: 'flex-end' }}>
               <Button size="small" onClick={() => setForm(null)}>
                 取消
@@ -435,7 +760,11 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         )}
 
         {routines.map((r) => (
-          <div key={r.id} className={styles.card}>
+          <div
+            key={r.id}
+            className={cx(styles.card, styles.cardClickable, selected?.id === r.id && styles.cardSelected)}
+            onClick={() => setSelectedId(r.id)}
+          >
             <div className={styles.cardHead}>
               <span className="name" title={r.steps.map((step) => step.name).join(', ')}>
                 {r.name}
@@ -448,7 +777,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
               />
             </div>
             <div className={styles.cardMeta}>
-              <Tag>{scheduleLabel(r.schedule)}</Tag>`n              <Tag color="blue">{r.steps.length} steps</Tag>
+              <Tag>{scheduleLabel(r.schedule)}</Tag>
+              <Tag color="blue">{r.steps.length} steps</Tag>
               <span>{r.workspacePath}</span>
               {r.lastRunAt && <span>上次: {new Date(r.lastRunAt).toLocaleString()}</span>}
               <div style={{ flex: 1 }} />
@@ -476,23 +806,98 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       </section>
 
       <section className={`${styles.col} ${styles.right}`}>
-        <div className={styles.colTitle}>收件箱({runs.length})</div>
-        {runs.length === 0 && (
-          <Empty description="任务执行结果会出现在这里" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        <div className={styles.colTitle}>
+          <GitBranch size={16} />
+          流程图{selected ? ` · ${selected.name}` : ''}
+          {selectedRunning && <Tag color="processing">执行中</Tag>}
+        </div>
+
+        {!selected && (
+          <Empty description="左侧创建一个例行任务,流程会显示在这里" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         )}
-        {runs.map((run) => (
-          <div key={run.id} className={styles.runItem}>
-            <div className={styles.runHead}>
-              {statusIcon(run.status)}
-              <span className="rname">{run.routineName}</span>
-              <span>{new Date(run.startedAt).toLocaleString()}</span>
-              <span>耗时 {Math.max(1, Math.round((run.endedAt - run.startedAt) / 1000))}s</span>
-              <div className="spacer" />
-              {run.status !== 'ok' && <Tag color="error">{run.error?.slice(0, 60) ?? run.status}</Tag>}
+
+        {selected && (
+          <div className={styles.flow}>
+            <div className={styles.node}>
+              <div className={styles.nodeHead}>
+                <CalendarClock size={14} />
+                <span className="sname">触发</span>
+                <Tag>{scheduleLabel(selected.schedule)}</Tag>
+              </div>
+              <div className={styles.nodeSub}>{selected.workspacePath}</div>
             </div>
-            <div className={styles.runSummary}>{run.summary || run.error || ''}</div>
+            {connector('c-start')}
+
+            {selected.steps.map((step, index) => {
+              const display = stepDisplay(step)
+              const TypeIcon = STEP_TYPE_META[step.type]?.icon ?? Bot
+              return (
+                <div key={step.id} style={{ display: 'contents' }}>
+                  <div className={nodeClass(display.status)}>
+                    <div className={styles.nodeHead}>
+                      {stepIcon(display.status)}
+                      <TypeIcon size={13} />
+                      <span className="sname">
+                        {index + 1}. {step.name}
+                      </span>
+                      <Tag>{STEP_TYPE_META[step.type]?.label ?? step.type}</Tag>
+                      {display.durationMs ? (
+                        <span className="dur">{Math.max(1, Math.round(display.durationMs / 1000))}s</span>
+                      ) : null}
+                    </div>
+                    {step.type === 'notify' ? (
+                      <div className={styles.nodeSub}>
+                        → {channelName(step.channelId)}
+                        {step.message?.trim() ? ` · ${step.message.slice(0, 60)}` : ' · (上一步输出)'}
+                      </div>
+                    ) : (
+                      <div className={styles.nodePrompt} title={step.prompt}>
+                        {step.prompt}
+                      </div>
+                    )}
+                    {display.imageUrl && display.status === 'ok' && (
+                      <img className={styles.nodeImage} src={display.imageUrl} alt={step.name} />
+                    )}
+                    {display.summary && display.status === 'ok' && !display.imageUrl && (
+                      <div className={styles.nodeSummary}>{display.summary}</div>
+                    )}
+                    {display.summary && (display.status === 'error' || display.status === 'timeout') && (
+                      <div className={styles.nodeErrText}>{display.summary}</div>
+                    )}
+                  </div>
+                  {connector(`c-${step.id}`)}
+                </div>
+              )
+            })}
+
+            <div className={styles.node}>
+              <div className={styles.nodeHead}>
+                <Bell size={14} />
+                <span className="sname">兜底通知</span>
+                <Tag>{NOTIFY_LABEL[selected.notify]}</Tag>
+                {selected.notify !== 'never' && (
+                  <Tag color={channels.length ? 'green' : 'default'}>
+                    {channels.length
+                      ? (channels.find((c) => c.id === selected.notifyChannelId) ?? channels.find((c) => c.type !== 'local'))?.name ?? '系统通知'
+                      : '无渠道'}
+                  </Tag>
+                )}
+              </div>
+              {selected.notify !== 'never' && channels.length === 0 && (
+                <div className={styles.nodeSub}>在 设置 → 通知渠道 里添加飞书/Webhook 渠道</div>
+              )}
+            </div>
+
+            {latestRun && (
+              <div className={styles.lastRun}>
+                {statusIcon(latestRun.status)}
+                <span>最近一次: {new Date(latestRun.startedAt).toLocaleString()}</span>
+                <span>耗时 {Math.max(1, Math.round((latestRun.endedAt - latestRun.startedAt) / 1000))}s</span>
+                {latestRun.error && <Tag color="error">{latestRun.error.slice(0, 80)}</Tag>}
+              </div>
+            )}
           </div>
-        ))}
+        )}
       </section>
     </div>
   )

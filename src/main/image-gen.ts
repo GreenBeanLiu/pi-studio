@@ -192,6 +192,52 @@ async function cloudGenerate(prompt: string, referenceUrls?: string[]): Promise<
 
 const comfyUp = async (): Promise<boolean> => !!(await probe(`${COMFY_BASE}/system_stats`))
 
+/** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
+export async function generateImage(payload: {
+  prompt: string
+  engine: 'openai' | 'comfy'
+  referenceUrls?: string[]
+}): Promise<ImageGenResult> {
+  try {
+    if (payload.engine === 'comfy') {
+      const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0])
+      // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
+      if ('dataUrl' in r) {
+        try {
+          const rec = await fetch(`${CLOUD_RELAY}/imagegen/history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
+            body: JSON.stringify({
+              prompt: payload.prompt,
+              engine: payload.referenceUrls?.length ? 'comfy-edit' : 'comfy',
+              provider: 'sdxl-local',
+              image_base64: r.dataUrl.split(',', 2)[1],
+            }),
+            signal: AbortSignal.timeout(60_000),
+          })
+          if (rec.ok) {
+            const j = (await rec.json()) as { url?: string }
+            if (j.url) return { ...r, publicUrl: j.url }
+          }
+        } catch {
+          // 云端不可达时本地照常出图,只是不留档
+        }
+      }
+      return r
+    }
+    return await cloudGenerate(payload.prompt, payload.referenceUrls)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      error: msg.includes('fetch failed')
+        ? payload.engine === 'comfy'
+          ? 'ComfyUI 未运行,打开图像页的 ComfyUI 开关即可'
+          : '连不上云端图像服务(trail-api.glanger.xyz:8000)'
+        : msg,
+    }
+  }
+}
+
 export function registerImageGenHandlers(): void {
   app.on('will-quit', () => {
     comfyProc?.kill()
@@ -256,63 +302,28 @@ export function registerImageGenHandlers(): void {
 
   ipcMain.handle(
     'imageGen:generate',
-    async (
+    (
       _e,
       payload: { prompt: string; engine: 'openai' | 'comfy'; referenceUrls?: string[] },
-    ): Promise<ImageGenResult> => {
+    ): Promise<ImageGenResult> => generateImage(payload),
+  )
+
+  ipcMain.handle(
+    'imageGen:history',
+    async (_e, limit?: number): Promise<ImageGenHistoryItem[] | { error: string }> => {
+      const n = Math.min(Math.max(limit ?? 60, 1), 500)
       try {
-        if (payload.engine === 'comfy') {
-          const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0])
-          // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
-          if ('dataUrl' in r) {
-            try {
-              const rec = await fetch(`${CLOUD_RELAY}/imagegen/history`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
-                body: JSON.stringify({
-                  prompt: payload.prompt,
-                  engine: payload.referenceUrls?.length ? 'comfy-edit' : 'comfy',
-                  provider: 'sdxl-local',
-                  image_base64: r.dataUrl.split(',', 2)[1],
-                }),
-                signal: AbortSignal.timeout(60_000),
-              })
-              if (rec.ok) {
-                const j = (await rec.json()) as { url?: string }
-                if (j.url) return { ...r, publicUrl: j.url }
-              }
-            } catch {
-              // 云端不可达时本地照常出图,只是不留档
-            }
-          }
-          return r
-        }
-        return await cloudGenerate(payload.prompt, payload.referenceUrls)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        return {
-          error: msg.includes('fetch failed')
-            ? payload.engine === 'comfy'
-              ? 'ComfyUI 未运行,打开图像页的 ComfyUI 开关即可'
-              : '连不上云端图像服务(trail-api.glanger.xyz:8000)'
-            : msg,
-        }
+        const r = await fetch(`${CLOUD_RELAY}/imagegen/history?limit=${n}`, {
+          headers: { 'X-API-Key': CLOUD_KEY },
+          signal: AbortSignal.timeout(8000),
+        })
+        if (!r.ok) return { error: `历史接口 ${r.status}` }
+        return (await r.json()) as ImageGenHistoryItem[]
+      } catch {
+        return { error: '连不上云端历史服务' }
       }
     },
   )
-
-  ipcMain.handle('imageGen:history', async (): Promise<ImageGenHistoryItem[] | { error: string }> => {
-    try {
-      const r = await fetch(`${CLOUD_RELAY}/imagegen/history?limit=60`, {
-        headers: { 'X-API-Key': CLOUD_KEY },
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!r.ok) return { error: `历史接口 ${r.status}` }
-      return (await r.json()) as ImageGenHistoryItem[]
-    } catch {
-      return { error: '连不上云端历史服务' }
-    }
-  })
 
   ipcMain.handle(
     'imageGen:historyDelete',

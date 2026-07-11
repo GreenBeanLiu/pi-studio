@@ -25,6 +25,15 @@ type SettingsData = {
   securityGuardEnabled: boolean
   /** Enables bundled scout/planner/worker/reviewer subagent workflow prompts */
   subagentsEnabled: boolean
+  /** 飞书群自定义机器人 webhook;例行任务结果推卡片消息;留空关闭 */
+  feishuWebhookUrl: string
+  /** 飞书机器人「加签」密钥(可选,机器人安全设置里开了加签才需要) */
+  feishuSecret: string
+  /** 飞书开放平台自建应用凭证(应用模式,webhook 留空时用):机器人须加进目标群 */
+  feishuAppId: string
+  feishuAppSecret: string
+  /** 目标群 chat_id;留空自动用机器人所在的第一个群 */
+  feishuChatId: string
   recentWorkspaces: Workspace[]
 }
 
@@ -38,6 +47,11 @@ const DEFAULTS: SettingsData = {
   heliconeApiKey: '',
   securityGuardEnabled: true,
   subagentsEnabled: true,
+  feishuWebhookUrl: '',
+  feishuSecret: '',
+  feishuAppId: '',
+  feishuAppSecret: '',
+  feishuChatId: '',
   recentWorkspaces: [],
 }
 
@@ -105,6 +119,11 @@ export function loadSettings(): SettingsData {
         : DEFAULTS.securityGuardEnabled,
     subagentsEnabled:
       typeof raw.subagentsEnabled === 'boolean' ? raw.subagentsEnabled : DEFAULTS.subagentsEnabled,
+    feishuWebhookUrl: (raw.feishuWebhookUrl as string) ?? DEFAULTS.feishuWebhookUrl,
+    feishuSecret: decryptField(raw, 'feishuSecret', 'feishuSecretEncrypted'),
+    feishuAppId: (raw.feishuAppId as string) ?? DEFAULTS.feishuAppId,
+    feishuAppSecret: decryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted'),
+    feishuChatId: (raw.feishuChatId as string) ?? DEFAULTS.feishuChatId,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -123,6 +142,11 @@ export function saveSettings(
     | 'heliconeApiKey'
     | 'securityGuardEnabled'
     | 'subagentsEnabled'
+    | 'feishuWebhookUrl'
+    | 'feishuSecret'
+    | 'feishuAppId'
+    | 'feishuAppSecret'
+    | 'feishuChatId'
   >,
 ): void {
   const raw = readRaw()
@@ -130,12 +154,17 @@ export function saveSettings(
   encryptField(raw, 'apiKey', 'apiKeyEncrypted', settings.apiKey)
   encryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted', settings.tavilyApiKey)
   encryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted', settings.heliconeApiKey)
+  encryptField(raw, 'feishuSecret', 'feishuSecretEncrypted', settings.feishuSecret)
+  encryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted', settings.feishuAppSecret)
   raw.provider = settings.provider
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
   raw.securityGuardEnabled = settings.securityGuardEnabled
   raw.subagentsEnabled = settings.subagentsEnabled
+  raw.feishuWebhookUrl = settings.feishuWebhookUrl
+  raw.feishuAppId = settings.feishuAppId
+  raw.feishuChatId = settings.feishuChatId
 
   writeRaw(raw)
 }

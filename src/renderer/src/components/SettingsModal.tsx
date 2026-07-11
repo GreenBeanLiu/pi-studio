@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Alert, Input, Segmented, Button, Modal, Switch } from 'antd'
-import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck } from 'lucide-react'
+import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm } from 'antd'
+import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck, Trash2, Plus } from 'lucide-react'
 import {
   api,
+  type Channel,
+  type ChannelType,
   type PiProvider,
   type ProviderConnectionResult,
   type ProviderModelListResult,
@@ -20,6 +22,11 @@ type Settings = {
   heliconeApiKey: string
   securityGuardEnabled: boolean
   subagentsEnabled: boolean
+  feishuWebhookUrl: string
+  feishuSecret: string
+  feishuAppId: string
+  feishuAppSecret: string
+  feishuChatId: string
 }
 
 type Category = 'model' | 'tools' | 'security' | 'about'
@@ -192,6 +199,11 @@ export default function SettingsModal({
     heliconeApiKey: '',
     securityGuardEnabled: true,
     subagentsEnabled: true,
+    feishuWebhookUrl: '',
+    feishuSecret: '',
+    feishuAppId: '',
+    feishuAppSecret: '',
+    feishuChatId: '',
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -200,6 +212,10 @@ export default function SettingsModal({
   const [connectionResult, setConnectionResult] = useState<ProviderConnectionResult | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [modelFetchResult, setModelFetchResult] = useState<ProviderModelListResult | null>(null)
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [channelDraft, setChannelDraft] = useState<Channel | null>(null)
+  const [channelTesting, setChannelTesting] = useState<string | null>(null)
+  const [channelTestResult, setChannelTestResult] = useState<Record<string, string>>({})
   const [securityPolicy, setSecurityPolicy] = useState<SecurityPolicy>(DEFAULT_SECURITY_POLICY)
   const [policyScope, setPolicyScope] = useState<'default' | 'workspace'>('default')
   const [policyWorkspacePath, setPolicyWorkspacePath] = useState('')
@@ -207,6 +223,7 @@ export default function SettingsModal({
 
   useEffect(() => {
     api.settings.load().then(setSettings)
+    api.channels.list().then(setChannels).catch(() => {})
     api.securityPolicy
       .load()
       .then((result) => {
@@ -255,6 +272,53 @@ export default function SettingsModal({
 
   function rulesToLines(value: string[]): string {
     return value.join('\n')
+  }
+
+  const CHANNEL_TYPE_LABEL: Record<ChannelType, string> = {
+    'feishu-webhook': '飞书群机器人',
+    'feishu-app': '飞书应用',
+    webhook: '通用 Webhook',
+    local: '系统通知',
+  }
+
+  const emptyChannelDraft = (type: ChannelType): Channel => ({
+    id: '',
+    name: CHANNEL_TYPE_LABEL[type],
+    type,
+  })
+
+  const channelDraftComplete = (c: Channel): boolean => {
+    if (!c.name.trim()) return false
+    if (c.type === 'feishu-webhook' || c.type === 'webhook') return !!c.url?.trim()
+    if (c.type === 'feishu-app') return !!c.appId?.trim() && !!c.appSecret?.trim()
+    return true
+  }
+
+  async function addChannel() {
+    if (!channelDraft || !channelDraftComplete(channelDraft)) return
+    setChannels(await api.channels.save([...channels, channelDraft]))
+    setChannelDraft(null)
+  }
+
+  async function removeChannel(id: string) {
+    setChannels(await api.channels.save(channels.filter((c) => c.id !== id)))
+  }
+
+  async function testChannel(channel: Channel) {
+    const key = channel.id || 'draft'
+    setChannelTesting(key)
+    setChannelTestResult((prev) => ({ ...prev, [key]: '' }))
+    try {
+      const result = await api.channels.test(channel)
+      setChannelTestResult((prev) => ({
+        ...prev,
+        [key]: 'ok' in result ? '✅ 已发送' : `❌ ${result.error}`,
+      }))
+    } catch (err) {
+      setChannelTestResult((prev) => ({ ...prev, [key]: `❌ ${(err as Error).message ?? String(err)}` }))
+    } finally {
+      setChannelTesting(null)
+    }
   }
 
   async function handleTestConnection() {
@@ -474,6 +538,112 @@ export default function SettingsModal({
                 <span className={styles.labelHint}>
                   改后需重新打开工作区生效。经 gateway.helicone.ai 转发到你当前的 API 端点，密钥仅通过环境变量传给子进程。
                 </span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  通知渠道
+                  <span className={styles.labelHint}>工作流通知节点和兜底通知的推送目标；改动即时保存</span>
+                </span>
+                {channels.map((c) => {
+                  const key = c.id || 'draft'
+                  return (
+                    <div key={c.id} className={styles.actionRow}>
+                      <Tag>{CHANNEL_TYPE_LABEL[c.type]}</Tag>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.name}
+                      </span>
+                      {channelTestResult[key] && <span className={styles.labelHint}>{channelTestResult[key]}</span>}
+                      <Button size="small" loading={channelTesting === key} onClick={() => testChannel(c)}>
+                        测试
+                      </Button>
+                      <Popconfirm title="删除这个渠道?" onConfirm={() => removeChannel(c.id)}>
+                        <Button size="small" type="text" danger icon={<Trash2 size={13} />} />
+                      </Popconfirm>
+                    </div>
+                  )
+                })}
+                {!channelDraft && (
+                  <div className={styles.actionRow}>
+                    <Button size="small" type="dashed" icon={<Plus size={13} />} onClick={() => setChannelDraft(emptyChannelDraft('feishu-webhook'))}>
+                      添加渠道
+                    </Button>
+                  </div>
+                )}
+                {channelDraft && (
+                  <>
+                    <div className={styles.actionRow}>
+                      <Select
+                        value={channelDraft.type}
+                        onChange={(type: ChannelType) => setChannelDraft({ ...emptyChannelDraft(type), name: channelDraft.name })}
+                        style={{ width: 150 }}
+                        options={(Object.keys(CHANNEL_TYPE_LABEL) as ChannelType[]).map((t) => ({
+                          value: t,
+                          label: CHANNEL_TYPE_LABEL[t],
+                        }))}
+                      />
+                      <Input
+                        value={channelDraft.name}
+                        onChange={(e) => setChannelDraft({ ...channelDraft, name: e.target.value })}
+                        placeholder="渠道名称"
+                      />
+                    </div>
+                    {(channelDraft.type === 'feishu-webhook' || channelDraft.type === 'webhook') && (
+                      <Input
+                        value={channelDraft.url ?? ''}
+                        onChange={(e) => setChannelDraft({ ...channelDraft, url: e.target.value })}
+                        placeholder={
+                          channelDraft.type === 'feishu-webhook'
+                            ? 'https://open.feishu.cn/open-apis/bot/v2/hook/…'
+                            : 'https://…(收到 {title,status,markdown,imageUrls} JSON)'
+                        }
+                      />
+                    )}
+                    {channelDraft.type === 'feishu-webhook' && (
+                      <Input.Password
+                        value={channelDraft.secret ?? ''}
+                        onChange={(e) => setChannelDraft({ ...channelDraft, secret: e.target.value })}
+                        placeholder="加签密钥（机器人开了「签名校验」才需要，否则留空）"
+                      />
+                    )}
+                    {channelDraft.type === 'feishu-app' && (
+                      <>
+                        <Input
+                          value={channelDraft.appId ?? ''}
+                          onChange={(e) => setChannelDraft({ ...channelDraft, appId: e.target.value })}
+                          placeholder="App ID（cli_…，应用需开机器人能力+im:message 并拉进群）"
+                        />
+                        <Input.Password
+                          value={channelDraft.appSecret ?? ''}
+                          onChange={(e) => setChannelDraft({ ...channelDraft, appSecret: e.target.value })}
+                          placeholder="App Secret"
+                        />
+                        <Input
+                          value={channelDraft.chatId ?? ''}
+                          onChange={(e) => setChannelDraft({ ...channelDraft, chatId: e.target.value })}
+                          placeholder="群 chat_id（oc_…，留空自动用机器人所在的第一个群）"
+                        />
+                      </>
+                    )}
+                    <div className={styles.actionRow}>
+                      <Button size="small" type="primary" disabled={!channelDraftComplete(channelDraft)} onClick={addChannel}>
+                        添加
+                      </Button>
+                      <Button
+                        size="small"
+                        loading={channelTesting === 'draft'}
+                        disabled={!channelDraftComplete(channelDraft)}
+                        onClick={() => testChannel(channelDraft)}
+                      >
+                        先测试
+                      </Button>
+                      {channelTestResult['draft'] && <span className={styles.labelHint}>{channelTestResult['draft']}</span>}
+                      <Button size="small" onClick={() => setChannelDraft(null)}>
+                        取消
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className={styles.section}>

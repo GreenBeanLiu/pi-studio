@@ -4,11 +4,15 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings, apiKeyEnvVar, agentConfigDir } from './settings'
 import { loadRpcClient, resolvePiCliPath } from './pi-client'
+import { generateImage } from './image-gen'
+import { loadChannels, sendToChannel, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 
 /**
- * 例行任务(Routines):定时用独立 agent 会话执行一段 prompt,结果进收件箱。
- * 每次执行 spawn 一个全新的 RpcClient 子进程(独立 session),跑完即弃 ——
+ * 例行任务(Routines):定时执行一条由类型化节点组成的流水线。
+ * 节点类型:agent(pi 会话) / imagegen(生图) / notify(推送到某个通知渠道)。
+ * 节点间用 {{prev.output}} / {{steps.<名字>.output}} / {{steps.<名字>.imageUrl}} 传值。
+ * agent 节点每次 run spawn 一个全新 RpcClient 子进程(独立 session),跑完即弃 ——
  * 绝不打扰用户当前打开的聊天会话。
  */
 
@@ -20,10 +24,20 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
+export type RoutineStepType = 'agent' | 'imagegen' | 'notify'
+
 export type RoutineStep = {
   id: string
   name: string
-  prompt: string
+  type: RoutineStepType
+  /** agent / imagegen:提示词(支持 {{…}} 变量) */
+  prompt?: string
+  /** imagegen:引擎,openai=云端 gpt-image-2,comfy=本地 SDXL */
+  engine?: 'openai' | 'comfy'
+  /** notify:目标渠道 id */
+  channelId?: string
+  /** notify:消息模板(支持 {{…}} 变量),空则默认发上一步输出 */
+  message?: string
 }
 
 export type Routine = {
@@ -36,10 +50,23 @@ export type Routine = {
   schedule: RoutineSchedule
   enabled: boolean
   notify: RoutineNotify
+  /** 兜底汇总通知发到哪个渠道;空 = 渠道列表第一个 */
+  notifyChannelId?: string
   createdAt: number
   lastRunAt?: number
   /** 上次触发的时间槽(防止同一槽位重复触发,也让错过的槽当天补跑) */
   lastSlotKey?: string
+}
+
+export type RoutineStepResult = {
+  id: string
+  name: string
+  status: 'ok' | 'error' | 'timeout' | 'skipped'
+  /** 该步骤的文本产物(截断) */
+  summary: string
+  /** imagegen 节点的公网图片链接 */
+  imageUrl?: string
+  durationMs: number
 }
 
 export type RoutineRun = {
@@ -49,9 +76,19 @@ export type RoutineRun = {
   startedAt: number
   endedAt: number
   status: 'ok' | 'error' | 'timeout'
-  /** agent 最后一条回复(截断) */
+  /** 各步骤产物拼接(截断) */
   summary: string
+  steps?: RoutineStepResult[]
   error?: string
+}
+
+/** 执行过程中广播给渲染进程的单步进度(流程图实时高亮用) */
+export type RoutineStepProgress = {
+  routineId: string
+  stepId: string
+  stepIndex: number
+  totalSteps: number
+  status: 'running' | 'ok' | 'error' | 'timeout'
 }
 
 type Store = { routines: Routine[]; runs: RoutineRun[] }
@@ -62,17 +99,29 @@ const MAX_CONCURRENT = 2
 
 const storePath = (): string => join(app.getPath('userData'), 'routines.json')
 
+function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
+  return {
+    id: step.id || randomUUID(),
+    name: step.name ?? '',
+    type: step.type ?? 'agent',
+    ...(step.prompt !== undefined ? { prompt: step.prompt } : {}),
+    ...(step.engine !== undefined ? { engine: step.engine } : {}),
+    ...(step.channelId !== undefined ? { channelId: step.channelId } : {}),
+    ...(step.message !== undefined ? { message: step.message } : {}),
+  }
+}
+
 function loadStore(): Store {
   try {
     if (existsSync(storePath())) {
       const raw = JSON.parse(readFileSync(storePath(), 'utf8')) as Partial<Store>
       const routines = (raw.routines ?? []).map((routine) => {
         const current = routine as Routine
-        if (Array.isArray(current.steps) && current.steps.length > 0) return current
-        return {
-          ...current,
-          steps: [{ id: randomUUID(), name: '\u6b65\u9aa4 1', prompt: current.prompt ?? '' }],
-        }
+        const steps =
+          Array.isArray(current.steps) && current.steps.length > 0
+            ? current.steps.map(normalizeStep)
+            : [normalizeStep({ name: '步骤 1', prompt: current.prompt ?? '' })]
+        return { ...current, steps }
       })
       return { routines, runs: raw.runs ?? [] }
     }
@@ -132,7 +181,48 @@ export function scheduleLabel(s: RoutineSchedule): string {
   }
 }
 
-// ── 执行器:独立 RpcClient 会话 ────────────────────────────────────
+// ── 变量插值 ─────────────────────────────────────────────────────
+
+/** 每个节点跑完后的产物,供后续节点用 {{…}} 引用 */
+type StepProduct = { output: string; imageUrl?: string }
+
+type RunContext = {
+  routine: Routine
+  triggerTime: string
+  products: Map<string, StepProduct> // key = step name
+  prev?: StepProduct
+}
+
+/**
+ * 替换模板里的 {{prev.output}} / {{steps.<名字>.output}} / {{steps.<名字>.imageUrl}} /
+ * {{routine.name}} / {{routine.workspace}} / {{trigger.time}}。
+ * 未知变量原样保留,让错误在结果里可见而不是被吞掉。
+ */
+function interpolate(template: string, ctx: RunContext): string {
+  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (whole, token: string) => {
+    if (token === 'prev.output') return ctx.prev?.output ?? whole
+    if (token === 'prev.imageUrl') return ctx.prev?.imageUrl ?? whole
+    if (token === 'routine.name') return ctx.routine.name
+    if (token === 'routine.workspace') return ctx.routine.workspacePath
+    if (token === 'trigger.time') return ctx.triggerTime
+    if (token.startsWith('steps.')) {
+      const rest = token.slice('steps.'.length)
+      const dot = rest.lastIndexOf('.')
+      if (dot <= 0) return whole
+      const name = rest.slice(0, dot)
+      const field = rest.slice(dot + 1)
+      const product = ctx.products.get(name)
+      if (!product) return whole
+      if (field === 'output') return product.output
+      if (field === 'imageUrl') return product.imageUrl ?? whole
+    }
+    return whole
+  })
+}
+
+const hasVariables = (text: string): boolean => /\{\{[^{}]+\}\}/.test(text)
+
+// ── 执行器 ───────────────────────────────────────────────────────
 
 const running = new Set<string>()
 
@@ -155,89 +245,186 @@ function latestAssistantText(
   return ''
 }
 
+function broadcast(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
+
+/** agent 节点专属:RpcClient 只在第一次遇到 agent 节点时才拉起(纯生图/通知流程不需要 API Key) */
+type AgentSession = {
+  client: {
+    prompt: (text: string) => Promise<void>
+    getMessages: () => Promise<unknown>
+    onEvent: (cb: (e: { type?: string }) => void) => () => void
+    stop: () => Promise<void>
+  } | null
+}
+
+async function ensureAgentClient(routine: Routine, session: AgentSession): Promise<NonNullable<AgentSession['client']>> {
+  if (session.client) return session.client
+  const settings = loadSettings()
+  if (!settings.apiKey) throw new Error('未配置 API Key(agent 节点需要)')
+  const RpcClient = await loadRpcClient()
+  const client = new RpcClient({
+    cwd: routine.workspacePath,
+    env: {
+      [apiKeyEnvVar(settings.provider)]: settings.apiKey,
+      PI_CODING_AGENT_DIR: agentConfigDir(),
+      ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
+      ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
+    },
+    provider: settings.provider,
+    model: settings.model || undefined,
+    cliPath: resolvePiCliPath(),
+  })
+  await client.start()
+  session.client = client
+  return client
+}
+
+async function runAgentStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  session: AgentSession,
+  markTimeout: () => void,
+): Promise<StepProduct> {
+  const client = await ensureAgentClient(routine, session)
+  let prompt = interpolate(step.prompt ?? '', ctx)
+  // 兼容老流程:prompt 里没写变量时,自动把上一步输出接在后面
+  if (!hasVariables(step.prompt ?? '') && ctx.prev) {
+    prompt = `${prompt}\n\nPrevious step result:\n${ctx.prev.output.slice(0, 4000)}`
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      markTimeout()
+      reject(new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`))
+    }, RUN_TIMEOUT_MS)
+    const off = client.onEvent((e: { type?: string }) => {
+      if (e?.type === 'agent_end') {
+        clearTimeout(timer)
+        off()
+        resolve()
+      }
+    })
+    client.prompt(prompt).catch((err: unknown) => {
+      clearTimeout(timer)
+      off()
+      reject(err instanceof Error ? err : new Error(String(err)))
+    })
+  })
+  const messages = (await client.getMessages()) as Array<{
+    role?: string
+    content?: Array<{ type?: string; text?: string }> | string
+  }>
+  return { output: (latestAssistantText(messages) || '(no text output)').slice(0, 4000) }
+}
+
+async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+  const prompt = interpolate(step.prompt ?? '', ctx)
+  if (!prompt.trim()) throw new Error('生图节点的提示词为空')
+  const result = await generateImage({ prompt, engine: step.engine ?? 'openai' })
+  if ('error' in result) throw new Error(result.error)
+  return {
+    output: result.publicUrl ?? '(图片已生成,无公网链接)',
+    ...(result.publicUrl ? { imageUrl: result.publicUrl } : {}),
+  }
+}
+
+async function runNotifyStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  channels: Channel[],
+): Promise<StepProduct> {
+  const channel = channels.find((c) => c.id === step.channelId)
+  if (!channel) throw new Error('通知渠道不存在,去 设置→通知渠道 检查')
+  const markdown = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
+  const imageUrls = [...ctx.products.values()].map((p) => p.imageUrl).filter((u): u is string => !!u)
+  await sendToChannel(channel, {
+    title: `${routine.name} · ${step.name}`,
+    status: 'info',
+    markdown,
+    ...(imageUrls.length ? { imageUrls } : {}),
+  })
+  return { output: `已发送到「${channel.name}」` }
+}
+
 async function executeRoutine(store: Store, routine: Routine): Promise<void> {
   if (running.has(routine.id) || running.size >= MAX_CONCURRENT) return
   running.add(routine.id)
   const startedAt = Date.now()
   let status: RoutineRun['status'] = 'ok'
-  let summary = ''
   let errorMsg: string | undefined
+  const stepResults: RoutineStepResult[] = routine.steps.map((step) => ({
+    id: step.id,
+    name: step.name,
+    status: 'skipped',
+    summary: '',
+    durationMs: 0,
+  }))
+
+  const stepProgress = (stepIndex: number, s: RoutineStepProgress['status']): void =>
+    broadcast('routines:stepProgress', {
+      routineId: routine.id,
+      stepId: routine.steps[stepIndex].id,
+      stepIndex,
+      totalSteps: routine.steps.length,
+      status: s,
+    } satisfies RoutineStepProgress)
+
+  const session: AgentSession = { client: null }
+  const channels = loadChannels()
+  const ctx: RunContext = {
+    routine,
+    triggerTime: new Date().toLocaleString(),
+    products: new Map(),
+  }
 
   try {
-    const settings = loadSettings()
-    if (!settings.apiKey) throw new Error('未配置 API Key')
     if (!existsSync(routine.workspacePath)) {
       throw new Error(`工作区不存在: ${routine.workspacePath}`)
     }
-
-    const RpcClient = await loadRpcClient()
-    const client = new RpcClient({
-      cwd: routine.workspacePath,
-      env: {
-        [apiKeyEnvVar(settings.provider)]: settings.apiKey,
-        PI_CODING_AGENT_DIR: agentConfigDir(),
-        ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
-        ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
-      },
-      provider: settings.provider,
-      model: settings.model || undefined,
-      cliPath: resolvePiCliPath(),
-    })
-
     try {
-      await client.start()
-      const stepSummaries: string[] = []
-      let previousOutput = ''
       for (const [index, step] of routine.steps.entries()) {
-        await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          status = 'timeout'
-          reject(new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`))
-        }, RUN_TIMEOUT_MS)
-        const off = client.onEvent((e: { type?: string }) => {
-          if (e?.type === 'agent_end') {
-            clearTimeout(timer)
-            off()
-            resolve()
+        const stepStartedAt = Date.now()
+        stepProgress(index, 'running')
+        try {
+          const product: StepProduct =
+            step.type === 'imagegen'
+              ? await runImagegenStep(step, ctx)
+              : step.type === 'notify'
+                ? await runNotifyStep(routine, step, ctx, channels)
+                : await runAgentStep(routine, step, ctx, session, () => {
+                    status = 'timeout'
+                  })
+          ctx.products.set(step.name, product)
+          ctx.prev = product
+          stepResults[index] = {
+            id: step.id,
+            name: step.name,
+            status: 'ok',
+            summary: product.output,
+            ...(product.imageUrl ? { imageUrl: product.imageUrl } : {}),
+            durationMs: Date.now() - stepStartedAt,
           }
-        })
-        const prompt = index === 0
-          ? step.prompt
-          : `${step.prompt}\n\nPrevious step (${routine.steps[index - 1].name}) result:\n${previousOutput.slice(0, 4000)}`
-        client.prompt(prompt).catch((err: unknown) => {
-          clearTimeout(timer)
-          off()
-          reject(err instanceof Error ? err : new Error(String(err)))
-        })
-      })
-
-      const messages = (await client.getMessages()) as Array<{
-        role?: string
-        content?: Array<{ type?: string; text?: string }> | string
-      }>
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i]
-        if (m.role !== 'assistant') continue
-        const text = Array.isArray(m.content)
-          ? m.content
-              .filter((b) => b.type === 'text' && b.text)
-              .map((b) => b.text)
-              .join('\n')
-          : typeof m.content === 'string'
-            ? m.content
-            : ''
-        if (text.trim()) {
-          summary = text.trim().slice(0, 4000)
-          break
+          stepProgress(index, 'ok')
+        } catch (err) {
+          const failStatus = (status as RoutineRun['status']) === 'timeout' ? ('timeout' as const) : ('error' as const)
+          stepResults[index] = {
+            id: step.id,
+            name: step.name,
+            status: failStatus,
+            summary: err instanceof Error ? err.message : String(err),
+            durationMs: Date.now() - stepStartedAt,
+          }
+          stepProgress(index, failStatus)
+          throw err
         }
       }
-      if (!summary) summary = '(no text output)'
-      previousOutput = summary
-      stepSummaries.push(`Step ${index + 1} - ${step.name}\n${summary}`)
-      }
-      summary = stepSummaries.join('\n\n').slice(0, 4000) || '(no text output)'
     } finally {
-      await client.stop().catch(() => {})
+      await session.client?.stop().catch(() => {})
     }
   } catch (err) {
     if (status === 'ok') status = 'error'
@@ -250,6 +437,13 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
     running.delete(routine.id)
   }
 
+  const summary =
+    stepResults
+      .filter((s) => s.status !== 'skipped')
+      .map((s, i) => `Step ${i + 1} - ${s.name}\n${s.summary}`)
+      .join('\n\n')
+      .slice(0, 4000) || '(no output)'
+
   const run: RoutineRun = {
     id: randomUUID(),
     routineId: routine.id,
@@ -258,18 +452,46 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
     endedAt: Date.now(),
     status,
     summary,
+    steps: stepResults,
     error: errorMsg,
   }
   store.runs = [run, ...store.runs].slice(0, MAX_RUNS_KEPT)
   saveStore(store)
 
-  const shouldNotify =
-    routine.notify === 'always' || (routine.notify === 'error' && status !== 'ok')
-  if (shouldNotify && Notification.isSupported()) {
-    new Notification({
-      title: `例行任务${status === 'ok' ? '完成' : '失败'}: ${routine.name}`,
-      body: (errorMsg ?? summary).slice(0, 150),
-    }).show()
+  // 兜底汇总通知(notify 节点之外的保险):本地弹窗 + 默认渠道一张卡片
+  const shouldNotify = routine.notify === 'always' || (routine.notify === 'error' && status !== 'ok')
+  if (shouldNotify) {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: `例行任务${status === 'ok' ? '完成' : '失败'}: ${routine.name}`,
+        body: (errorMsg ?? summary).slice(0, 150),
+      }).show()
+    }
+    const target = channels.find((c) => c.id === routine.notifyChannelId) ?? channels.find((c) => c.type !== 'local')
+    if (target) {
+      const statusText = status === 'ok' ? '完成' : status === 'timeout' ? '超时' : '失败'
+      const durationS = Math.max(1, Math.round((run.endedAt - run.startedAt) / 1000))
+      const stepsMd = stepResults
+        .map((s, i) => {
+          const icon = s.status === 'ok' ? '✅' : s.status === 'skipped' ? '⏭' : '❌'
+          const body = s.status === 'skipped' ? '(未执行)' : s.summary.slice(0, 300)
+          return `${icon} **${i + 1}. ${s.name}**\n${body}`
+        })
+        .join('\n')
+      const imageUrls = stepResults.map((s) => s.imageUrl).filter((u): u is string => !!u)
+      sendToChannel(target, {
+        title: `${status === 'ok' ? '✅' : '❌'} 例行任务${statusText}:${routine.name}`,
+        status,
+        markdown: `**工作区** ${routine.workspacePath} · **耗时** ${durationS}s${errorMsg ? `\n**错误** ${errorMsg.slice(0, 500)}` : ''}\n---\n${stepsMd}`,
+        ...(imageUrls.length ? { imageUrls } : {}),
+      }).catch((err) => {
+        appendAppLog('error', 'routines.notify', 'Run summary notify failed', {
+          routine: routine.name,
+          channel: target.name,
+          error: normalizeError(err),
+        })
+      })
+    }
   }
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue
@@ -282,6 +504,12 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
 }
 
 // ── 注册 ─────────────────────────────────────────────────────────
+
+const stepIsComplete = (step: RoutineStep): boolean => {
+  if (!step.name.trim()) return false
+  if (step.type === 'notify') return !!step.channelId
+  return !!step.prompt?.trim()
+}
 
 export function registerRoutines(): void {
   const store = loadStore()
@@ -305,8 +533,8 @@ export function registerRoutines(): void {
   ipcMain.handle(
     'routines:save',
     (_e, routine: Partial<Routine> & Pick<Routine, 'name' | 'steps' | 'workspacePath' | 'schedule' | 'notify'>) => {
-      const steps = (routine.steps ?? []).filter((step) => step.name.trim() && step.prompt.trim())
-      if (steps.length === 0) throw new Error('Workflow needs at least one step')
+      const steps = (routine.steps ?? []).map(normalizeStep).filter(stepIsComplete)
+      if (steps.length === 0) throw new Error('Workflow needs at least one complete step')
       const existing = routine.id ? store.routines.find((r) => r.id === routine.id) : undefined
       if (existing) {
         Object.assign(existing, { ...routine, steps })
