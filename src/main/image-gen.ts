@@ -157,6 +157,9 @@ async function comfyUploadRef(refUrl: string): Promise<string> {
 }
 
 async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenResult> {
+  const runtime = await comfyRuntime.start()
+  if (!runtime.ok) return { error: runtime.error }
+
   const seed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)
   const refName = refUrl ? await comfyUploadRef(refUrl) : undefined
   const submit = await fetch(`${COMFY_BASE}/prompt`, {
