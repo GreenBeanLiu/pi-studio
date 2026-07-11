@@ -14,7 +14,6 @@ const CLOUD_TIMEOUT_MS = 320_000
 
 // 构建期注入(见 electron.vite.config.ts);优先级:设置页覆盖 > process.env(dev) > 烧入默认。
 declare const __CLOUD_IMAGE_RELAY__: string
-declare const __CLOUD_IMAGE_KEY__: string
 
 /** ComfyUI 目录:设置页覆盖 > 内置默认。 */
 const comfyDir = (): string => loadSettings().comfyDir?.trim() || COMFY_DIR_DEFAULT
@@ -40,7 +39,7 @@ const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
   const s = loadSettings()
   return resolveCloudImageConfig(
     {
-      PI_CLOUD_IMAGE_KEY: s.cloudImageKey?.trim() || process.env.PI_CLOUD_IMAGE_KEY || __CLOUD_IMAGE_KEY__,
+      PI_CLOUD_IMAGE_KEY: s.cloudImageKey?.trim() || process.env.PI_CLOUD_IMAGE_KEY || '',
       PI_CLOUD_IMAGE_RELAY:
         s.cloudImageRelay?.trim() || process.env.PI_CLOUD_IMAGE_RELAY || __CLOUD_IMAGE_RELAY__,
     },

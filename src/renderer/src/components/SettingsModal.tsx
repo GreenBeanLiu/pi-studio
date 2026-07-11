@@ -756,17 +756,17 @@ export default function SettingsModal({
               <div className={styles.section}>
                 <span className={styles.label}>
                   云端中继（高级）
-                  <span className={styles.labelHint}>覆盖内置的云端图像服务地址与 Key；留空用内置默认，一般不用改</span>
+                  <span className={styles.labelHint}>地址可留空使用默认中继；Key 不再内置，需在此填写或通过 PI_CLOUD_IMAGE_KEY 提供</span>
                 </span>
                 <Input
                   value={settings.cloudImageRelay}
                   onChange={(e) => patch({ cloudImageRelay: e.target.value })}
-                  placeholder="https://trail-api.glanger.xyz（留空=内置）"
+                  placeholder="https://trail-api.glanger.xyz（留空=默认中继）"
                 />
                 <Input.Password
                   value={settings.cloudImageKey}
                   onChange={(e) => patch({ cloudImageKey: e.target.value })}
-                  placeholder="X-API-Key（留空=内置）"
+                  placeholder="X-API-Key（留空=未配置）"
                 />
                 <span className={styles.labelHint}>
                   中继地址必须是 HTTPS（本机回环 http 仅开发用）。改后立即生效，不需重开工作区。
