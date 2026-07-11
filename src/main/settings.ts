@@ -44,6 +44,8 @@ type SettingsData = {
   imageEngine: '' | 'comfy' | 'openai'
   /** ComfyUI 安装目录(本地引擎启停用);空=内置默认 D:\Works\ComfyUI */
   comfyDir: string
+  comfyPythonPath: string
+  comfyLaunchArgs: string
   /** 云端图像中继地址覆盖;空=用构建时烧入的默认 https 地址 */
   cloudImageRelay: string
   /** 云端图像 Key 覆盖;空=用构建时烧入的默认 key */
@@ -69,6 +71,8 @@ const DEFAULTS: SettingsData = {
   customModelIds: [],
   imageEngine: '',
   comfyDir: '',
+  comfyPythonPath: '',
+  comfyLaunchArgs: '',
   cloudImageRelay: '',
   cloudImageKey: '',
   recentWorkspaces: [],
@@ -149,6 +153,8 @@ export function loadSettings(): SettingsData {
     imageEngine:
       raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' ? raw.imageEngine : DEFAULTS.imageEngine,
     comfyDir: (raw.comfyDir as string) ?? DEFAULTS.comfyDir,
+    comfyPythonPath: (raw.comfyPythonPath as string) ?? DEFAULTS.comfyPythonPath,
+    comfyLaunchArgs: (raw.comfyLaunchArgs as string) ?? DEFAULTS.comfyLaunchArgs,
     cloudImageRelay: (raw.cloudImageRelay as string) ?? DEFAULTS.cloudImageRelay,
     cloudImageKey: decryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
@@ -176,6 +182,8 @@ export function saveSettings(
     | 'feishuChatId'
     | 'imageEngine'
     | 'comfyDir'
+    | 'comfyPythonPath'
+    | 'comfyLaunchArgs'
     | 'cloudImageRelay'
     | 'cloudImageKey'
   >,
@@ -199,6 +207,8 @@ export function saveSettings(
   raw.feishuChatId = settings.feishuChatId
   raw.imageEngine = settings.imageEngine
   raw.comfyDir = settings.comfyDir
+  raw.comfyPythonPath = settings.comfyPythonPath
+  raw.comfyLaunchArgs = settings.comfyLaunchArgs
   raw.cloudImageRelay = settings.cloudImageRelay
 
   writeRaw(raw)

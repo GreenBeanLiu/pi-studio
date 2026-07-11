@@ -552,6 +552,20 @@ function ImageGenInner() {
             />
           </Tooltip>
           {comfyBusy && <span className={styles.label}>启动要加载模型,约 10~30 秒…</span>}
+          {health?.comfy && (
+            <span className={styles.label}>
+              {health.comfyCheckpointAvailable === false
+                ? `缺少 checkpoint: ${health.comfyCheckpoint}`
+                : `${health.comfyPythonVersion ? `Python ${health.comfyPythonVersion}` : ''}${
+                    health.comfyDevices.length ? ` · ${health.comfyDevices.join(', ')}` : ''
+                  }`}
+            </span>
+          )}
+          {!health?.comfy && health?.comfyLastError && (
+            <span className={styles.offline} title={health.comfyLastError}>
+              {health.comfyLastError}
+            </span>
+          )}
         </div>
 
         <span className={styles.label}>引擎</span>

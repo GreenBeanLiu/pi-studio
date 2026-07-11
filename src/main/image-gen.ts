@@ -1,7 +1,6 @@
 import { app, ipcMain } from 'electron'
-import { spawn, type ChildProcess } from 'child_process'
-import { existsSync } from 'fs'
-import { join } from 'path'
+import { appendAppLog } from './app-log'
+import { ComfyRuntime, parseLaunchArgs, type ComfyRuntimeHealth } from './comfy-runtime'
 import { resolveCloudImageConfig } from './network-policy'
 import { loadSettings } from './settings'
 
@@ -20,6 +19,22 @@ declare const __CLOUD_IMAGE_KEY__: string
 /** ComfyUI 目录:设置页覆盖 > 内置默认。 */
 const comfyDir = (): string => loadSettings().comfyDir?.trim() || COMFY_DIR_DEFAULT
 
+const comfyRuntime = new ComfyRuntime(
+  () => {
+    const settings = loadSettings()
+    return {
+      baseUrl: COMFY_BASE,
+      comfyDir: comfyDir(),
+      pythonPath: settings.comfyPythonPath,
+      launchArgs: parseLaunchArgs(settings.comfyLaunchArgs),
+      checkpoint: COMFY_CKPT,
+    }
+  },
+  {
+    onLog: (message) => appendAppLog('warn', 'imagegen.comfy', message),
+  },
+)
+
 /** 云端中继配置:每次读设置(便于用户改后即时生效,无需重启)。 */
 const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
   const s = loadSettings()
@@ -33,10 +48,6 @@ const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
   )
 }
 
-// pi-studio 托管的 ComfyUI 子进程(用户在图像页开关);应用退出时一并结束。
-// 若 8188 上已有外部启动的 ComfyUI,直接用,不托管也不负责停止。
-let comfyProc: ChildProcess | null = null
-
 const NEGATIVE =
   'text, letters, words, watermark, signature, blurry, lowres, jpeg artifacts, frame, border, cropped, deformed'
 
@@ -46,8 +57,35 @@ export type ImageGenHealth = {
   comfy: boolean
   /** ComfyUI 是否由 pi-studio 托管(true 才允许从界面停止) */
   comfyManaged: boolean
+  comfyCheckpoint: string
+  comfyCheckpointAvailable: boolean | null
+  comfyPythonVersion?: string
+  comfyTorchVersion?: string
+  comfyDevices: string[]
+  comfyLastError?: string
   model: string
   r2: boolean
+}
+
+function buildImageGenHealth(
+  comfy: ComfyRuntimeHealth,
+  cloudOk: boolean,
+  model = '',
+): ImageGenHealth {
+  return {
+    ok: comfy.reachable || cloudOk,
+    keyConfigured: cloudOk,
+    comfy: comfy.reachable,
+    comfyManaged: comfy.managed,
+    comfyCheckpoint: comfy.checkpoint,
+    comfyCheckpointAvailable: comfy.checkpointAvailable,
+    comfyPythonVersion: comfy.pythonVersion,
+    comfyTorchVersion: comfy.torchVersion,
+    comfyDevices: comfy.deviceNames,
+    comfyLastError: comfy.lastError,
+    model,
+    r2: cloudOk,
+  }
 }
 
 export type ImageGenResult = { dataUrl: string; publicUrl: string | null } | { error: string }
@@ -159,15 +197,6 @@ async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenR
   return { error: `ComfyUI 生成超时(${Math.round(COMFY_TIMEOUT_MS / 1000)}s)` }
 }
 
-async function probe(url: string, ms = 1500, init?: RequestInit): Promise<Response | null> {
-  try {
-    const r = await fetch(url, { ...init, signal: AbortSignal.timeout(ms) })
-    return r.ok ? r : null
-  } catch {
-    return null
-  }
-}
-
 async function cloudFetch(
   path: string,
   init: RequestInit = {},
@@ -243,8 +272,6 @@ async function cloudGenerate(prompt: string, referenceUrls?: string[]): Promise<
   return { error: '云端连接在收到结果前断开了' }
 }
 
-const comfyUp = async (): Promise<boolean> => !!(await probe(`${COMFY_BASE}/system_stats`))
-
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
 export async function generateImage(payload: {
   prompt: string
@@ -292,65 +319,47 @@ export async function generateImage(payload: {
 
 export function registerImageGenHandlers(): void {
   app.on('will-quit', () => {
-    comfyProc?.kill()
-    comfyProc = null
+    void comfyRuntime.stop()
   })
 
   ipcMain.handle('imageGen:health', async (): Promise<ImageGenHealth> => {
-    const [comfyRes, cloudRes] = await Promise.all([
-      probe(`${COMFY_BASE}/system_stats`),
-      getCloud().available ? probeCloud('/imagegen/health', 3000) : Promise.resolve(null),
+    const cloudConfig = getCloud()
+    const [comfy, cloudRes] = await Promise.all([
+      comfyRuntime.health(),
+      cloudConfig.available ? probeCloud('/imagegen/health', 3000) : Promise.resolve(null),
     ])
     const cloud = cloudRes ? ((await cloudRes.json()) as Record<string, unknown>) : null
-    const comfy = !!comfyRes
     const cloudOk = !!cloud?.ok
-    return {
-      ok: comfy || cloudOk,
-      comfy,
-      comfyManaged: comfyProc != null && comfyProc.exitCode === null,
-      keyConfigured: cloudOk,
-      model: typeof cloud?.model === 'string' ? cloud.model : '',
-      r2: cloudOk,
-    }
+    return buildImageGenHealth(comfy, cloudOk, typeof cloud?.model === 'string' ? cloud.model : '')
   })
 
-  ipcMain.handle('imageGen:comfyStart', async (): Promise<{ ok: true } | { error: string }> => {
-    if (await comfyUp()) return { ok: true }
-    const dir = comfyDir()
-    const py = join(dir, '.venv', 'Scripts', 'python.exe')
-    if (!existsSync(py)) return { error: `找不到 ComfyUI 环境: ${py}` }
-
-    if (!comfyProc || comfyProc.exitCode !== null) {
-      const port = new URL(COMFY_BASE).port || '8188'
-      comfyProc = spawn(py, ['main.py', '--port', port], {
-        cwd: dir,
-        stdio: 'ignore',
-        windowsHide: true,
+  ipcMain.handle(
+    'imageGen:comfyStart',
+    async (): Promise<{ ok: true; health: ImageGenHealth } | { error: string; health: ImageGenHealth }> => {
+      const result = await comfyRuntime.start()
+      const health = buildImageGenHealth(result.health, false)
+      if (result.ok) {
+        appendAppLog('info', 'imagegen.comfy', 'ComfyUI runtime ready', {
+          alreadyRunning: result.alreadyRunning,
+          checkpoint: result.health.checkpoint,
+          checkpointAvailable: result.health.checkpointAvailable,
+          devices: result.health.deviceNames,
+        })
+        return { ok: true, health }
+      }
+      appendAppLog('error', 'imagegen.comfy', 'ComfyUI runtime failed to start', {
+        error: result.error,
+        checkpoint: result.health.checkpoint,
+        lastError: result.health.lastError,
       })
-      comfyProc.on('exit', () => {
-        comfyProc = null
-      })
-    }
-
-    const deadline = Date.now() + 90_000
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 1500))
-      if (await comfyUp()) return { ok: true }
-      if (!comfyProc) return { error: 'ComfyUI 进程启动后立即退出,请在 ComfyUI 目录手动启动排查' }
-    }
-    comfyProc?.kill()
-    comfyProc = null
-    return { error: 'ComfyUI 启动超时(90s)' }
-  })
+      return { error: result.error, health }
+    },
+  )
 
   ipcMain.handle('imageGen:comfyStop', async (): Promise<{ ok: boolean; external: boolean }> => {
-    if (comfyProc) {
-      comfyProc.kill()
-      comfyProc = null
-      return { ok: true, external: false }
-    }
-    // 不是本应用启动的进程,不越权去杀
-    return { ok: false, external: await comfyUp() }
+    const result = await comfyRuntime.stop()
+    const health = await comfyRuntime.health()
+    return { ok: result.ok, external: health.reachable && !result.owned }
   })
 
   ipcMain.handle(

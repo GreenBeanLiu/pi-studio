@@ -146,6 +146,8 @@ export function registerIpcHandlers(): void {
         feishuChatId: string
         imageEngine: '' | 'comfy' | 'openai'
         comfyDir: string
+        comfyPythonPath: string
+        comfyLaunchArgs: string
         cloudImageRelay: string
         cloudImageKey: string
       },

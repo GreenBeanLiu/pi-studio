@@ -29,6 +29,8 @@ type Settings = {
   feishuChatId: string
   imageEngine: '' | 'comfy' | 'openai'
   comfyDir: string
+  comfyPythonPath: string
+  comfyLaunchArgs: string
   cloudImageRelay: string
   cloudImageKey: string
 }
@@ -211,6 +213,8 @@ export default function SettingsModal({
     feishuChatId: '',
     imageEngine: '',
     comfyDir: '',
+    comfyPythonPath: '',
+    comfyLaunchArgs: '',
     cloudImageRelay: '',
     cloudImageKey: '',
   })
@@ -722,6 +726,30 @@ export default function SettingsModal({
                   value={settings.comfyDir}
                   onChange={(e) => patch({ comfyDir: e.target.value })}
                   placeholder="D:\\Works\\ComfyUI"
+                />
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  Python 路径（可选）
+                  <span className={styles.labelHint}>留空自动使用 ComfyUI 目录下的 .venv</span>
+                </span>
+                <Input
+                  value={settings.comfyPythonPath}
+                  onChange={(e) => patch({ comfyPythonPath: e.target.value })}
+                  placeholder="D:\\Works\\ComfyUI\\.venv\\Scripts\\python.exe"
+                />
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  启动参数（可选）
+                  <span className={styles.labelHint}>留空使用 main.py --port {'{port}'}；支持用引号包裹参数</span>
+                </span>
+                <Input
+                  value={settings.comfyLaunchArgs}
+                  onChange={(e) => patch({ comfyLaunchArgs: e.target.value })}
+                  placeholder="main.py --port {port} --listen 127.0.0.1"
                 />
               </div>
 

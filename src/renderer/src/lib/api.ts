@@ -47,6 +47,8 @@ declare global {
           feishuChatId: string
           imageEngine: '' | 'comfy' | 'openai'
           comfyDir: string
+          comfyPythonPath: string
+          comfyLaunchArgs: string
           cloudImageRelay: string
           cloudImageKey: string
           recentWorkspaces: Workspace[]
@@ -68,6 +70,8 @@ declare global {
           feishuChatId: string
           imageEngine: '' | 'comfy' | 'openai'
           comfyDir: string
+          comfyPythonPath: string
+          comfyLaunchArgs: string
           cloudImageRelay: string
           cloudImageKey: string
         }) => Promise<{ ok: boolean }>
@@ -172,7 +176,10 @@ declare global {
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
-        comfyStart: () => Promise<{ ok: true } | { error: string }>
+        comfyStart: () => Promise<
+          | { ok: true; health: ImageGenHealth }
+          | { error: string; health: ImageGenHealth }
+        >
         comfyStop: () => Promise<{ ok: boolean; external: boolean }>
       }
       update: {
@@ -194,6 +201,12 @@ export type ImageGenHealth = {
   keyConfigured: boolean
   comfy: boolean
   comfyManaged: boolean
+  comfyCheckpoint: string
+  comfyCheckpointAvailable: boolean | null
+  comfyPythonVersion?: string
+  comfyTorchVersion?: string
+  comfyDevices: string[]
+  comfyLastError?: string
   model: string
   r2: boolean
 }
