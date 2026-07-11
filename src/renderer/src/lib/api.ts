@@ -75,6 +75,7 @@ declare global {
           model: string
           baseUrl: string
         }) => Promise<ProviderModelListResult>
+        syncCustomModels: (ids: string[]) => Promise<{ ok: boolean }>
       }
       securityPolicy: {
         load: () => Promise<SecurityPolicyLoadResult>

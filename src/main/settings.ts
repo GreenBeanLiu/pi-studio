@@ -34,6 +34,12 @@ type SettingsData = {
   feishuAppSecret: string
   /** 目标群 chat_id;留空自动用机器人所在的第一个群 */
   feishuChatId: string
+  /**
+   * 模型切换列表里 pi 内置 registry 没有的 id(第三方网关自定义模型)。
+   * 由 ChatPane 检测缺失后经 settings:syncCustomModels 自动维护,不进设置 UI。
+   * 写进 models.json 的 models 数组(merge 语义)后这些 id 才能被选择。
+   */
+  customModelIds: string[]
   recentWorkspaces: Workspace[]
 }
 
@@ -52,6 +58,7 @@ const DEFAULTS: SettingsData = {
   feishuAppId: '',
   feishuAppSecret: '',
   feishuChatId: '',
+  customModelIds: [],
   recentWorkspaces: [],
 }
 
@@ -124,6 +131,9 @@ export function loadSettings(): SettingsData {
     feishuAppId: (raw.feishuAppId as string) ?? DEFAULTS.feishuAppId,
     feishuAppSecret: decryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted'),
     feishuChatId: (raw.feishuChatId as string) ?? DEFAULTS.feishuChatId,
+    customModelIds: Array.isArray(raw.customModelIds)
+      ? (raw.customModelIds as string[])
+      : DEFAULTS.customModelIds,
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -182,6 +192,12 @@ export function addRecentWorkspace(path: string): Workspace[] {
   return next
 }
 
+export function saveCustomModelIds(ids: string[]): void {
+  const raw = readRaw()
+  raw.customModelIds = ids
+  writeRaw(raw)
+}
+
 export function removeRecentWorkspace(path: string): Workspace[] {
   const next = loadSettings().recentWorkspaces.filter((w) => w.path !== path)
   const raw = readRaw()
@@ -230,6 +246,7 @@ export function writeModelsOverride(
   provider: PiProvider,
   baseUrl: string,
   heliconeEnabled: boolean,
+  customModelIds: string[] = [],
 ): void {
   const dir = agentConfigDir()
   mkdirSync(dir, { recursive: true })
@@ -248,6 +265,14 @@ export function writeModelsOverride(
     }
   } else if (baseUrl.trim()) {
     providerConfig = { baseUrl: baseUrl.trim() }
+  }
+
+  // 第三方网关的自定义模型 id(内置 registry 没有的):写进 models 数组,
+  // pi 会 merge 进该 provider(内置模型保留)。注意同 id 会替换内置条目
+  // 丢失元数据,所以调用方只传"缺失"的 id。
+  const ids = customModelIds.map((s) => s.trim()).filter(Boolean)
+  if (ids.length > 0) {
+    providerConfig = { ...(providerConfig ?? {}), models: ids.map((id) => ({ id })) }
   }
 
   const providers = providerConfig ? { [provider]: providerConfig } : {}

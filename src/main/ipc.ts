@@ -17,6 +17,7 @@ import {
   apiKeyEnvVar,
   agentConfigDir,
   writeModelsOverride,
+  saveCustomModelIds,
   type PiProvider,
 } from './settings'
 import { piClientManager, type AgentStatusEvent } from './pi-client'
@@ -128,6 +129,16 @@ export function registerIpcHandlers(): void {
       return { ok: true }
     },
   )
+  // 模型切换列表里 registry 缺失的自定义 id:持久化并立刻写进 models.json,
+  // pi 的 get_available_models 会热读该文件,当前会话即可选择
+  ipcMain.handle('settings:syncCustomModels', (_e, ids: string[]) => {
+    const cleaned = [...new Set((ids ?? []).map((s) => String(s).trim()).filter(Boolean))]
+    saveCustomModelIds(cleaned)
+    const settings = loadSettings()
+    writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey, cleaned)
+    return { ok: true }
+  })
+
   ipcMain.handle(
     'settings:testConnection',
     (
@@ -212,7 +223,12 @@ export function registerIpcHandlers(): void {
       return { error: '请先在设置中填写 API Key' }
     }
 
-    writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey)
+    writeModelsOverride(
+      settings.provider,
+      settings.baseUrl,
+      !!settings.heliconeApiKey,
+      settings.customModelIds,
+    )
     syncWebSearchExtension(!!settings.tavilyApiKey)
     syncSecurityGuardExtension(settings.securityGuardEnabled)
     syncWorkspaceMemoryExtension()

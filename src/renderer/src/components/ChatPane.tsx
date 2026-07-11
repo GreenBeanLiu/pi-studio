@@ -1319,6 +1319,31 @@ export default function ChatPane({
       .catch(() => {})
   }, [workspace?.path])
 
+  // 模型切换列表里 pi registry 不认识的 id(第三方网关自定义模型,模型上新
+  // 永远快于 pi 内置清单):自动注册进 models.json(merge 语义)再重拉一次。
+  // ref 记录已同步的集合,避免 setModels 触发的循环。
+  const syncedCustomModelsRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (models.length === 0) return
+    const known = new Set(models.map((m) => m.id.toLowerCase()))
+    const missing = favoriteModels.filter((f) => !known.has(f.toLowerCase()))
+    const key = [...missing].sort().join(',')
+    if (syncedCustomModelsRef.current === key) return
+    syncedCustomModelsRef.current = key
+    if (missing.length === 0) return
+    api.settings
+      .syncCustomModels(missing)
+      .then(async () => {
+        const next = await api.pi.getAvailableModels()
+        setModels(next)
+        const nextKnown = new Set(next.map((m) => m.id.toLowerCase()))
+        if (missing.some((f) => !nextKnown.has(f.toLowerCase()))) {
+          antdMessage.info('已注册自定义模型,重新打开工作区后可选')
+        }
+      })
+      .catch(() => {})
+  }, [models, favoriteModels])
+
   // For the completion notification — the event subscription effect runs once,
   // so it reads the current workspace through a ref.
   const workspaceRef = useRef(workspace)

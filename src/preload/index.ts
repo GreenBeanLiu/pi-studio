@@ -25,6 +25,7 @@ const api = {
     save: (s: unknown) => ipcRenderer.invoke('settings:save', s),
     testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
     listModels: (s: unknown) => ipcRenderer.invoke('settings:listModels', s),
+    syncCustomModels: (ids: string[]) => ipcRenderer.invoke('settings:syncCustomModels', ids),
   },
 
   securityPolicy: {
