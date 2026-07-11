@@ -32,6 +32,7 @@ export type ComfyRuntimeHealth = {
   managed: boolean
   checkpoint: string
   checkpointAvailable: boolean | null
+  checkpoints: string[]
   pythonVersion?: string
   torchVersion?: string
   deviceNames: string[]
@@ -150,6 +151,7 @@ export class ComfyRuntime {
       managed,
       checkpoint: config.checkpoint,
       checkpointAvailable: null,
+      checkpoints: [],
       deviceNames: [],
       ...(this.lastError ? { lastError: this.lastError } : {}),
     }
@@ -168,7 +170,8 @@ export class ComfyRuntime {
       reachable: true,
       managed,
       checkpoint: config.checkpoint,
-      checkpointAvailable: names ? names.includes(config.checkpoint) : null,
+      checkpointAvailable: names ? (config.checkpoint ? names.includes(config.checkpoint) : names.length > 0) : null,
+      checkpoints: names ?? [],
       pythonVersion: typeof system.python_version === 'string' ? system.python_version : undefined,
       torchVersion: typeof system.torch_version === 'string' ? system.torch_version : undefined,
       deviceNames: deviceNames(stats),
@@ -209,7 +212,9 @@ export class ComfyRuntime {
       if (initialHealth.checkpointAvailable === false) {
         return {
           ok: false,
-          error: `找不到 checkpoint: ${config.checkpoint}`,
+          error: config.checkpoint
+            ? `找不到 checkpoint: ${config.checkpoint}`
+            : 'ComfyUI 未发现可用 checkpoint',
           health: initialHealth,
         }
       }
@@ -274,7 +279,9 @@ export class ComfyRuntime {
           await this.stop()
           return {
             ok: false,
-            error: `找不到 checkpoint: ${config.checkpoint}`,
+            error: config.checkpoint
+              ? `找不到 checkpoint: ${config.checkpoint}`
+              : 'ComfyUI 未发现可用 checkpoint',
             health: { ...health, managed: false },
           }
         }

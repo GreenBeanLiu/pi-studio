@@ -148,6 +148,7 @@ export function registerIpcHandlers(): void {
         comfyDir: string
         comfyPythonPath: string
         comfyLaunchArgs: string
+        comfyCheckpoint: string
         cloudImageRelay: string
         cloudImageKey: string
       },

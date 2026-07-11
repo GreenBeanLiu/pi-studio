@@ -31,6 +31,7 @@ type Settings = {
   comfyDir: string
   comfyPythonPath: string
   comfyLaunchArgs: string
+  comfyCheckpoint: string
   cloudImageRelay: string
   cloudImageKey: string
 }
@@ -215,6 +216,7 @@ export default function SettingsModal({
     comfyDir: '',
     comfyPythonPath: '',
     comfyLaunchArgs: '',
+    comfyCheckpoint: '',
     cloudImageRelay: '',
     cloudImageKey: '',
   })
@@ -712,7 +714,7 @@ export default function SettingsModal({
                   options={[
                     { value: 'auto', label: '自动' },
                     { value: 'openai', label: '云端 gpt-image-2' },
-                    { value: 'comfy', label: '本地 ComfyUI (SDXL)' },
+                    { value: 'comfy', label: '本地 ComfyUI' },
                   ]}
                 />
               </div>
@@ -738,6 +740,18 @@ export default function SettingsModal({
                   value={settings.comfyPythonPath}
                   onChange={(e) => patch({ comfyPythonPath: e.target.value })}
                   placeholder="D:\\Works\\ComfyUI\\.venv\\Scripts\\python.exe"
+                />
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  Checkpoint（可选）
+                  <span className={styles.labelHint}>填写 models/checkpoints 下的文件名；留空自动选择兼容的 SD checkpoint，Flux/SD3 等需专用 workflow</span>
+                </span>
+                <Input
+                  value={settings.comfyCheckpoint}
+                  onChange={(e) => patch({ comfyCheckpoint: e.target.value })}
+                  placeholder="例如：v1-5-pruned-emaonly.safetensors"
                 />
               </div>
 

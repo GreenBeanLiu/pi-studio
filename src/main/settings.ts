@@ -46,6 +46,8 @@ type SettingsData = {
   comfyDir: string
   comfyPythonPath: string
   comfyLaunchArgs: string
+  /** ComfyUI checkpoint 文件名；空=自动选择第一个可用模型 */
+  comfyCheckpoint: string
   /** 云端图像中继地址覆盖;空=用构建时烧入的默认 https 地址 */
   cloudImageRelay: string
   /** 云端图像 Key;空=未配置（开发环境可用 PI_CLOUD_IMAGE_KEY） */
@@ -73,6 +75,7 @@ const DEFAULTS: SettingsData = {
   comfyDir: '',
   comfyPythonPath: '',
   comfyLaunchArgs: '',
+  comfyCheckpoint: '',
   cloudImageRelay: '',
   cloudImageKey: '',
   recentWorkspaces: [],
@@ -155,6 +158,7 @@ export function loadSettings(): SettingsData {
     comfyDir: (raw.comfyDir as string) ?? DEFAULTS.comfyDir,
     comfyPythonPath: (raw.comfyPythonPath as string) ?? DEFAULTS.comfyPythonPath,
     comfyLaunchArgs: (raw.comfyLaunchArgs as string) ?? DEFAULTS.comfyLaunchArgs,
+    comfyCheckpoint: (raw.comfyCheckpoint as string) ?? DEFAULTS.comfyCheckpoint,
     cloudImageRelay: (raw.cloudImageRelay as string) ?? DEFAULTS.cloudImageRelay,
     cloudImageKey: decryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
@@ -184,6 +188,7 @@ export function saveSettings(
     | 'comfyDir'
     | 'comfyPythonPath'
     | 'comfyLaunchArgs'
+    | 'comfyCheckpoint'
     | 'cloudImageRelay'
     | 'cloudImageKey'
   >,
@@ -209,6 +214,7 @@ export function saveSettings(
   raw.comfyDir = settings.comfyDir
   raw.comfyPythonPath = settings.comfyPythonPath
   raw.comfyLaunchArgs = settings.comfyLaunchArgs
+  raw.comfyCheckpoint = settings.comfyCheckpoint
   raw.cloudImageRelay = settings.cloudImageRelay
 
   writeRaw(raw)

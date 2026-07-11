@@ -33,7 +33,7 @@ export type RoutineStep = {
   type: RoutineStepType
   /** agent / imagegen:提示词(支持 {{…}} 变量) */
   prompt?: string
-  /** imagegen:引擎,openai=云端 gpt-image-2,comfy=本地 SDXL */
+  /** imagegen:引擎,openai=云端 gpt-image-2,comfy=本地 ComfyUI */
   engine?: 'openai' | 'comfy'
   /** notify:目标渠道 id */
   channelId?: string

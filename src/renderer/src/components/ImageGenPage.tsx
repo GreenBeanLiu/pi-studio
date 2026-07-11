@@ -251,7 +251,9 @@ const useStyles = createStyles(({ token, css }) => ({
     border-radius: ${token.borderRadiusLG}px;
     box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
     cursor: zoom-in;
-    transition: max-width 0.15s ease, max-height 0.15s ease;
+    transform-origin: center center;
+    transition: transform 0.12s ease;
+    will-change: transform;
   `,
   lightboxImgZoomed: css`
     max-width: none;
@@ -289,7 +291,7 @@ function ImageGenInner() {
   const [pending, setPending] = useState<PendingGen[]>([])
   const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
   const [pinnedSrc, setPinnedSrc] = useState<string | null>(null)
-  const [pinnedZoom, setPinnedZoom] = useState(false)
+  const [pinnedScale, setPinnedScale] = useState(1)
   const [loadingMore, setLoadingMore] = useState(false)
   const [historyDone, setHistoryDone] = useState(false)
 
@@ -465,11 +467,11 @@ function ImageGenInner() {
 
   function openLightbox(src: string) {
     setPinnedSrc(src)
-    setPinnedZoom(false)
+    setPinnedScale(1)
   }
   function closeLightbox() {
     setPinnedSrc(null)
-    setPinnedZoom(false)
+    setPinnedScale(1)
   }
 
   const engineLabel = (e: string) =>
@@ -555,10 +557,14 @@ function ImageGenInner() {
           {health?.comfy && (
             <span className={styles.label}>
               {health.comfyCheckpointAvailable === false
-                ? `缺少 checkpoint: ${health.comfyCheckpoint}`
-                : `${health.comfyPythonVersion ? `Python ${health.comfyPythonVersion}` : ''}${
-                    health.comfyDevices.length ? ` · ${health.comfyDevices.join(', ')}` : ''
-                  }`}
+                ? health.comfyCheckpoint
+                  ? `缺少 checkpoint: ${health.comfyCheckpoint}`
+                  : '未发现 checkpoint'
+                : !health.comfyWorkflowReady
+                ? '未发现当前模板支持的 SD checkpoint'
+                : `${health.comfyCheckpoint ? `模型 ${health.comfyCheckpoint}` : '自动选择模型'}${
+                    health.comfyPythonVersion ? ` · Python ${health.comfyPythonVersion}` : ''
+                  }${health.comfyDevices.length ? ` · ${health.comfyDevices.join(', ')}` : ''}`}
             </span>
           )}
           {!health?.comfy && health?.comfyLastError && (
@@ -589,7 +595,7 @@ function ImageGenInner() {
               icon={<Monitor size={13} />}
               onClick={() => setEngine('comfy')}
             >
-              本地 SDXL
+              本地 ComfyUI
             </Button>
           </Tooltip>
           <Tooltip title="重新检测服务状态">
@@ -704,14 +710,22 @@ function ImageGenInner() {
       </section>
 
       {pinnedSrc && (
-        <div className={styles.lightbox} onClick={closeLightbox}>
+        <div
+          className={styles.lightbox}
+          onClick={closeLightbox}
+          onWheel={(e) => {
+            e.preventDefault()
+            setPinnedScale((scale) => Math.min(4, Math.max(1, scale + (e.deltaY < 0 ? 0.15 : -0.15))))
+          }}
+        >
           <img
             src={pinnedSrc}
             alt="preview"
-            className={pinnedZoom ? `${styles.lightboxImg} ${styles.lightboxImgZoomed}` : styles.lightboxImg}
+            className={pinnedScale > 1 ? `${styles.lightboxImg} ${styles.lightboxImgZoomed}` : styles.lightboxImg}
+            style={{ transform: `scale(${pinnedScale})` }}
             onClick={(e) => {
               e.stopPropagation()
-              setPinnedZoom((z) => !z)
+              setPinnedScale((scale) => (scale > 1 ? 1 : 2))
             }}
           />
         </div>

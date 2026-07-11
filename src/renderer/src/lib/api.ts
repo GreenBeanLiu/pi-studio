@@ -49,6 +49,7 @@ declare global {
           comfyDir: string
           comfyPythonPath: string
           comfyLaunchArgs: string
+          comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
           recentWorkspaces: Workspace[]
@@ -72,6 +73,7 @@ declare global {
           comfyDir: string
           comfyPythonPath: string
           comfyLaunchArgs: string
+          comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
         }) => Promise<{ ok: boolean }>
@@ -203,6 +205,8 @@ export type ImageGenHealth = {
   comfyManaged: boolean
   comfyCheckpoint: string
   comfyCheckpointAvailable: boolean | null
+  comfyCheckpoints: string[]
+  comfyWorkflowReady: boolean
   comfyPythonVersion?: string
   comfyTorchVersion?: string
   comfyDevices: string[]

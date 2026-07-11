@@ -648,7 +648,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       style={{ width: 200 }}
                       options={[
                         { value: 'openai', label: '云端 gpt-image-2' },
-                        { value: 'comfy', label: '本地 ComfyUI (SDXL)' },
+                        { value: 'comfy', label: '本地 ComfyUI' },
                       ]}
                     />
                   </div>
@@ -805,7 +805,6 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
             </div>
             <div className={styles.cardMeta}>
               <Tag>{scheduleLabel(r.schedule)}</Tag>
-              <Tag color="blue">{r.steps.length} steps</Tag>
               <span>{r.workspacePath}</span>
               {r.lastRunAt && <span>上次: {new Date(r.lastRunAt).toLocaleString()}</span>}
               <div style={{ flex: 1 }} />

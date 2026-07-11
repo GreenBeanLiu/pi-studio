@@ -1,5 +1,6 @@
 import { app, ipcMain } from 'electron'
 import { appendAppLog } from './app-log'
+import { isCompatibleCheckpoint } from './comfy-workflow'
 import { ComfyRuntime, parseLaunchArgs, type ComfyRuntimeHealth } from './comfy-runtime'
 import { resolveCloudImageConfig } from './network-policy'
 import { loadSettings } from './settings'
@@ -8,7 +9,7 @@ import { loadSettings } from './settings'
 // 云端引擎:VPS 中继(trail-api)→ trigger.dev 跑 gpt-image-2 → R2,SSE 拿结果。
 const COMFY_BASE = (process.env.PI_COMFY_BASE || 'http://127.0.0.1:8188').replace(/\/$/, '')
 const COMFY_DIR_DEFAULT = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
-const COMFY_CKPT = process.env.PI_COMFY_CHECKPOINT || 'sd_xl_base_1.0.safetensors'
+const COMFY_CKPT_PREFERRED = process.env.PI_COMFY_CHECKPOINT?.trim() || ''
 const COMFY_TIMEOUT_MS = 150_000
 const CLOUD_TIMEOUT_MS = 320_000
 
@@ -26,7 +27,7 @@ const comfyRuntime = new ComfyRuntime(
       comfyDir: comfyDir(),
       pythonPath: settings.comfyPythonPath,
       launchArgs: parseLaunchArgs(settings.comfyLaunchArgs),
-      checkpoint: COMFY_CKPT,
+      checkpoint: settings.comfyCheckpoint?.trim() || '',
     }
   },
   {
@@ -58,6 +59,8 @@ export type ImageGenHealth = {
   comfyManaged: boolean
   comfyCheckpoint: string
   comfyCheckpointAvailable: boolean | null
+  comfyCheckpoints: string[]
+  comfyWorkflowReady: boolean
   comfyPythonVersion?: string
   comfyTorchVersion?: string
   comfyDevices: string[]
@@ -71,6 +74,8 @@ function buildImageGenHealth(
   cloudOk: boolean,
   model = '',
 ): ImageGenHealth {
+  const compatibleCheckpoints = comfy.checkpoints.filter(isCompatibleCheckpoint)
+  const configuredCompatible = !comfy.checkpoint || isCompatibleCheckpoint(comfy.checkpoint)
   return {
     ok: comfy.reachable || cloudOk,
     keyConfigured: cloudOk,
@@ -78,6 +83,12 @@ function buildImageGenHealth(
     comfyManaged: comfy.managed,
     comfyCheckpoint: comfy.checkpoint,
     comfyCheckpointAvailable: comfy.checkpointAvailable,
+    comfyCheckpoints: comfy.checkpoints,
+    comfyWorkflowReady:
+      comfy.reachable &&
+      configuredCompatible &&
+      comfy.checkpointAvailable !== false &&
+      compatibleCheckpoints.length > 0,
     comfyPythonVersion: comfy.pythonVersion,
     comfyTorchVersion: comfy.torchVersion,
     comfyDevices: comfy.deviceNames,
@@ -105,12 +116,17 @@ type ComfyHistoryEntry = {
 }
 
 /**
- * SDXL workflow(ComfyUI API 格式)。
+ * 通用 checkpoint workflow（ComfyUI API 格式）。
  * refImageName 传了就是 img2img:LoadImage → VAEEncode 得到初始 latent,降低 denoise 保留原图结构。
  */
-function buildWorkflow(prompt: string, seed: number, refImageName?: string): Record<string, unknown> {
+function buildWorkflow(
+  prompt: string,
+  seed: number,
+  checkpoint: string,
+  refImageName?: string,
+): Record<string, unknown> {
   const wf: Record<string, unknown> = {
-    4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: COMFY_CKPT } },
+    4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoint } },
     6: { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['4', 1] } },
     7: { class_type: 'CLIPTextEncode', inputs: { text: NEGATIVE, clip: ['4', 1] } },
     3: {
@@ -159,12 +175,26 @@ async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenR
   const runtime = await comfyRuntime.start()
   if (!runtime.ok) return { error: runtime.error }
 
+  const availableCheckpoints = runtime.health.checkpoints
+  if (runtime.health.checkpoint && !isCompatibleCheckpoint(runtime.health.checkpoint)) {
+    return {
+      error: `当前模型 ${runtime.health.checkpoint} 需要专用 ComfyUI workflow，请在设置中选择 SD checkpoint`,
+    }
+  }
+  const compatibleCheckpoints = availableCheckpoints.filter(isCompatibleCheckpoint)
+  const checkpoint =
+    runtime.health.checkpoint ||
+    (COMFY_CKPT_PREFERRED && compatibleCheckpoints.includes(COMFY_CKPT_PREFERRED)
+      ? COMFY_CKPT_PREFERRED
+      : compatibleCheckpoints[0])
+  if (!checkpoint) return { error: 'ComfyUI 未发现兼容的 SD checkpoint，请先安装模型或在设置中指定' }
+
   const seed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)
   const refName = refUrl ? await comfyUploadRef(refUrl) : undefined
   const submit = await fetch(`${COMFY_BASE}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: buildWorkflow(prompt, seed, refName) }),
+    body: JSON.stringify({ prompt: buildWorkflow(prompt, seed, checkpoint, refName) }),
   })
   if (!submit.ok) {
     return { error: `ComfyUI /prompt ${submit.status}: ${(await submit.text()).slice(0, 300)}` }

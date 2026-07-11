@@ -63,9 +63,25 @@ describe('ComfyRuntime', () => {
     await expect(runtime.health()).resolves.toMatchObject({
       reachable: true,
       checkpointAvailable: true,
+      checkpoints: [config.checkpoint],
       pythonVersion: '3.11',
       torchVersion: '2.5',
       deviceNames: ['cuda:0'],
+    })
+  })
+
+  it('treats an empty checkpoint as automatic model selection', async () => {
+    const runtime = new ComfyRuntime(() => ({ ...config, checkpoint: '' }), {
+      fetch: async (url) =>
+        url.endsWith('/system_stats')
+          ? response({ system: {}, devices: [] })
+          : response({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [['flux1-dev.safetensors']] } } } }),
+    })
+
+    await expect(runtime.health()).resolves.toMatchObject({
+      checkpoint: '',
+      checkpointAvailable: true,
+      checkpoints: ['flux1-dev.safetensors'],
     })
   })
 
