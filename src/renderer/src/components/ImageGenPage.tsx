@@ -233,26 +233,32 @@ const useStyles = createStyles(({ token, css }) => ({
     padding: 8px 0 2px;
   `,
   /* 放大浮层:hover 版不拦截鼠标(否则会闪烁),点击固定版可点击/Esc 关闭 */
-  hoverPreview: css`
+  /* 点击图片打开的灯箱:点背景关闭,点图在「适应屏幕」和「原始尺寸」间切换 */
+  lightbox: css`
     position: fixed;
     inset: 0;
     z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;
-    pointer-events: none;
-    background: rgba(0, 0, 0, 0.45);
-
-    img {
-      max-width: 74vw;
-      max-height: 82vh;
-      border-radius: ${token.borderRadiusLG}px;
-      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
-    }
-  `,
-  pinnedPreview: css`
-    pointer-events: auto;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.7);
     cursor: zoom-out;
+  `,
+  lightboxImg: css`
+    max-width: 92vw;
+    max-height: 92vh;
+    border-radius: ${token.borderRadiusLG}px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+    cursor: zoom-in;
+    transition: max-width 0.15s ease, max-height 0.15s ease;
+  `,
+  lightboxImgZoomed: css`
+    max-width: none;
+    max-height: none;
+    margin: auto;
+    cursor: zoom-out;
+    border-radius: 0;
   `,
   offline: css`
     color: ${token.colorWarning};
@@ -282,8 +288,8 @@ function ImageGenInner() {
   const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
   const [pending, setPending] = useState<PendingGen[]>([])
   const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
-  const [hoverSrc, setHoverSrc] = useState<string | null>(null)
   const [pinnedSrc, setPinnedSrc] = useState<string | null>(null)
+  const [pinnedZoom, setPinnedZoom] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [historyDone, setHistoryDone] = useState(false)
 
@@ -321,10 +327,17 @@ function ImageGenInner() {
   }
 
   useEffect(() => {
+    // 设置里的默认引擎优先(refreshHealth 仍会在所选引擎不可用时兜底切换)
+    api.settings
+      .load()
+      .then((s) => {
+        if (s.imageEngine === 'comfy' || s.imageEngine === 'openai') setEngine(s.imageEngine)
+      })
+      .catch(() => {})
     refreshHealth()
     fetchHistory(limitRef.current)
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPinnedSrc(null)
+      if (e.key === 'Escape') closeLightbox()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -448,6 +461,15 @@ function ImageGenInner() {
     setBaseImage(url)
     setPrompt('')
     message.info('已设为底图,输入修改要求后点"修改这张图"')
+  }
+
+  function openLightbox(src: string) {
+    setPinnedSrc(src)
+    setPinnedZoom(false)
+  }
+  function closeLightbox() {
+    setPinnedSrc(null)
+    setPinnedZoom(false)
   }
 
   const engineLabel = (e: string) =>
@@ -576,7 +598,7 @@ function ImageGenInner() {
           历史记录({totalCount})
           {pending.length > 0 && <span className="sub">{pending.length} 个生成中…</span>}
           <span className="sub" style={{ marginLeft: 'auto' }}>
-            悬停放大 · 滚动加载更多
+            点击放大 · 滚动加载更多
           </span>
         </div>
 
@@ -603,12 +625,7 @@ function ImageGenInner() {
 
             {sessionResults.map((s) => (
               <div key={s.key} className={styles.card}>
-                <div
-                  className={styles.cardImage}
-                  onMouseEnter={() => setHoverSrc(s.src)}
-                  onMouseLeave={() => setHoverSrc(null)}
-                  onClick={() => setPinnedSrc(s.src)}
-                >
+                <div className={styles.cardImage} onClick={() => openLightbox(s.src)}>
                   <img src={s.src} alt={s.prompt} />
                   <span className={styles.histTag}>{engineLabel(s.engine)}·未留档</span>
                 </div>
@@ -628,12 +645,7 @@ function ImageGenInner() {
 
             {history.map((h) => (
               <div key={h.id} className={styles.card}>
-                <div
-                  className={styles.cardImage}
-                  onMouseEnter={() => setHoverSrc(h.url)}
-                  onMouseLeave={() => setHoverSrc(null)}
-                  onClick={() => setPinnedSrc(h.url)}
-                >
+                <div className={styles.cardImage} onClick={() => openLightbox(h.url)}>
                   <img src={h.url} alt={h.prompt} loading="lazy" />
                   <span className={styles.histTag}>{engineLabel(h.engine)}</span>
                 </div>
@@ -677,19 +689,18 @@ function ImageGenInner() {
         )}
       </section>
 
-      {pinnedSrc ? (
-        <div
-          className={`${styles.hoverPreview} ${styles.pinnedPreview}`}
-          onClick={() => setPinnedSrc(null)}
-        >
-          <img src={pinnedSrc} alt="preview" />
+      {pinnedSrc && (
+        <div className={styles.lightbox} onClick={closeLightbox}>
+          <img
+            src={pinnedSrc}
+            alt="preview"
+            className={pinnedZoom ? `${styles.lightboxImg} ${styles.lightboxImgZoomed}` : styles.lightboxImg}
+            onClick={(e) => {
+              e.stopPropagation()
+              setPinnedZoom((z) => !z)
+            }}
+          />
         </div>
-      ) : (
-        hoverSrc && (
-          <div className={styles.hoverPreview}>
-            <img src={hoverSrc} alt="preview" />
-          </div>
-        )
       )}
     </div>
   )

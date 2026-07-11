@@ -7,6 +7,11 @@ import { loadRpcClient, resolvePiCliPath } from './pi-client'
 import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
+import {
+  RoutineScheduler,
+  dueSlotKey,
+  type SchedulableSchedule,
+} from './routine-scheduler'
 
 /**
  * 例行任务(Routines):定时执行一条由类型化节点组成的流水线。
@@ -16,11 +21,7 @@ import { appendAppLog, normalizeError } from './app-log'
  * 绝不打扰用户当前打开的聊天会话。
  */
 
-export type RoutineSchedule =
-  | { type: 'interval'; minutes: number }
-  | { type: 'hourly'; minute: number }
-  | { type: 'daily'; time: string } // "09:00"
-  | { type: 'weekly'; day: number; time: string } // day: 0=周日 … 6=周六
+export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
@@ -135,38 +136,6 @@ function saveStore(store: Store): void {
   writeFileSync(storePath(), JSON.stringify(store, null, 2), 'utf8')
 }
 
-// ── 调度 ──────────────────────────────────────────────────────────
-
-const pad = (n: number): string => String(n).padStart(2, '0')
-
-/**
- * 返回当前应处于的触发槽 key;与 lastSlotKey 不同且时间已到即触发。
- * 槽粒度:interval 用 lastRunAt,其余用「日期+时段」字符串,错过 tick 也能当天补跑。
- */
-function dueSlotKey(r: Routine, now: Date): string | null {
-  const s = r.schedule
-  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-  const hhmm = `${pad(now.getHours())}:${pad(now.getMinutes())}`
-  switch (s.type) {
-    case 'interval': {
-      const last = r.lastRunAt ?? 0
-      return Date.now() - last >= s.minutes * 60_000 ? `interval-${Date.now()}` : null
-    }
-    case 'hourly': {
-      if (now.getMinutes() < s.minute) return null
-      return `${today} ${pad(now.getHours())}h`
-    }
-    case 'daily': {
-      if (hhmm < s.time) return null
-      return today
-    }
-    case 'weekly': {
-      if (now.getDay() !== s.day || hhmm < s.time) return null
-      return `${today} w`
-    }
-  }
-}
-
 export function scheduleLabel(s: RoutineSchedule): string {
   const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
   switch (s.type) {
@@ -223,8 +192,6 @@ function interpolate(template: string, ctx: RunContext): string {
 const hasVariables = (text: string): boolean => /\{\{[^{}]+\}\}/.test(text)
 
 // ── 执行器 ───────────────────────────────────────────────────────
-
-const running = new Set<string>()
 
 function latestAssistantText(
   messages: Array<{ role?: string; content?: Array<{ type?: string; text?: string }> | string }>,
@@ -352,10 +319,9 @@ async function runNotifyStep(
 }
 
 async function executeRoutine(store: Store, routine: Routine): Promise<void> {
-  if (running.has(routine.id) || running.size >= MAX_CONCURRENT) return
-  running.add(routine.id)
   const startedAt = Date.now()
   let status: RoutineRun['status'] = 'ok'
+  let timedOut = false
   let errorMsg: string | undefined
   const stepResults: RoutineStepResult[] = routine.steps.map((step) => ({
     id: step.id,
@@ -397,7 +363,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
               : step.type === 'notify'
                 ? await runNotifyStep(routine, step, ctx, channels)
                 : await runAgentStep(routine, step, ctx, session, () => {
-                    status = 'timeout'
+                    timedOut = true
                   })
           ctx.products.set(step.name, product)
           ctx.prev = product
@@ -411,7 +377,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
           }
           stepProgress(index, 'ok')
         } catch (err) {
-          const failStatus = (status as RoutineRun['status']) === 'timeout' ? ('timeout' as const) : ('error' as const)
+          const failStatus = timedOut ? ('timeout' as const) : ('error' as const)
           stepResults[index] = {
             id: step.id,
             name: step.name,
@@ -427,14 +393,12 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
       await session.client?.stop().catch(() => {})
     }
   } catch (err) {
-    if (status === 'ok') status = 'error'
+    status = timedOut ? 'timeout' : 'error'
     errorMsg = err instanceof Error ? err.message : String(err)
     appendAppLog('error', 'routines.run', 'Routine run failed', {
       routine: routine.name,
       error: normalizeError(err),
     })
-  } finally {
-    running.delete(routine.id)
   }
 
   const summary =
@@ -513,19 +477,20 @@ const stepIsComplete = (step: RoutineStep): boolean => {
 
 export function registerRoutines(): void {
   const store = loadStore()
+  const scheduler = new RoutineScheduler<Routine>({
+    maxConcurrent: MAX_CONCURRENT,
+    clock: () => new Date(),
+    execute: (routine) => executeRoutine(store, routine),
+    onExecutionError: (error, routine) => {
+      appendAppLog('error', 'routines.scheduler', 'Routine execution escaped the scheduler', {
+        routine: routine.name,
+        error: normalizeError(error),
+      })
+    },
+  })
 
   setInterval(() => {
-    const now = new Date()
-    for (const r of store.routines) {
-      if (!r.enabled || running.has(r.id)) continue
-      const slot = dueSlotKey(r, now)
-      if (!slot) continue
-      if (r.schedule.type !== 'interval' && r.lastSlotKey === slot) continue
-      r.lastSlotKey = slot
-      r.lastRunAt = Date.now()
-      saveStore(store)
-      void executeRoutine(store, r)
-    }
+    if (scheduler.tick(store.routines).length > 0) saveStore(store)
   }, 30_000)
 
   ipcMain.handle('routines:list', () => ({ routines: store.routines, runs: store.runs }))
@@ -558,6 +523,7 @@ export function registerRoutines(): void {
   )
 
   ipcMain.handle('routines:delete', (_e, id: string) => {
+    scheduler.cancel(id)
     store.routines = store.routines.filter((r) => r.id !== id)
     saveStore(store)
     return store.routines
@@ -567,6 +533,7 @@ export function registerRoutines(): void {
     const r = store.routines.find((x) => x.id === id)
     if (r) {
       r.enabled = enabled
+      if (!enabled) scheduler.cancel(id)
       saveStore(store)
     }
     return store.routines
@@ -575,13 +542,13 @@ export function registerRoutines(): void {
   ipcMain.handle('routines:runNow', (_e, id: string) => {
     const r = store.routines.find((x) => x.id === id)
     if (!r) return { error: '任务不存在' }
-    if (running.has(r.id)) return { error: '该任务正在执行' }
-    if (running.size >= MAX_CONCURRENT) return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务` }
+    if (scheduler.has(r.id)) return { error: '该任务正在执行或排队' }
+    if (!scheduler.hasCapacity()) return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务` }
     r.lastRunAt = Date.now()
     saveStore(store)
-    void executeRoutine(store, r)
+    scheduler.enqueue(r)
     return { ok: true }
   })
 
-  ipcMain.handle('routines:running', () => [...running])
+  ipcMain.handle('routines:state', () => scheduler.getState())
 }

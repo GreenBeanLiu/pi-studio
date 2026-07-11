@@ -37,6 +37,7 @@ import {
   type PiRuntimeEvent,
   type SessionExportFormat,
   type AgentStatusEvent,
+  type UserMessage,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 
@@ -818,7 +819,7 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
 
   paramsPanel: css`
-    width: 300px;
+    width: 340px;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -852,23 +853,23 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
 
   modelList: css`
-    max-height: 168px;
+    max-height: 300px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
   `,
 
   modelRow: css`
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 8px;
+    padding: 7px 10px;
     border-radius: ${token.borderRadiusSM}px;
     border: none;
     background: transparent;
     color: ${token.colorText};
-    font-size: 12px;
+    font-size: 13px;
     font-family: ${token.fontFamilyCode};
     cursor: pointer;
     outline: none;
@@ -1081,7 +1082,7 @@ function latestUserText(messages: AgentMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i]
     if ((message as { role?: string }).role !== 'user') continue
-    return firstLine(textOf((message as { content: never }).content))
+    return firstLine(textOf((message as UserMessage).content))
   }
   return ''
 }
@@ -1388,7 +1389,7 @@ export default function ChatPane({
         if (event.method === 'confirm') {
           const parsed = parseApprovalMessage(event.message)
           setApprovalRequests((prev) => [
-            {
+            ({
               id: event.id,
               runId,
               title: event.title,
@@ -1397,7 +1398,7 @@ export default function ChatPane({
               reason: parsed.reason,
               createdAt: timestamp,
               status: 'pending',
-            },
+            } satisfies ToolApprovalRequest),
             ...prev.filter((item) => item.id !== event.id),
           ].slice(0, 8))
         } else if (event.method === 'notify') {
@@ -1424,7 +1425,7 @@ export default function ChatPane({
             activeRunIdRef.current = id
             setRunRecords((prev) =>
               [
-                {
+                ({
                   id,
                   workspaceName: workspaceRef.current?.name,
                   workspacePath: workspaceRef.current?.path,
@@ -1444,7 +1445,7 @@ export default function ChatPane({
                       status: 'running',
                     },
                   ],
-                },
+                } satisfies RunRecord),
                 ...prev,
               ].slice(0, 20),
             )
@@ -2108,10 +2109,19 @@ export default function ChatPane({
     }
   }, [workspace])
 
-  const acceptGitChanges = useCallback(() => {
-    setDiffOpen(false)
-    setDiffSnapshot(null)
-    antdMessage.success('已接受当前工作区变更')
+  const acceptGitChanges = useCallback(async () => {
+    try {
+      const result = await api.git.acceptChanges()
+      if ('error' in result) {
+        antdMessage.error(result.error)
+        return
+      }
+      setDiffOpen(false)
+      setDiffSnapshot(null)
+      antdMessage.success('已接受本次 Agent 运行变更')
+    } catch (err) {
+      antdMessage.error((err as Error).message ?? '接受 Agent 运行变更失败')
+    }
   }, [])
 
   const openChangedFile = useCallback(async (file: GitChangedFile) => {
@@ -2125,9 +2135,9 @@ export default function ChatPane({
 
   const discardGitChanges = useCallback(() => {
     Modal.confirm({
-      title: '回滚当前工作区变更？',
-      content: '这会执行 git reset --hard 并删除未跟踪文件，当前未提交的代码修改会丢失。',
-      okText: '回滚变更',
+      title: '撤销本次 Agent 运行变更？',
+      content: '只会恢复到本次运行开始时的工作区快照；运行前已有的未提交修改和文件会保留。',
+      okText: '撤销本次变更',
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -2169,11 +2179,19 @@ export default function ChatPane({
           await api.pi.followUp(text, imgs)
         }
       } catch (err) {
-        setError((err as Error).message ?? '发送失败')
-        if (!sending) setSending(false)
+        const message = (err as Error).message ?? '发送失败'
+        setError(message)
+        if (!sending) {
+          setSending(false)
+          setInput(text)
+          setImages(imgs ?? [])
+          if (message.includes('must be accepted or reverted')) {
+            void openGitDiff()
+          }
+        }
       }
     },
-    [input, images, sending, workspace, starting, agentIssue],
+    [input, images, sending, workspace, starting, agentIssue, openGitDiff],
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -2442,7 +2460,7 @@ export default function ChatPane({
     <Modal
       open={diffOpen}
       onCancel={() => setDiffOpen(false)}
-      title="工作区变更审批"
+      title="本次 Agent 运行变更"
       width={1120}
       centered
       footer={[
@@ -2451,7 +2469,7 @@ export default function ChatPane({
         </Button>,
         <Button key="discard" danger disabled={!hasGitChanges || diffLoading} onClick={discardGitChanges}>
           <RotateCcw size={13} />
-          回滚变更
+          撤销本次变更
         </Button>,
         <Button key="accept" type="primary" disabled={!hasGitChanges || diffLoading} onClick={acceptGitChanges}>
           <ShieldCheck size={13} />
@@ -2466,7 +2484,7 @@ export default function ChatPane({
       ) : !diffSnapshot ? (
         <Empty description="暂无 Git 信息" />
       ) : !hasGitChanges ? (
-        <Empty description="工作区没有变更" />
+        <Empty description="本次运行没有变更" />
       ) : (
         <>
           <div className={styles.reviewHeader}>
@@ -2477,7 +2495,7 @@ export default function ChatPane({
               </div>
             </div>
             <div className={styles.reviewHint}>
-              接受会保留当前变更；回滚会丢弃未提交修改和未跟踪文件。
+              接受会保留本次 Agent 变更；撤销只恢复运行期间的改动，运行前和完成后的用户修改会保留。
             </div>
           </div>
 

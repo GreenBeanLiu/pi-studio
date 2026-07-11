@@ -281,7 +281,7 @@ function installSilently(artifacts) {
 logStep(`Preparing pi-studio ${tag}`)
 if (!commandExists('git')) throw new Error('git is not available')
 if (!commandExists('gh')) throw new Error('gh is not available or not logged in')
-if (!skipBuild && !commandExists('pnpm')) throw new Error('pnpm is not available')
+if (!commandExists('pnpm')) throw new Error('pnpm is not available')
 assertCleanTree()
 
 if (!skipBuild) {
@@ -290,9 +290,10 @@ if (!skipBuild) {
     rmSync(distDir, { recursive: true, force: true })
     mkdirSync(distDir, { recursive: true })
   }
-  run('pnpm', ['run', 'check:text'])
-  run('pnpm', ['run', 'build'])
+  run('pnpm', ['run', 'verify'])
   run('pnpm', ['exec', 'electron-builder', '--win', '--publish', 'never'])
+} else {
+  run('pnpm', ['run', 'check'])
 }
 
 logStep('Verifying and normalizing release artifacts')

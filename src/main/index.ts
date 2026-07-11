@@ -1,10 +1,17 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc'
+import { clearAllGitRunChanges } from './git-diff'
 import { piClientManager } from './pi-client'
 import { appendAppLog, attachWindowLoggers, installProcessLoggers, normalizeError } from './app-log'
+import {
+  isAllowedExternalUrl,
+  isAllowedRendererNavigation,
+  PRODUCTION_CONTENT_SECURITY_POLICY,
+} from './network-policy'
+import { cleanupStaleRunChangeTempDirs } from './run-change-set'
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const UPDATE_RETRY_DELAY_MS = 30 * 1000
@@ -40,7 +47,7 @@ function setupAutoUpdater(): void {
     retryCount += 1
     if (retryTimer) clearTimeout(retryTimer)
     appendAppLog('warn', 'updater', 'Update check transient failure; retrying', {
-      ...normalizeError(err),
+      error: normalizeError(err),
       retryCount,
       retryDelayMs: UPDATE_RETRY_DELAY_MS,
     })
@@ -126,9 +133,32 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
+  const openAllowedExternalUrl = (url: string): void => {
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url).catch((err) => {
+        appendAppLog('warn', 'navigation', 'Failed to open external URL', {
+          error: normalizeError(err),
+        })
+      })
+    } else {
+      appendAppLog('warn', 'navigation', 'Blocked external URL with disallowed protocol')
+    }
+  }
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    openAllowedExternalUrl(url)
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-frame-navigate', (details) => {
+    if (
+      is.dev &&
+      isAllowedRendererNavigation(details.url, process.env['ELECTRON_RENDERER_URL'])
+    ) {
+      return
+    }
+    details.preventDefault()
+    if (details.isMainFrame) openAllowedExternalUrl(details.url)
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -140,7 +170,13 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   installProcessLoggers()
+  const cleanedSnapshots = cleanupStaleRunChangeTempDirs()
   appendAppLog('info', 'app', 'App ready', { version: app.getVersion() })
+  if (cleanedSnapshots > 0) {
+    appendAppLog('info', 'git.runChanges', 'Cleaned stale Git snapshot directories', {
+      count: cleanedSnapshots,
+    })
+  }
 
   electronApp.setAppUserModelId('cc.glanger.pi-studio')
   app.on('browser-window-created', (_, window) => {
@@ -149,6 +185,20 @@ app.whenReady().then(() => {
 
   registerIpcHandlers()
   piClientManager.warmup()
+  if (!is.dev) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      if (details.resourceType !== 'mainFrame') {
+        callback({ responseHeaders: details.responseHeaders })
+        return
+      }
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [PRODUCTION_CONTENT_SECURITY_POLICY],
+        },
+      })
+    })
+  }
   if (!is.dev) setupAutoUpdater()
   createWindow()
 
@@ -163,5 +213,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   appendAppLog('info', 'app', 'App quitting')
+  clearAllGitRunChanges()
   piClientManager.stop().catch(() => {})
 })

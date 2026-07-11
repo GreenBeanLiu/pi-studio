@@ -80,9 +80,12 @@ class PiClientManager {
     model: string | undefined,
     onEvent: PiEventListener,
     onStatus?: AgentStatusListener,
+    onWorkspaceStopped?: (cwd: string) => Promise<void>,
   ): Promise<void> {
-    const restoreSessionFile = this.workspacePath === cwd ? this.lastSessionFile : null
+    const previousWorkspacePath = this.workspacePath
+    const restoreSessionFile = previousWorkspacePath === cwd ? this.lastSessionFile : null
     await this.stop()
+    if (previousWorkspacePath) await onWorkspaceStopped?.(previousWorkspacePath)
 
     const runId = ++this.activeRunId
     const RpcClient = await loadRpcClient()

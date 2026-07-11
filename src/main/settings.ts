@@ -40,6 +40,14 @@ type SettingsData = {
    * 写进 models.json 的 models 数组(merge 语义)后这些 id 才能被选择。
    */
   customModelIds: string[]
+  /** 生图默认引擎:'comfy' 本地 / 'openai' 云端;空=按可用性自动选 */
+  imageEngine: '' | 'comfy' | 'openai'
+  /** ComfyUI 安装目录(本地引擎启停用);空=内置默认 D:\Works\ComfyUI */
+  comfyDir: string
+  /** 云端图像中继地址覆盖;空=用构建时烧入的默认 https 地址 */
+  cloudImageRelay: string
+  /** 云端图像 Key 覆盖;空=用构建时烧入的默认 key */
+  cloudImageKey: string
   recentWorkspaces: Workspace[]
 }
 
@@ -59,6 +67,10 @@ const DEFAULTS: SettingsData = {
   feishuAppSecret: '',
   feishuChatId: '',
   customModelIds: [],
+  imageEngine: '',
+  comfyDir: '',
+  cloudImageRelay: '',
+  cloudImageKey: '',
   recentWorkspaces: [],
 }
 
@@ -134,6 +146,11 @@ export function loadSettings(): SettingsData {
     customModelIds: Array.isArray(raw.customModelIds)
       ? (raw.customModelIds as string[])
       : DEFAULTS.customModelIds,
+    imageEngine:
+      raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' ? raw.imageEngine : DEFAULTS.imageEngine,
+    comfyDir: (raw.comfyDir as string) ?? DEFAULTS.comfyDir,
+    cloudImageRelay: (raw.cloudImageRelay as string) ?? DEFAULTS.cloudImageRelay,
+    cloudImageKey: decryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -157,6 +174,10 @@ export function saveSettings(
     | 'feishuAppId'
     | 'feishuAppSecret'
     | 'feishuChatId'
+    | 'imageEngine'
+    | 'comfyDir'
+    | 'cloudImageRelay'
+    | 'cloudImageKey'
   >,
 ): void {
   const raw = readRaw()
@@ -166,6 +187,7 @@ export function saveSettings(
   encryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted', settings.heliconeApiKey)
   encryptField(raw, 'feishuSecret', 'feishuSecretEncrypted', settings.feishuSecret)
   encryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted', settings.feishuAppSecret)
+  encryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted', settings.cloudImageKey)
   raw.provider = settings.provider
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
@@ -175,6 +197,9 @@ export function saveSettings(
   raw.feishuWebhookUrl = settings.feishuWebhookUrl
   raw.feishuAppId = settings.feishuAppId
   raw.feishuChatId = settings.feishuChatId
+  raw.imageEngine = settings.imageEngine
+  raw.comfyDir = settings.comfyDir
+  raw.cloudImageRelay = settings.cloudImageRelay
 
   writeRaw(raw)
 }

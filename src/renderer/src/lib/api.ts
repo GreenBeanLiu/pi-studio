@@ -45,6 +45,10 @@ declare global {
           feishuAppId: string
           feishuAppSecret: string
           feishuChatId: string
+          imageEngine: '' | 'comfy' | 'openai'
+          comfyDir: string
+          cloudImageRelay: string
+          cloudImageKey: string
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -62,6 +66,10 @@ declare global {
           feishuAppId: string
           feishuAppSecret: string
           feishuChatId: string
+          imageEngine: '' | 'comfy' | 'openai'
+          comfyDir: string
+          cloudImageRelay: string
+          cloudImageKey: string
         }) => Promise<{ ok: boolean }>
         testConnection: (s: {
           provider: PiProvider
@@ -112,6 +120,7 @@ declare global {
       }
       git: {
         diff: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
+        acceptChanges: () => Promise<{ ok: true } | { error: string }>
         discardChanges: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
         showFile: (path: string) => Promise<{ ok: true } | { error: string }>
       }
@@ -145,7 +154,7 @@ declare global {
         delete: (id: string) => Promise<Routine[]>
         toggle: (id: string, enabled: boolean) => Promise<Routine[]>
         runNow: (id: string) => Promise<{ ok: true } | { error: string }>
-        running: () => Promise<string[]>
+        state: () => Promise<{ runningIds: string[]; queuedIds: string[] }>
         onRunFinished: (cb: (run: RoutineRun) => void) => () => void
         onStepProgress: (cb: (progress: RoutineStepProgress) => void) => () => void
       }

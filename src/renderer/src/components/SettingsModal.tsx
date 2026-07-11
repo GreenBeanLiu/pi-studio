@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm } from 'antd'
-import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck, Trash2, Plus } from 'lucide-react'
+import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck, Trash2, Plus, Image as ImageIcon } from 'lucide-react'
 import {
   api,
   type Channel,
@@ -27,13 +27,18 @@ type Settings = {
   feishuAppId: string
   feishuAppSecret: string
   feishuChatId: string
+  imageEngine: '' | 'comfy' | 'openai'
+  comfyDir: string
+  cloudImageRelay: string
+  cloudImageKey: string
 }
 
-type Category = 'model' | 'tools' | 'security' | 'about'
+type Category = 'model' | 'tools' | 'imagegen' | 'security' | 'about'
 
 const CATEGORIES: { key: Category; label: string; icon: typeof Bot }[] = [
   { key: 'model', label: '模型服务', icon: Bot },
   { key: 'tools', label: '扩展工具', icon: Globe },
+  { key: 'imagegen', label: '生图', icon: ImageIcon },
   { key: 'security', label: '安全策略', icon: ShieldCheck },
   { key: 'about', label: '关于', icon: Info },
 ]
@@ -204,6 +209,10 @@ export default function SettingsModal({
     feishuAppId: '',
     feishuAppSecret: '',
     feishuChatId: '',
+    imageEngine: '',
+    comfyDir: '',
+    cloudImageRelay: '',
+    cloudImageKey: '',
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -680,6 +689,59 @@ export default function SettingsModal({
                 </div>
                 <span className={styles.labelHint}>
                   修改后需重新打开工作区生效。默认阻止 rm -rf、递归强删、提权命令、注册表删除，以及 .env、.git、node_modules 和密钥文件写入。
+                </span>
+              </div>
+            </div>
+          )}
+
+          {category === 'imagegen' && (
+            <div className={styles.form}>
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  默认引擎
+                  <span className={styles.labelHint}>生图页打开时的默认引擎；自动=按当前可用情况选</span>
+                </span>
+                <Select
+                  value={settings.imageEngine || 'auto'}
+                  onChange={(v) => patch({ imageEngine: v === 'auto' ? '' : (v as 'comfy' | 'openai') })}
+                  style={{ width: 220 }}
+                  options={[
+                    { value: 'auto', label: '自动' },
+                    { value: 'openai', label: '云端 gpt-image-2' },
+                    { value: 'comfy', label: '本地 ComfyUI (SDXL)' },
+                  ]}
+                />
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  ComfyUI 目录
+                  <span className={styles.labelHint}>本地引擎的安装目录（含 .venv）；留空用默认 D:\Works\ComfyUI</span>
+                </span>
+                <Input
+                  value={settings.comfyDir}
+                  onChange={(e) => patch({ comfyDir: e.target.value })}
+                  placeholder="D:\\Works\\ComfyUI"
+                />
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  云端中继（高级）
+                  <span className={styles.labelHint}>覆盖内置的云端图像服务地址与 Key；留空用内置默认，一般不用改</span>
+                </span>
+                <Input
+                  value={settings.cloudImageRelay}
+                  onChange={(e) => patch({ cloudImageRelay: e.target.value })}
+                  placeholder="https://trail-api.glanger.xyz（留空=内置）"
+                />
+                <Input.Password
+                  value={settings.cloudImageKey}
+                  onChange={(e) => patch({ cloudImageKey: e.target.value })}
+                  placeholder="X-API-Key（留空=内置）"
+                />
+                <span className={styles.labelHint}>
+                  中继地址必须是 HTTPS（本机回环 http 仅开发用）。改后立即生效，不需重开工作区。
                 </span>
               </div>
             </div>

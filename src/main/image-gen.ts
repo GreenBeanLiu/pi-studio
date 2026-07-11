@@ -2,17 +2,36 @@ import { app, ipcMain } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { resolveCloudImageConfig } from './network-policy'
+import { loadSettings } from './settings'
 
 // 本地引擎:直连 ComfyUI(默认 8188,可由本应用托管启停)。
 // 云端引擎:VPS 中继(trail-api)→ trigger.dev 跑 gpt-image-2 → R2,SSE 拿结果。
 const COMFY_BASE = (process.env.PI_COMFY_BASE || 'http://127.0.0.1:8188').replace(/\/$/, '')
-const COMFY_DIR = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
+const COMFY_DIR_DEFAULT = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
 const COMFY_CKPT = process.env.PI_COMFY_CHECKPOINT || 'sd_xl_base_1.0.safetensors'
 const COMFY_TIMEOUT_MS = 150_000
-const CLOUD_RELAY = (process.env.PI_CLOUD_IMAGE_RELAY || 'http://trail-api.glanger.xyz:8000').replace(/\/$/, '')
-// 防扫描白嫖的共享 key(烧在客户端,防的是爬虫不是逆向)
-const CLOUD_KEY = process.env.PI_CLOUD_IMAGE_KEY || '8f3b404477548a7a59223fceec483bae'
 const CLOUD_TIMEOUT_MS = 320_000
+
+// 构建期注入(见 electron.vite.config.ts);优先级:设置页覆盖 > process.env(dev) > 烧入默认。
+declare const __CLOUD_IMAGE_RELAY__: string
+declare const __CLOUD_IMAGE_KEY__: string
+
+/** ComfyUI 目录:设置页覆盖 > 内置默认。 */
+const comfyDir = (): string => loadSettings().comfyDir?.trim() || COMFY_DIR_DEFAULT
+
+/** 云端中继配置:每次读设置(便于用户改后即时生效,无需重启)。 */
+const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
+  const s = loadSettings()
+  return resolveCloudImageConfig(
+    {
+      PI_CLOUD_IMAGE_KEY: s.cloudImageKey?.trim() || process.env.PI_CLOUD_IMAGE_KEY || __CLOUD_IMAGE_KEY__,
+      PI_CLOUD_IMAGE_RELAY:
+        s.cloudImageRelay?.trim() || process.env.PI_CLOUD_IMAGE_RELAY || __CLOUD_IMAGE_RELAY__,
+    },
+    { allowHttpLoopback: !app.isPackaged },
+  )
+}
 
 // pi-studio 托管的 ComfyUI 子进程(用户在图像页开关);应用退出时一并结束。
 // 若 8188 上已有外部启动的 ComfyUI,直接用,不托管也不负责停止。
@@ -40,6 +59,12 @@ export type ImageGenHistoryItem = {
   provider: string | null
   url: string
   created_at: number
+}
+
+type ComfyHistoryImage = { filename: string; subfolder?: string; type?: string }
+type ComfyHistoryEntry = {
+  status?: { status_str?: string; messages?: unknown }
+  outputs?: Record<string, { images?: ComfyHistoryImage[] }>
 }
 
 /**
@@ -111,15 +136,13 @@ async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenR
     await new Promise((r) => setTimeout(r, 1000))
     const h = await fetch(`${COMFY_BASE}/history/${prompt_id}`)
     if (!h.ok) continue
-    const entry = ((await h.json()) as Record<string, any>)[prompt_id]
+    const entry = ((await h.json()) as Record<string, ComfyHistoryEntry>)[prompt_id]
     if (!entry) continue
 
     if (entry.status?.status_str === 'error') {
       return { error: `ComfyUI 执行出错: ${JSON.stringify(entry.status?.messages ?? '').slice(0, 300)}` }
     }
-    const images = Object.values(entry.outputs ?? {}).flatMap(
-      (o: any) => (o.images ?? []) as { filename: string; subfolder?: string; type?: string }[],
-    )
+    const images = Object.values(entry.outputs ?? {}).flatMap((output) => output.images ?? [])
     if (images.length) {
       const img = images[0]
       const q = new URLSearchParams({
@@ -136,10 +159,36 @@ async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenR
   return { error: `ComfyUI 生成超时(${Math.round(COMFY_TIMEOUT_MS / 1000)}s)` }
 }
 
-async function probe(url: string, ms = 1500): Promise<Response | null> {
+async function probe(url: string, ms = 1500, init?: RequestInit): Promise<Response | null> {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(ms) })
+    const r = await fetch(url, { ...init, signal: AbortSignal.timeout(ms) })
     return r.ok ? r : null
+  } catch {
+    return null
+  }
+}
+
+async function cloudFetch(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = 8000,
+): Promise<Response> {
+  const cloud = getCloud()
+  if (!cloud.available) throw new Error(cloud.error ?? '云端图像服务未配置')
+  const headers = new Headers(init.headers)
+  headers.set('X-API-Key', cloud.key)
+  return fetch(`${cloud.relay}${path}`, {
+    ...init,
+    headers,
+    redirect: 'error',
+    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+  })
+}
+
+async function probeCloud(path: string, timeoutMs: number): Promise<Response | null> {
+  try {
+    const response = await cloudFetch(path, {}, timeoutMs)
+    return response.ok ? response : null
   } catch {
     return null
   }
@@ -147,12 +196,16 @@ async function probe(url: string, ms = 1500): Promise<Response | null> {
 
 /** 云端生成/改图:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
 async function cloudGenerate(prompt: string, referenceUrls?: string[]): Promise<ImageGenResult> {
-  const resp = await fetch(`${CLOUD_RELAY}/imagegen`, {
+  const cloud = getCloud()
+  if (!cloud.available) {
+    return { error: cloud.error ?? '云端图像服务未配置' }
+  }
+
+  const resp = await cloudFetch('/imagegen', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, ...(referenceUrls?.length ? { referenceUrls } : {}) }),
-    signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
-  })
+  }, CLOUD_TIMEOUT_MS)
   if (!resp.ok || !resp.body) {
     const text = await resp.text().catch(() => '')
     return { error: `云端中继 ${resp.status}: ${text.slice(0, 200)}` }
@@ -202,19 +255,18 @@ export async function generateImage(payload: {
     if (payload.engine === 'comfy') {
       const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0])
       // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
-      if ('dataUrl' in r) {
+      if ('dataUrl' in r && getCloud().available) {
         try {
-          const rec = await fetch(`${CLOUD_RELAY}/imagegen/history`, {
+          const rec = await cloudFetch('/imagegen/history', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-API-Key': CLOUD_KEY },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt: payload.prompt,
               engine: payload.referenceUrls?.length ? 'comfy-edit' : 'comfy',
               provider: 'sdxl-local',
               image_base64: r.dataUrl.split(',', 2)[1],
             }),
-            signal: AbortSignal.timeout(60_000),
-          })
+          }, 60_000)
           if (rec.ok) {
             const j = (await rec.json()) as { url?: string }
             if (j.url) return { ...r, publicUrl: j.url }
@@ -232,7 +284,7 @@ export async function generateImage(payload: {
       error: msg.includes('fetch failed')
         ? payload.engine === 'comfy'
           ? 'ComfyUI 未运行,打开图像页的 ComfyUI 开关即可'
-          : '连不上云端图像服务(trail-api.glanger.xyz:8000)'
+          : '连不上云端图像服务'
         : msg,
     }
   }
@@ -247,7 +299,7 @@ export function registerImageGenHandlers(): void {
   ipcMain.handle('imageGen:health', async (): Promise<ImageGenHealth> => {
     const [comfyRes, cloudRes] = await Promise.all([
       probe(`${COMFY_BASE}/system_stats`),
-      probe(`${CLOUD_RELAY}/imagegen/health`, 3000),
+      getCloud().available ? probeCloud('/imagegen/health', 3000) : Promise.resolve(null),
     ])
     const cloud = cloudRes ? ((await cloudRes.json()) as Record<string, unknown>) : null
     const comfy = !!comfyRes
@@ -264,13 +316,14 @@ export function registerImageGenHandlers(): void {
 
   ipcMain.handle('imageGen:comfyStart', async (): Promise<{ ok: true } | { error: string }> => {
     if (await comfyUp()) return { ok: true }
-    const py = join(COMFY_DIR, '.venv', 'Scripts', 'python.exe')
+    const dir = comfyDir()
+    const py = join(dir, '.venv', 'Scripts', 'python.exe')
     if (!existsSync(py)) return { error: `找不到 ComfyUI 环境: ${py}` }
 
     if (!comfyProc || comfyProc.exitCode !== null) {
       const port = new URL(COMFY_BASE).port || '8188'
       comfyProc = spawn(py, ['main.py', '--port', port], {
-        cwd: COMFY_DIR,
+        cwd: dir,
         stdio: 'ignore',
         windowsHide: true,
       })
@@ -312,11 +365,12 @@ export function registerImageGenHandlers(): void {
     'imageGen:history',
     async (_e, limit?: number): Promise<ImageGenHistoryItem[] | { error: string }> => {
       const n = Math.min(Math.max(limit ?? 60, 1), 500)
+      const cloud = getCloud()
+      if (!cloud.available) {
+        return { error: cloud.error ?? '云端图像服务未配置' }
+      }
       try {
-        const r = await fetch(`${CLOUD_RELAY}/imagegen/history?limit=${n}`, {
-          headers: { 'X-API-Key': CLOUD_KEY },
-          signal: AbortSignal.timeout(8000),
-        })
+        const r = await cloudFetch(`/imagegen/history?limit=${n}`)
         if (!r.ok) return { error: `历史接口 ${r.status}` }
         return (await r.json()) as ImageGenHistoryItem[]
       } catch {
@@ -328,11 +382,10 @@ export function registerImageGenHandlers(): void {
   ipcMain.handle(
     'imageGen:historyDelete',
     async (_e, id: string): Promise<{ ok: boolean }> => {
+      if (!getCloud().available) return { ok: false }
       try {
-        const r = await fetch(`${CLOUD_RELAY}/imagegen/history/${encodeURIComponent(id)}`, {
+        const r = await cloudFetch(`/imagegen/history/${encodeURIComponent(id)}`, {
           method: 'DELETE',
-          headers: { 'X-API-Key': CLOUD_KEY },
-          signal: AbortSignal.timeout(8000),
         })
         return { ok: r.ok }
       } catch {

@@ -23,7 +23,15 @@ import {
 import { piClientManager, type AgentStatusEvent } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
-import { discardGitChanges, getGitDiffSnapshot } from './git-diff'
+import {
+  acceptGitRunChanges,
+  beginGitRunChanges,
+  discardGitChanges,
+  emptyGitDiffSnapshot,
+  getGitDiffSnapshot,
+  isGitWorkspace,
+  sealGitRunChanges,
+} from './git-diff'
 import { listProviderModels, testProviderConnection } from './provider-test'
 import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
 import {
@@ -50,6 +58,19 @@ export function registerIpcHandlers(): void {
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return
     win.webContents.send('agent:status', event)
+  }
+
+  const sealRunChanges = async (workspacePath: string, reason: string): Promise<void> => {
+    try {
+      await sealGitRunChanges(workspacePath)
+    } catch (err) {
+      appendAppLog('warn', 'git.runChanges', 'Failed to seal agent run changes', {
+        workspacePath,
+        reason,
+        rollbackDisabled: true,
+        error: normalizeError(err),
+      })
+    }
   }
 
   // ── Window controls ──────────────────────────────────────────────
@@ -123,6 +144,10 @@ export function registerIpcHandlers(): void {
         feishuAppId: string
         feishuAppSecret: string
         feishuChatId: string
+        imageEngine: '' | 'comfy' | 'openai'
+        comfyDir: string
+        cloudImageRelay: string
+        cloudImageKey: string
       },
     ) => {
       saveSettings(settings)
@@ -250,10 +275,24 @@ export function registerIpcHandlers(): void {
         },
         settings.provider,
         settings.model || undefined,
-        (agentEvent) => {
+        async (agentEvent) => {
+          if (agentEvent.type === 'agent_end') {
+            await sealRunChanges(workspacePath, 'agent ended')
+          }
           if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
         },
-        (statusEvent) => sendAgentStatus(win, statusEvent),
+        (statusEvent) => {
+          if (statusEvent.status === 'started') {
+            sendAgentStatus(win, statusEvent)
+            return
+          }
+          void sealRunChanges(statusEvent.cwd, `agent ${statusEvent.status}`).then(() => {
+            sendAgentStatus(win, statusEvent)
+          })
+        },
+        async (stoppedWorkspacePath) => {
+          await sealRunChanges(stoppedWorkspacePath, 'workspace replaced')
+        },
       )
     } catch (err) {
       appendAppLog('error', 'workspace.open', 'Failed to start workspace', {
@@ -364,7 +403,7 @@ export function registerIpcHandlers(): void {
       const before = await getGitDiffSnapshot(cwd)
       if (!before.status.trim()) return { ok: true, snapshot: before }
       await discardGitChanges(cwd)
-      const snapshot = await getGitDiffSnapshot(cwd)
+      const snapshot = emptyGitDiffSnapshot()
       appendAppLog('warn', 'git.discard', 'Workspace changes discarded', {
         cwd,
         changedFiles: before.files.map((file) => file.path),
@@ -374,6 +413,12 @@ export function registerIpcHandlers(): void {
       appendAppLog('error', 'git.discard', 'Failed to discard workspace changes', normalizeError(err))
       return { error: (err as Error).message ?? '回滚工作区变更失败' }
     }
+  })
+  ipcMain.handle('git:acceptChanges', () => {
+    const cwd = piClientManager.getWorkspacePath()
+    if (!cwd) return { error: 'No workspace is open' }
+    acceptGitRunChanges(cwd)
+    return { ok: true }
   })
   ipcMain.handle('git:showFile', async (_event, filePath: string) => {
     const cwd = piClientManager.getWorkspacePath()
@@ -400,9 +445,28 @@ export function registerIpcHandlers(): void {
   })
 
   // ── Pi agent session ─────────────────────────────────────────────
-  ipcMain.handle('pi:prompt', (_e, message: string, images?: ImageContent[]) =>
-    piClientManager.prompt(message, images),
-  )
+  ipcMain.handle('pi:prompt', async (_e, message: string, images?: ImageContent[]) => {
+    const cwd = piClientManager.getWorkspacePath()
+    let baselineCaptured = false
+    if (cwd && (await isGitWorkspace(cwd))) {
+      try {
+        await beginGitRunChanges(cwd)
+        baselineCaptured = true
+      } catch (err) {
+        appendAppLog('warn', 'git.runChanges', 'Failed to capture agent run baseline', {
+          workspacePath: cwd,
+          error: normalizeError(err),
+        })
+        throw err
+      }
+    }
+    try {
+      return await piClientManager.prompt(message, images)
+    } catch (err) {
+      if (baselineCaptured && cwd) await sealRunChanges(cwd, 'prompt rejected')
+      throw err
+    }
+  })
   ipcMain.handle('pi:steer', (_e, message: string, images?: ImageContent[]) =>
     piClientManager.steer(message, images),
   )

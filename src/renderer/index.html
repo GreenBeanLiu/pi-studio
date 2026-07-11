@@ -21,6 +21,7 @@
           },
           git: {
             diff: () => Promise.resolve({ ok: true, snapshot: { status: '', files: [], unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
+            acceptChanges: () => Promise.resolve({ ok: true }),
             discardChanges: () => Promise.resolve({ ok: true, snapshot: { status: '', files: [], unstagedStat: '', unstagedDiff: '', stagedStat: '', stagedDiff: '', truncated: false } }),
             showFile: () => Promise.resolve({ ok: true }),
           },

@@ -58,6 +58,7 @@ const api = {
 
   git: {
     diff: () => ipcRenderer.invoke('git:diff'),
+    acceptChanges: () => ipcRenderer.invoke('git:acceptChanges'),
     discardChanges: () => ipcRenderer.invoke('git:discardChanges'),
     showFile: (path: string) => ipcRenderer.invoke('git:showFile', path),
   },
@@ -107,7 +108,7 @@ const api = {
     delete: (id: string) => ipcRenderer.invoke('routines:delete', id),
     toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('routines:toggle', id, enabled),
     runNow: (id: string) => ipcRenderer.invoke('routines:runNow', id),
-    running: () => ipcRenderer.invoke('routines:running'),
+    state: () => ipcRenderer.invoke('routines:state'),
     onRunFinished: (cb: (run: unknown) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
       ipcRenderer.on('routines:runFinished', handler)
@@ -160,8 +161,8 @@ if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('electron', electronAPI)
   contextBridge.exposeInMainWorld('api', api)
 } else {
-  // @ts-ignore
+  // @ts-ignore -- Electron fallback when context isolation is disabled.
   window.electron = electronAPI
-  // @ts-ignore
+  // @ts-ignore -- Electron fallback when context isolation is disabled.
   window.api = api
 }

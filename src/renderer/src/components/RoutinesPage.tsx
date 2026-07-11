@@ -350,7 +350,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
   const [routines, setRoutines] = useState<Routine[]>([])
   const [runs, setRuns] = useState<RoutineRun[]>([])
-  const [runningIds, setRunningIds] = useState<string[]>([])
+  const [routineState, setRoutineState] = useState<{
+    runningIds: string[]
+    queuedIds: string[]
+  }>({ runningIds: [], queuedIds: [] })
   const [channels, setChannels] = useState<Channel[]>([])
   const [form, setForm] = useState<FormState | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -362,7 +365,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     const data = await api.routines.list()
     setRoutines(data.routines)
     setRuns(data.runs)
-    setRunningIds(await api.routines.running())
+    setRoutineState(await api.routines.state())
   }
 
   useEffect(() => {
@@ -370,7 +373,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     api.channels.list().then(setChannels).catch(() => {})
     const offRun = api.routines.onRunFinished((run) => {
       setRuns((prev) => [run, ...prev].slice(0, 100))
-      setRunningIds((prev) => prev.filter((id) => id !== run.routineId))
+      setRoutineState((prev) => ({
+        runningIds: prev.runningIds.filter((id) => id !== run.routineId),
+        queuedIds: prev.queuedIds.filter((id) => id !== run.routineId),
+      }))
       // 跑完后用 run 里的每步结果显示,清掉实时进度
       setStepProgress((prev) => {
         const next = { ...prev }
@@ -379,6 +385,12 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       })
     })
     const offStep = api.routines.onStepProgress((p) => {
+      setRoutineState((prev) => ({
+        runningIds: prev.runningIds.includes(p.routineId)
+          ? prev.runningIds
+          : [...prev.runningIds, p.routineId],
+        queuedIds: prev.queuedIds.filter((id) => id !== p.routineId),
+      }))
       setStepProgress((prev) => ({
         ...prev,
         [p.routineId]: { ...prev[p.routineId], [p.stepId]: p.status },
@@ -490,7 +502,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       return
     }
     setSelectedId(r.id)
-    setRunningIds((prev) => [...prev, r.id])
+    setRoutineState((prev) => ({
+      ...prev,
+      runningIds: prev.runningIds.includes(r.id) ? prev.runningIds : [...prev.runningIds, r.id],
+    }))
     message.info(`「${r.name}」开始执行,右侧流程图会实时显示进度`)
   }
 
@@ -506,7 +521,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   const selected = routines.find((r) => r.id === selectedId) ?? routines[0] ?? null
   const latestRun = selected ? runs.find((run) => run.routineId === selected.id) : undefined
   const liveProgress = selected ? stepProgress[selected.id] : undefined
-  const selectedRunning = selected ? runningIds.includes(selected.id) : false
+  const activeIds = [...routineState.runningIds, ...routineState.queuedIds]
+  const selectedRunning = selected ? routineState.runningIds.includes(selected.id) : false
+  const selectedQueued = selected ? routineState.queuedIds.includes(selected.id) : false
+  const selectedActive = selectedRunning || selectedQueued
 
   function stepDisplay(step: RoutineStep): {
     status: StepDisplayStatus
@@ -517,7 +535,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     const live = liveProgress?.[step.id]
     if (live) return { status: live }
     // 正在执行但还没轮到的步骤不显示上一次的旧结果
-    if (selectedRunning) return { status: 'idle' }
+    if (selectedActive) return { status: 'idle' }
     const past = latestRun?.steps?.find((s) => s.id === step.id)
     if (past) {
       return { status: past.status, summary: past.summary, imageUrl: past.imageUrl, durationMs: past.durationMs }
@@ -769,11 +787,20 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
               <span className="name" title={r.steps.map((step) => step.name).join(', ')}>
                 {r.name}
               </span>
-              {runningIds.includes(r.id) && <Tag color="processing">执行中</Tag>}
+              {routineState.runningIds.includes(r.id) && <Tag color="processing">执行中</Tag>}
+              {routineState.queuedIds.includes(r.id) && <Tag color="warning">排队中</Tag>}
               <Switch
                 size="small"
                 checked={r.enabled}
-                onChange={async (v) => setRoutines(await api.routines.toggle(r.id, v))}
+                onChange={async (v) => {
+                  setRoutines(await api.routines.toggle(r.id, v))
+                  if (!v) {
+                    setRoutineState((prev) => ({
+                      ...prev,
+                      queuedIds: prev.queuedIds.filter((id) => id !== r.id),
+                    }))
+                  }
+                }}
               />
             </div>
             <div className={styles.cardMeta}>
@@ -787,7 +814,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                 type="text"
                 icon={<Play size={13} />}
                 title="立即执行"
-                disabled={runningIds.includes(r.id)}
+                disabled={activeIds.includes(r.id)}
                 onClick={() => runNow(r)}
               />
               <Button
@@ -810,6 +837,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           <GitBranch size={16} />
           流程图{selected ? ` · ${selected.name}` : ''}
           {selectedRunning && <Tag color="processing">执行中</Tag>}
+          {selectedQueued && <Tag color="warning">排队中</Tag>}
         </div>
 
         {!selected && (
