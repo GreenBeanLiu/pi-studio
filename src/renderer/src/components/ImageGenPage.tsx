@@ -107,23 +107,34 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 6px;
     align-items: center;
   `,
-  baseChip: css`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border: 1px dashed ${token.colorPrimaryBorder};
-    border-radius: ${token.borderRadius}px;
-    background: ${token.colorPrimaryBg};
-    font-size: 13px;
-    color: ${token.colorPrimaryText};
+  /** 修改底图预览:大正方形,右上角删除、左下角涂抹重绘,放在 prompt 上方 */
+  basePreview: css`
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: ${token.borderRadiusLG}px;
+    overflow: hidden;
+    border: 1px solid ${token.colorBorderSecondary};
+    background: ${token.colorFillTertiary};
 
     img {
-      width: 40px;
-      height: 40px;
-      object-fit: cover;
-      border-radius: 4px;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
     }
+  `,
+  basePreviewTopRight: css`
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  `,
+  basePreviewBottomLeft: css`
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    display: flex;
+    gap: 6px;
   `,
   gallery: css`
     min-width: 0;
@@ -555,6 +566,52 @@ function ImageGenInner() {
   return (
     <div className={styles.page}>
       <section className={styles.panel}>
+        {/* 上传底图 + 大图预览:放在 prompt 上方 */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={(e) => {
+            handleReferenceUpload(e.target.files?.[0])
+            e.target.value = ''
+          }}
+        />
+        <Button block icon={<Upload size={13} />} onClick={() => fileInputRef.current?.click()}>
+          {baseImage ? '更换修改底图' : '上传图片作为修改底图'}
+        </Button>
+
+        {baseImage && (
+          <div className={styles.basePreview}>
+            <img src={baseImage} alt="base" />
+            <div className={styles.basePreviewTopRight}>
+              <Button
+                size="small"
+                icon={<X size={13} />}
+                onClick={() => {
+                  setBaseImage(null)
+                  setMaskDataUrl(null)
+                }}
+              />
+            </div>
+            <div className={styles.basePreviewBottomLeft}>
+              <Button
+                size="small"
+                type="primary"
+                icon={<Brush size={13} />}
+                onClick={() => setMaskEditorOpen(true)}
+              >
+                涂抹重绘
+              </Button>
+              {maskDataUrl && (
+                <Button size="small" onClick={() => setMaskDataUrl(null)}>
+                  清除蒙版
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
         <span className={styles.label}>
           {baseImage ? '描述怎么修改这张图' : '描述你想要的图'}
         </span>
@@ -568,57 +625,6 @@ function ImageGenInner() {
           }
           autoSize={{ minRows: 4, maxRows: 8 }}
         />
-
-        {baseImage && (
-          <div className={styles.baseChip}>
-            <div style={{ position: 'relative', flexShrink: 0 }}>
-              <img src={baseImage} alt="base" />
-              <Button
-                size="small"
-                type="primary"
-                shape="circle"
-                icon={<Brush size={12} />}
-                title="涂抹需要重绘的区域"
-                onClick={() => setMaskEditorOpen(true)}
-                style={{ position: 'absolute', right: 3, bottom: 3 }}
-              />
-            </div>
-            <span style={{ flex: 1 }}>基于这张图修改</span>
-            <Button
-              size="small"
-              type="text"
-              icon={<X size={13} />}
-              onClick={() => {
-                setBaseImage(null)
-                setMaskDataUrl(null)
-              }}
-            />
-          </div>
-        )}
-
-        {maskDataUrl && (
-          <Button size="small" onClick={() => setMaskDataUrl(null)}>
-            清除蒙版
-          </Button>
-        )}
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => {
-            handleReferenceUpload(e.target.files?.[0])
-            e.target.value = ''
-          }}
-        />
-        <Button
-          size="small"
-          icon={<Upload size={13} />}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          上传图片作为修改底图
-        </Button>
 
         <span className={styles.label}>风格</span>
         <div className={styles.chips}>
