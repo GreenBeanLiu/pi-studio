@@ -95,6 +95,20 @@ function assertRealPathInsideWorkspace(workspacePath: string, targetPath: string
   }
 }
 
+function assertExistingPathComponentsAreSafe(workspacePath: string, targetPath: string): void {
+  const root = resolve(workspacePath)
+  const parent = resolve(dirname(targetPath))
+  const segments = relative(root, parent).split(sep).filter(Boolean)
+  let current = root
+  for (const segment of segments) {
+    current = resolve(current, segment)
+    if (!existsSync(current)) break
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new Error('产物路径不能经过工作区内的符号链接')
+    }
+  }
+}
+
 export function writeRoutineArtifact(
   workspacePath: string,
   requestedPath: string,
@@ -104,6 +118,7 @@ export function writeRoutineArtifact(
   const target = safeRelativePath(workspacePath, requestedPath)
   const expectedExtension = format === 'html' ? '.html' : '.md'
   const finalPath = extname(target) ? target : `${target}${expectedExtension}`
+  assertExistingPathComponentsAreSafe(workspacePath, finalPath)
   mkdirSync(dirname(finalPath), { recursive: true })
   assertRealPathInsideWorkspace(workspacePath, finalPath)
   const body = format === 'html' ? markdownToWechatHtml(content) : content

@@ -292,7 +292,7 @@ async function runAgentStep(
   let prompt = interpolate(step.prompt ?? '', ctx)
   // 兼容老流程:prompt 里没写变量时,自动把上一步输出接在后面
   if (!hasPreviousProductReference(step.prompt ?? '') && ctx.prev) {
-    prompt = `${prompt}\n\nPrevious step result:\n${ctx.prev.output.slice(0, 4000)}`
+    prompt = `${prompt}\n\nPrevious step result:\n${ctx.prev.output.slice(0, MAX_STEP_OUTPUT_CHARS)}`
   }
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
