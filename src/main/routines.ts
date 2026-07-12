@@ -20,7 +20,7 @@ import {
 
 /**
  * 例行任务(Routines):定时执行一条由类型化节点组成的流水线。
- * 节点类型:agent(pi 会话) / imagegen(生图) / export(工作区产物) / notify(推送到某个通知渠道)。
+ * 节点类型:agent(pi 会话) / imagegen(生图) / review(人工审核) / export(工作区产物) / notify(推送到某个通知渠道)。
  * 节点间用 {{prev.output}} / {{steps.<名字>.output}} / {{steps.<名字>.imageUrl}} 传值。
  * agent 节点每次 run spawn 一个全新 RpcClient 子进程(独立 session),跑完即弃 ——
  * 绝不打扰用户当前打开的聊天会话。
@@ -30,7 +30,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'notify' | 'export'
+export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export'
 
 export type RoutineStep = {
   id: string
@@ -83,6 +83,17 @@ export type RoutineStepResult = {
   durationMs: number
 }
 
+export type RoutineReviewRequest = {
+  reviewId: string
+  routineId: string
+  routineName: string
+  stepId: string
+  stepName: string
+  message: string
+  artifactPath?: string
+  preview: string
+}
+
 export type RoutineRun = {
   id: string
   routineId: string
@@ -111,8 +122,27 @@ const RUN_TIMEOUT_MS = 20 * 60 * 1000
 const MAX_RUNS_KEPT = 100
 const MAX_CONCURRENT = 2
 const MAX_STEP_OUTPUT_CHARS = 60_000
+const REVIEW_TIMEOUT_MS = 30 * 60 * 1000
 
 const storePath = (): string => join(app.getPath('userData'), 'routines.json')
+
+type PendingReview = {
+  routineId: string
+  approve: () => void
+  reject: (error: Error) => void
+  timer: NodeJS.Timeout
+}
+
+const pendingReviews = new Map<string, PendingReview>()
+
+function cancelPendingReviews(routineId: string, reason: string): void {
+  for (const [reviewId, pending] of pendingReviews) {
+    if (pending.routineId !== routineId) continue
+    broadcast('routines:reviewCancelled', { reviewId, reason })
+    pending.reject(new Error(reason))
+    pendingReviews.delete(reviewId)
+  }
+}
 
 function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
   return {
@@ -344,6 +374,44 @@ async function runExportStep(routine: Routine, step: RoutineStep, ctx: RunContex
   return { output: artifact.path, artifactPath: artifact.path }
 }
 
+async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+  const reviewId = randomUUID()
+  const previous = ctx.prev
+  const request: RoutineReviewRequest = {
+    reviewId,
+    routineId: routine.id,
+    routineName: routine.name,
+    stepId: step.id,
+    stepName: step.name,
+    message: interpolate(step.message?.trim() || '请检查上一步生成的公众号草稿，确认后继续。', ctx),
+    ...(previous?.artifactPath ? { artifactPath: previous.artifactPath } : {}),
+    preview: (previous?.output ?? '').slice(0, 8000),
+  }
+
+  return new Promise<StepProduct>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingReviews.delete(reviewId)
+      broadcast('routines:reviewCancelled', { reviewId, reason: '人工审核超时，工作流已停止' })
+      reject(new Error('人工审核超时，工作流已停止'))
+    }, REVIEW_TIMEOUT_MS)
+    pendingReviews.set(reviewId, {
+      routineId: routine.id,
+      timer,
+      approve: () => {
+        clearTimeout(timer)
+        pendingReviews.delete(reviewId)
+        resolve(previous ?? { output: '' })
+      },
+      reject: (error) => {
+        clearTimeout(timer)
+        pendingReviews.delete(reviewId)
+        reject(error)
+      },
+    })
+    broadcast('routines:reviewRequested', request)
+  })
+}
+
 async function runNotifyStep(
   routine: Routine,
   step: RoutineStep,
@@ -407,6 +475,8 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
               ? await runImagegenStep(step, ctx)
               : step.type === 'notify'
                 ? await runNotifyStep(routine, step, ctx, channels)
+                : step.type === 'review'
+                  ? await runReviewStep(routine, step, ctx)
                 : step.type === 'export'
                   ? await runExportStep(routine, step, ctx)
                 : await runAgentStep(routine, step, ctx, session, () => {
@@ -425,6 +495,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
           }
           stepProgress(index, 'ok')
         } catch (err) {
+          if (err instanceof Error && err.message === '人工审核超时，工作流已停止') timedOut = true
           const failStatus = timedOut ? ('timeout' as const) : ('error' as const)
           stepResults[index] = {
             id: step.id,
@@ -520,7 +591,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
 const stepIsComplete = (step: RoutineStep): boolean => {
   if (!step.name.trim()) return false
   if (step.type === 'notify') return !!step.channelId
-  if (step.type === 'export') return true
+  if (step.type === 'review' || step.type === 'export') return true
   return !!step.prompt?.trim()
 }
 
@@ -573,6 +644,7 @@ export function registerRoutines(): void {
 
   ipcMain.handle('routines:delete', (_e, id: string) => {
     scheduler.cancel(id)
+    cancelPendingReviews(id, '工作流已删除，审核请求已取消')
     store.routines = store.routines.filter((r) => r.id !== id)
     saveStore(store)
     return store.routines
@@ -582,7 +654,10 @@ export function registerRoutines(): void {
     const r = store.routines.find((x) => x.id === id)
     if (r) {
       r.enabled = enabled
-      if (!enabled) scheduler.cancel(id)
+      if (!enabled) {
+        scheduler.cancel(id)
+        cancelPendingReviews(id, '工作流已停用，审核请求已取消')
+      }
       saveStore(store)
     }
     return store.routines
@@ -600,4 +675,18 @@ export function registerRoutines(): void {
   })
 
   ipcMain.handle('routines:state', () => scheduler.getState())
+
+  ipcMain.handle(
+    'routines:reviewRespond',
+    (_e, reviewId: string, decision: 'approve' | 'reject', comment?: string) => {
+      const pending = pendingReviews.get(reviewId)
+      if (!pending) return { error: '审核请求已过期或工作流已结束' }
+      if (decision === 'approve') {
+        pending.approve()
+      } else {
+        pending.reject(new Error(comment?.trim() || '人工审核拒绝'))
+      }
+      return { ok: true }
+    },
+  )
 }

@@ -174,6 +174,9 @@ declare global {
         state: () => Promise<{ runningIds: string[]; queuedIds: string[] }>
         onRunFinished: (cb: (run: RoutineRun) => void) => () => void
         onStepProgress: (cb: (progress: RoutineStepProgress) => void) => () => void
+        reviewRespond: (reviewId: string, decision: 'approve' | 'reject', comment?: string) => Promise<{ ok: true } | { error: string }>
+        onReviewRequested: (cb: (request: RoutineReviewRequest) => void) => () => void
+        onReviewCancelled: (cb: (payload: { reviewId: string; reason: string }) => void) => () => void
       }
       channels: {
         list: () => Promise<Channel[]>
@@ -235,7 +238,7 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'notify' | 'export'
+export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export'
 
 export type RoutineStep = {
   id: string
@@ -272,6 +275,17 @@ export type RoutineStepResult = {
   imageUrl?: string
   artifactPath?: string
   durationMs: number
+}
+
+export type RoutineReviewRequest = {
+  reviewId: string
+  routineId: string
+  routineName: string
+  stepId: string
+  stepName: string
+  message: string
+  artifactPath?: string
+  preview: string
 }
 
 export type ChannelType = 'feishu-webhook' | 'feishu-app' | 'webhook' | 'local'

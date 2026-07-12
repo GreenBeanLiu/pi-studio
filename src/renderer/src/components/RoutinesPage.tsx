@@ -6,6 +6,7 @@ import {
   Dropdown,
   Empty,
   Input,
+  Modal,
   Popconfirm,
   Select,
   Switch,
@@ -36,6 +37,7 @@ import {
   MinusCircle,
   Loader2,
   FileText,
+  ShieldCheck,
 } from 'lucide-react'
 import {
   api,
@@ -47,6 +49,7 @@ import {
   type RoutineStepType,
   type RoutineStepProgress,
   type RoutineSchedule,
+  type RoutineReviewRequest,
   type Workspace,
 } from '../lib/api'
 import {
@@ -78,6 +81,7 @@ const NOTIFY_LABEL: Record<RoutineNotify, string> = {
 const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot }> = {
   agent: { label: '智能体', icon: Bot },
   imagegen: { label: '生图', icon: ImageIcon },
+  review: { label: '人工审核', icon: ShieldCheck },
   notify: { label: '通知', icon: Bell },
   export: { label: '导出文章', icon: FileText },
 }
@@ -102,6 +106,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   name: '',
   type,
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
+  ...(type === 'review' ? { message: '请检查上一步生成的内容，确认后继续。' } : {}),
   ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
 })
 const emptyForm = (workspacePath: string): FormState => ({
@@ -129,6 +134,7 @@ function articleWorkflowTemplate(workspacePath: string, channelId?: string): For
       presetStep('article.outline'),
       presetStep('article.draft'),
       presetStep('article.review'),
+      presetStep('article.approval'),
       presetStep('output.wechat-html'),
       presetStep('output.notify'),
     ],
@@ -389,6 +395,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   const [stepProgress, setStepProgress] = useState<
     Record<string, Record<string, RoutineStepProgress['status']>>
   >({})
+  const [reviewRequests, setReviewRequests] = useState<RoutineReviewRequest[]>([])
+  const [reviewComment, setReviewComment] = useState('')
+  const reviewRequest = reviewRequests[0] ?? null
 
   async function refresh() {
     const data = await api.routines.list()
@@ -425,11 +434,37 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         [p.routineId]: { ...prev[p.routineId], [p.stepId]: p.status },
       }))
     })
+    const offReview = api.routines.onReviewRequested((request) => {
+      setReviewRequests((current) =>
+        current.some((item) => item.reviewId === request.reviewId) ? current : [...current, request],
+      )
+    })
+    const offReviewCancelled = api.routines.onReviewCancelled(({ reviewId, reason }) => {
+      setReviewRequests((current) => current.filter((item) => item.reviewId !== reviewId))
+      setReviewComment('')
+      message.warning(reason)
+    })
     return () => {
       offRun()
       offStep()
+      offReview()
+      offReviewCancelled()
     }
   }, [])
+
+  async function respondToReview(decision: 'approve' | 'reject') {
+    if (!reviewRequest) return
+    const result = await api.routines.reviewRespond(reviewRequest.reviewId, decision, reviewComment)
+    if ('error' in result) {
+      setReviewRequests((current) => current.filter((item) => item.reviewId !== reviewRequest.reviewId))
+      setReviewComment('')
+      message.error(result.error)
+      return
+    }
+    setReviewRequests((current) => current.filter((item) => item.reviewId !== reviewRequest.reviewId))
+    setReviewComment('')
+    message.info(decision === 'approve' ? '审核通过，工作流继续执行' : '审核已拒绝，工作流将停止')
+  }
 
   function buildSchedule(f: FormState): RoutineSchedule {
     switch (f.scheduleType) {
@@ -446,7 +481,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
   const stepComplete = (s: RoutineStep): boolean =>
     !!s.name.trim() &&
-    (s.type === 'notify' ? !!s.channelId : s.type === 'export' ? true : !!s.prompt?.trim())
+    (s.type === 'notify' ? !!s.channelId : s.type === 'review' || s.type === 'export' ? true : !!s.prompt?.trim())
 
   async function saveForm() {
     if (!form) return
@@ -491,6 +526,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type !== 'notify' ? { prompt: step.prompt ?? '' } : {}),
           ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
           ...(type === 'notify' ? { channelId: step.channelId ?? channels[0]?.id, message: step.message ?? '' } : {}),
+          ...(type === 'review' ? { message: step.message ?? '请检查上一步生成的内容，确认后继续。' } : {}),
           ...(type === 'export'
             ? { path: step.path ?? '.pi-studio/articles/article-draft', format: step.format ?? ('html' as const) }
             : {}),
@@ -640,7 +676,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   }
 
   return (
-    <div className={styles.page}>
+    <>
+      <div className={styles.page}>
       <section className={`${styles.col} ${styles.left}`}>
         <div className={styles.colTitle}>
           <CalendarClock size={16} />
@@ -704,7 +741,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   <Button size="small" type="text" icon={<ArrowDown size={13} />} disabled={index === form.steps.length - 1} onClick={() => moveStep(index, 1)} />
                   <Button size="small" type="text" danger icon={<Trash2 size={13} />} disabled={form.steps.length === 1} onClick={() => deleteStep(step.id)} />
                 </div>
-                {step.type !== 'notify' && step.type !== 'export' && (
+                {step.type !== 'notify' && step.type !== 'export' && step.type !== 'review' && (
                   <Input.TextArea
                     value={step.prompt ?? ''}
                     onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
@@ -768,6 +805,14 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                     />
                     <span className={styles.hint}>只能写入工作区内的相对路径；HTML 会把上一步 Markdown 转成公众号正文片段。</span>
                   </>
+                )}
+                {step.type === 'review' && (
+                  <Input.TextArea
+                    value={step.message ?? ''}
+                    onChange={(e) => updateStep(step.id, { message: e.target.value })}
+                    placeholder="审核提示"
+                    autoSize={{ minRows: 2, maxRows: 4 }}
+                  />
                 )}
               </div>
             ))}
@@ -980,6 +1025,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       <div className={styles.nodeSub}>
                         → {step.path || '.pi-studio/articles/article-draft'} · {step.format === 'markdown' ? 'Markdown' : '公众号 HTML'}
                       </div>
+                    ) : step.type === 'review' ? (
+                      <div className={styles.nodeSub}>⏸ {step.message || '等待人工审核后继续'}</div>
                     ) : (
                       <div className={styles.nodePrompt} title={step.prompt}>
                         {step.prompt}
@@ -1029,6 +1076,42 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           </div>
         )}
       </section>
-    </div>
+      </div>
+      <Modal
+        open={!!reviewRequest}
+        title={reviewRequest ? `人工审核 · ${reviewRequest.stepName}` : '人工审核'}
+        closable={false}
+        maskClosable={false}
+        onCancel={() => respondToReview('reject')}
+        okText="通过并继续"
+        cancelText="拒绝并停止"
+        onOk={() => respondToReview('approve')}
+      >
+        {reviewRequest && (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div>{reviewRequest.message}</div>
+            {reviewRequest.artifactPath && <code>{reviewRequest.artifactPath}</code>}
+            <Input.TextArea
+              value={reviewComment}
+              onChange={(e) => setReviewComment(e.target.value)}
+              placeholder="审核意见（拒绝时建议填写原因）"
+              autoSize={{ minRows: 2, maxRows: 5 }}
+            />
+            <div
+              style={{
+                maxHeight: 360,
+                overflow: 'auto',
+                padding: 10,
+                whiteSpace: 'pre-wrap',
+                border: '1px solid var(--ant-color-border-secondary)',
+                borderRadius: 8,
+              }}
+            >
+              {reviewRequest.preview || '(上一步没有文本预览)'}
+            </div>
+          </div>
+        )}
+      </Modal>
+    </>
   )
 }

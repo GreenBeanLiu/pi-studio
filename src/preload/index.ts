@@ -136,6 +136,18 @@ const api = {
       ipcRenderer.on('routines:stepProgress', handler)
       return () => ipcRenderer.off('routines:stepProgress', handler)
     },
+    reviewRespond: (reviewId: string, decision: 'approve' | 'reject', comment?: string) =>
+      ipcRenderer.invoke('routines:reviewRespond', reviewId, decision, comment),
+    onReviewRequested: (cb: (request: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+      ipcRenderer.on('routines:reviewRequested', handler)
+      return () => ipcRenderer.off('routines:reviewRequested', handler)
+    },
+    onReviewCancelled: (cb: (payload: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+      ipcRenderer.on('routines:reviewCancelled', handler)
+      return () => ipcRenderer.off('routines:reviewCancelled', handler)
+    },
   },
 
   channels: {

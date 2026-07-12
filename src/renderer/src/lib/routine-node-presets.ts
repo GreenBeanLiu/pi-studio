@@ -49,6 +49,17 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
     step: { name: '事实与合规审校', type: 'agent', prompt: articlePrompt.review },
   },
   {
+    id: 'article.approval',
+    category: 'article',
+    label: '人工审核',
+    description: '暂停流程，确认后继续',
+    step: {
+      name: '人工审核',
+      type: 'review',
+      message: '请检查上一步生成的公众号草稿，确认后继续。',
+    },
+  },
+  {
     id: 'media.cover',
     category: 'media',
     label: '公众号封面图',
