@@ -49,11 +49,13 @@ import {
 import { registerImageGenHandlers } from './image-gen'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
+import { registerSandbox } from './sandbox'
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
   registerRoutines()
   registerChannels()
+  registerSandbox()
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return
@@ -148,6 +150,7 @@ export function registerIpcHandlers(): void {
         tavilyApiKey: string
         heliconeApiKey: string
         securityGuardEnabled: boolean
+        sandboxEnabled: boolean
         subagentsEnabled: boolean
         feishuWebhookUrl: string
         feishuSecret: string

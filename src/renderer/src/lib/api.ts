@@ -40,6 +40,7 @@ declare global {
           tavilyApiKey: string
           heliconeApiKey: string
           securityGuardEnabled: boolean
+          sandboxEnabled: boolean
           subagentsEnabled: boolean
           feishuWebhookUrl: string
           feishuSecret: string
@@ -64,6 +65,7 @@ declare global {
           tavilyApiKey: string
           heliconeApiKey: string
           securityGuardEnabled: boolean
+          sandboxEnabled: boolean
           subagentsEnabled: boolean
           feishuWebhookUrl: string
           feishuSecret: string
@@ -92,6 +94,9 @@ declare global {
         }) => Promise<ProviderModelListResult>
         syncCustomModels: (ids: string[]) => Promise<{ ok: boolean }>
         onChanged: (cb: () => void) => () => void
+      }
+      sandbox: {
+        detect: () => Promise<SandboxDetect>
       }
       securityPolicy: {
         load: () => Promise<SecurityPolicyLoadResult>
@@ -310,6 +315,11 @@ export type ProviderConnectionResult =
 export type ProviderModelListResult =
   | { ok: true; message: string; models: string[] }
   | { ok: false; message: string; details?: string }
+
+export type SandboxDetect = {
+  docker: { cliFound: boolean; daemonRunning: boolean; version: string }
+  wsl: { available: boolean; distros: string[] }
+}
 
 export type Workspace = {
   path: string

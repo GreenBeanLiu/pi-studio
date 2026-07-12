@@ -34,6 +34,10 @@ const api = {
     },
   },
 
+  sandbox: {
+    detect: () => ipcRenderer.invoke('sandbox:detect'),
+  },
+
   securityPolicy: {
     load: () => ipcRenderer.invoke('securityPolicy:load'),
     save: (policy: unknown) => ipcRenderer.invoke('securityPolicy:save', policy),

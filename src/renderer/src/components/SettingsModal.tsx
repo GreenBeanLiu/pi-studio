@@ -9,6 +9,7 @@ import {
   type PiProvider,
   type ProviderConnectionResult,
   type ProviderModelListResult,
+  type SandboxDetect,
   type SecurityPolicy,
 } from '../lib/api'
 
@@ -21,6 +22,7 @@ type Settings = {
   tavilyApiKey: string
   heliconeApiKey: string
   securityGuardEnabled: boolean
+  sandboxEnabled: boolean
   subagentsEnabled: boolean
   feishuWebhookUrl: string
   feishuSecret: string
@@ -206,6 +208,7 @@ export default function SettingsModal({
     tavilyApiKey: '',
     heliconeApiKey: '',
     securityGuardEnabled: true,
+    sandboxEnabled: false,
     subagentsEnabled: true,
     feishuWebhookUrl: '',
     feishuSecret: '',
@@ -236,9 +239,23 @@ export default function SettingsModal({
   const [policyScope, setPolicyScope] = useState<'default' | 'workspace'>('default')
   const [policyWorkspacePath, setPolicyWorkspacePath] = useState('')
   const [policyError, setPolicyError] = useState<string | null>(null)
+  const [sandboxDetect, setSandboxDetect] = useState<SandboxDetect | null>(null)
+  const [sandboxDetecting, setSandboxDetecting] = useState(false)
+
+  async function detectSandbox() {
+    setSandboxDetecting(true)
+    try {
+      setSandboxDetect(await api.sandbox.detect())
+    } catch {
+      setSandboxDetect(null)
+    } finally {
+      setSandboxDetecting(false)
+    }
+  }
 
   useEffect(() => {
     api.settings.load().then(setSettings)
+    detectSandbox()
     api.channels.list().then(setChannels).catch(() => {})
     api.securityPolicy
       .load()
@@ -698,6 +715,56 @@ export default function SettingsModal({
                 <span className={styles.labelHint}>
                   修改后需重新打开工作区生效。默认阻止 rm -rf、递归强删、提权命令、注册表删除，以及 .env、.git、node_modules 和密钥文件写入。
                 </span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  沙箱模式（Docker / WSL）
+                  <Tag color="orange" style={{ marginLeft: 8 }}>
+                    开发中
+                  </Tag>
+                  <span className={styles.labelHint}>在隔离环境里运行 agent，避免它直接碰主机</span>
+                </span>
+                <div className={styles.actionRow}>
+                  <Switch
+                    size="small"
+                    checked={settings.sandboxEnabled}
+                    onChange={(checked) => patch({ sandboxEnabled: checked })}
+                  />
+                  <span className={styles.labelHint}>
+                    {settings.sandboxEnabled ? '已开启（偏好）' : '已关闭'}
+                  </span>
+                </div>
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="当前仅保存偏好，执行侧尚未接入 —— 打开不代表已隔离。"
+                  description="真隔离方案与实现计划见仓库 docs/sandbox-mode-plan.md。"
+                />
+                <div className={styles.actionRow}>
+                  <span className={styles.label}>环境探测</span>
+                  <Button size="small" loading={sandboxDetecting} onClick={detectSandbox}>
+                    重新检测
+                  </Button>
+                </div>
+                <div className={styles.actionRow}>
+                  <Tag color={sandboxDetect?.docker.daemonRunning ? 'green' : 'default'}>
+                    {sandboxDetect
+                      ? sandboxDetect.docker.daemonRunning
+                        ? `Docker 就绪 v${sandboxDetect.docker.version}`
+                        : sandboxDetect.docker.cliFound
+                          ? 'Docker 已装但未运行'
+                          : '未检测到 Docker'
+                      : 'Docker 检测中…'}
+                  </Tag>
+                  <Tag color={sandboxDetect?.wsl.available ? 'green' : 'default'}>
+                    {sandboxDetect
+                      ? sandboxDetect.wsl.available
+                        ? `WSL 就绪（${sandboxDetect.wsl.distros.join(', ')}）`
+                        : '未检测到 WSL 发行版'
+                      : 'WSL 检测中…'}
+                  </Tag>
+                </div>
               </div>
             </div>
           )}

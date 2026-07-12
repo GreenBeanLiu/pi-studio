@@ -23,6 +23,11 @@ type SettingsData = {
   heliconeApiKey: string
   /** Blocks dangerous commands and writes to sensitive paths before tools execute */
   securityGuardEnabled: boolean
+  /**
+   * 沙箱模式偏好(Docker/WSL 隔离运行 pi)。当前仅持久化偏好 + 探测环境,
+   * 执行侧尚未接入(见 docs/sandbox-mode-plan.md),所以打开不代表已隔离。
+   */
+  sandboxEnabled: boolean
   /** Enables bundled scout/planner/worker/reviewer subagent workflow prompts */
   subagentsEnabled: boolean
   /** 飞书群自定义机器人 webhook;例行任务结果推卡片消息;留空关闭 */
@@ -64,6 +69,7 @@ const DEFAULTS: SettingsData = {
   tavilyApiKey: '',
   heliconeApiKey: '',
   securityGuardEnabled: true,
+  sandboxEnabled: false,
   subagentsEnabled: true,
   feishuWebhookUrl: '',
   feishuSecret: '',
@@ -143,6 +149,8 @@ export function loadSettings(): SettingsData {
       typeof raw.securityGuardEnabled === 'boolean'
         ? raw.securityGuardEnabled
         : DEFAULTS.securityGuardEnabled,
+    sandboxEnabled:
+      typeof raw.sandboxEnabled === 'boolean' ? raw.sandboxEnabled : DEFAULTS.sandboxEnabled,
     subagentsEnabled:
       typeof raw.subagentsEnabled === 'boolean' ? raw.subagentsEnabled : DEFAULTS.subagentsEnabled,
     feishuWebhookUrl: (raw.feishuWebhookUrl as string) ?? DEFAULTS.feishuWebhookUrl,
@@ -178,6 +186,7 @@ export function saveSettings(
     | 'tavilyApiKey'
     | 'heliconeApiKey'
     | 'securityGuardEnabled'
+    | 'sandboxEnabled'
     | 'subagentsEnabled'
     | 'feishuWebhookUrl'
     | 'feishuSecret'
@@ -206,6 +215,7 @@ export function saveSettings(
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
   raw.securityGuardEnabled = settings.securityGuardEnabled
+  raw.sandboxEnabled = settings.sandboxEnabled
   raw.subagentsEnabled = settings.subagentsEnabled
   raw.feishuWebhookUrl = settings.feishuWebhookUrl
   raw.feishuAppId = settings.feishuAppId
