@@ -175,6 +175,7 @@ declare global {
           prompt: string
           engine: ImageGenEngine
           referenceUrls?: string[]
+          maskDataUrl?: string
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>

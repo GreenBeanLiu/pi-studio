@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Button, Input, Popconfirm, Spin, Switch, Tooltip, App as AntApp } from 'antd'
+import { Button, Input, Modal, Popconfirm, Slider, Spin, Switch, Tooltip, App as AntApp } from 'antd'
 import {
   Image as ImageIcon,
   Cloud,
@@ -9,6 +9,7 @@ import {
   Link2,
   RefreshCw,
   Brush,
+  Upload,
   Trash2,
   X,
 } from 'lucide-react'
@@ -241,9 +242,10 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow: auto;
+    overflow: hidden;
     background: rgba(0, 0, 0, 0.7);
     cursor: zoom-out;
+    overscroll-behavior: contain;
   `,
   lightboxImg: css`
     max-width: 92vw;
@@ -254,6 +256,9 @@ const useStyles = createStyles(({ token, css }) => ({
     transform-origin: center center;
     transition: transform 0.12s ease;
     will-change: transform;
+    user-select: none;
+    -webkit-user-drag: none;
+    touch-action: none;
   `,
   lightboxImgZoomed: css`
     max-width: none;
@@ -261,6 +266,7 @@ const useStyles = createStyles(({ token, css }) => ({
     margin: auto;
     cursor: zoom-out;
     border-radius: 0;
+    transition: none;
   `,
   offline: css`
     color: ${token.colorWarning};
@@ -290,10 +296,16 @@ function ImageGenInner() {
   const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
   const [pending, setPending] = useState<PendingGen[]>([])
   const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
+  const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false)
   const [pinnedSrc, setPinnedSrc] = useState<string | null>(null)
   const [pinnedScale, setPinnedScale] = useState(1)
+  const [pinnedOffset, setPinnedOffset] = useState({ x: 0, y: 0 })
   const [loadingMore, setLoadingMore] = useState(false)
   const [historyDone, setHistoryDone] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null)
+  const didDragRef = useRef(false)
 
   const galleryRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -408,6 +420,7 @@ function ImageGenInner() {
         prompt: full,
         engine,
         ...(refUrls ? { referenceUrls: refUrls } : {}),
+        ...(maskDataUrl ? { maskDataUrl } : {}),
       })
       if ('error' in r) {
         message.error(r.error)
@@ -461,6 +474,7 @@ function ImageGenInner() {
 
   function useAsBase(url: string) {
     setBaseImage(url)
+    setMaskDataUrl(null)
     setPrompt('')
     message.info('已设为底图,输入修改要求后点"修改这张图"')
   }
@@ -468,10 +482,35 @@ function ImageGenInner() {
   function openLightbox(src: string) {
     setPinnedSrc(src)
     setPinnedScale(1)
+    setPinnedOffset({ x: 0, y: 0 })
   }
   function closeLightbox() {
     setPinnedSrc(null)
     setPinnedScale(1)
+    setPinnedOffset({ x: 0, y: 0 })
+    dragRef.current = null
+  }
+
+  function handleReferenceUpload(file: File | undefined) {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      message.error('请选择图片文件')
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      message.error('图片不能超过 20MB')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') return
+      setBaseImage(reader.result)
+      setMaskDataUrl(null)
+      setPrompt('')
+      message.success('图片已载入，可以输入修改要求')
+    }
+    reader.onerror = () => message.error('读取图片失败')
+    reader.readAsDataURL(file)
   }
 
   const engineLabel = (e: string) =>
@@ -516,10 +555,44 @@ function ImageGenInner() {
               size="small"
               type="text"
               icon={<X size={13} />}
-              onClick={() => setBaseImage(null)}
+              onClick={() => {
+                setBaseImage(null)
+                setMaskDataUrl(null)
+              }}
             />
           </div>
         )}
+
+        {baseImage && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button size="small" onClick={() => setMaskEditorOpen(true)}>
+              {maskDataUrl ? '重新涂抹区域' : '涂抹需要重绘的区域'}
+            </Button>
+            {maskDataUrl && (
+              <Button size="small" onClick={() => setMaskDataUrl(null)}>
+                清除蒙版
+              </Button>
+            )}
+          </div>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={(e) => {
+            handleReferenceUpload(e.target.files?.[0])
+            e.target.value = ''
+          }}
+        />
+        <Button
+          size="small"
+          icon={<Upload size={13} />}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          上传图片作为修改底图
+        </Button>
 
         <span className={styles.label}>风格</span>
         <div className={styles.chips}>
@@ -715,21 +788,237 @@ function ImageGenInner() {
           onClick={closeLightbox}
           onWheel={(e) => {
             e.preventDefault()
-            setPinnedScale((scale) => Math.min(4, Math.max(1, scale + (e.deltaY < 0 ? 0.15 : -0.15))))
+            setPinnedScale((scale) => {
+              const next = Math.min(4, Math.max(1, scale + (e.deltaY < 0 ? 0.15 : -0.15)))
+              if (next === 1) setPinnedOffset({ x: 0, y: 0 })
+              return next
+            })
           }}
         >
           <img
             src={pinnedSrc}
             alt="preview"
             className={pinnedScale > 1 ? `${styles.lightboxImg} ${styles.lightboxImgZoomed}` : styles.lightboxImg}
-            style={{ transform: `scale(${pinnedScale})` }}
+            style={{ transform: `translate3d(${pinnedOffset.x}px, ${pinnedOffset.y}px, 0) scale(${pinnedScale})` }}
+            onPointerDown={(e) => {
+              if (pinnedScale <= 1) return
+              e.stopPropagation()
+              e.currentTarget.setPointerCapture(e.pointerId)
+              dragRef.current = {
+                pointerId: e.pointerId,
+                startX: e.clientX,
+                startY: e.clientY,
+                originX: pinnedOffset.x,
+                originY: pinnedOffset.y,
+              }
+              didDragRef.current = false
+            }}
+            onPointerMove={(e) => {
+              const drag = dragRef.current
+              if (!drag || drag.pointerId !== e.pointerId) return
+              const dx = e.clientX - drag.startX
+              const dy = e.clientY - drag.startY
+              if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didDragRef.current = true
+              setPinnedOffset({ x: drag.originX + dx, y: drag.originY + dy })
+            }}
+            onPointerUp={(e) => {
+              if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+            }}
+            onPointerCancel={() => {
+              dragRef.current = null
+            }}
             onClick={(e) => {
               e.stopPropagation()
+              if (didDragRef.current) {
+                didDragRef.current = false
+                return
+              }
               setPinnedScale((scale) => (scale > 1 ? 1 : 2))
+              setPinnedOffset({ x: 0, y: 0 })
             }}
           />
         </div>
       )}
+
+      {baseImage && (
+        <MaskEditor
+          open={maskEditorOpen}
+          src={baseImage}
+          onCancel={() => setMaskEditorOpen(false)}
+          onApply={(mask) => {
+            setMaskDataUrl(mask)
+            setMaskEditorOpen(false)
+            message.success('蒙版已保存，生成时会只重绘透明区域')
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function MaskEditor({
+  open,
+  src,
+  onCancel,
+  onApply,
+}: {
+  open: boolean
+  src: string
+  onCancel: () => void
+  onApply: (maskDataUrl: string) => void
+}) {
+  const imageRef = useRef<HTMLImageElement>(null)
+  const paintRef = useRef<HTMLCanvasElement>(null)
+  const maskRef = useRef<HTMLCanvasElement>(null)
+  const drawingRef = useRef(false)
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null)
+  const [brushSize, setBrushSize] = useState(80)
+  const [ready, setReady] = useState(false)
+  const [hasPainted, setHasPainted] = useState(false)
+
+  function resetCanvases() {
+    const image = imageRef.current
+    const paint = paintRef.current
+    const mask = maskRef.current
+    if (!image || !paint || !mask || !image.naturalWidth || !image.naturalHeight) return
+    paint.width = image.naturalWidth
+    paint.height = image.naturalHeight
+    mask.width = image.naturalWidth
+    mask.height = image.naturalHeight
+    paint.getContext('2d')?.clearRect(0, 0, paint.width, paint.height)
+    const maskContext = mask.getContext('2d')
+    if (!maskContext) return
+    maskContext.globalCompositeOperation = 'source-over'
+    maskContext.fillStyle = '#fff'
+    maskContext.fillRect(0, 0, mask.width, mask.height)
+    setHasPainted(false)
+    setReady(true)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    setReady(false)
+    setBrushSize(80)
+    const image = imageRef.current
+    if (image?.complete) requestAnimationFrame(resetCanvases)
+  }, [open, src])
+
+  function point(event: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = paintRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: (event.clientX - rect.left) * (canvas.width / rect.width),
+      y: (event.clientY - rect.top) * (canvas.height / rect.height),
+    }
+  }
+
+  function drawLine(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current) return
+    const paintCanvas = paintRef.current
+    const maskCanvas = maskRef.current
+    if (!paintCanvas || !maskCanvas) return
+    const { x, y } = point(event)
+    const rect = paintCanvas.getBoundingClientRect()
+    const width = brushSize * (paintCanvas.width / rect.width)
+    const paintContext = paintCanvas.getContext('2d')
+    const maskContext = maskCanvas.getContext('2d')
+    if (!paintContext || !maskContext) return
+    const last = lastPointRef.current ?? { x, y }
+    paintContext.beginPath()
+    paintContext.moveTo(last.x, last.y)
+    paintContext.lineCap = 'round'
+    paintContext.lineJoin = 'round'
+    paintContext.lineWidth = width
+    paintContext.strokeStyle = 'rgba(255, 64, 64, 0.48)'
+    paintContext.lineTo(x, y)
+    paintContext.stroke()
+    maskContext.beginPath()
+    maskContext.moveTo(last.x, last.y)
+    maskContext.globalCompositeOperation = 'destination-out'
+    maskContext.lineCap = 'round'
+    maskContext.lineJoin = 'round'
+    maskContext.lineWidth = width
+    maskContext.lineTo(x, y)
+    maskContext.stroke()
+    lastPointRef.current = { x, y }
+    setHasPainted(true)
+  }
+
+  function markPoint(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!ready) return
+    drawingRef.current = true
+    lastPointRef.current = null
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const { x, y } = point(event)
+    const paintCanvas = paintRef.current
+    const maskCanvas = maskRef.current
+    if (!paintCanvas || !maskCanvas) return
+    const rect = paintCanvas.getBoundingClientRect()
+    const width = brushSize * (paintCanvas.width / rect.width)
+    const paintContext = paintCanvas.getContext('2d')
+    const maskContext = maskCanvas.getContext('2d')
+    if (!paintContext || !maskContext) return
+    paintContext.beginPath()
+    paintContext.fillStyle = 'rgba(255, 64, 64, 0.48)'
+    paintContext.arc(x, y, width / 2, 0, Math.PI * 2)
+    paintContext.fill()
+    maskContext.globalCompositeOperation = 'destination-out'
+    maskContext.beginPath()
+    maskContext.arc(x, y, width / 2, 0, Math.PI * 2)
+    maskContext.fill()
+    setHasPainted(true)
+  }
+
+  return (
+    <Modal
+      title="涂抹需要重绘的区域"
+      open={open}
+      width={820}
+      destroyOnClose
+      onCancel={onCancel}
+      okText="使用蒙版"
+      cancelText="取消"
+      okButtonProps={{ disabled: !ready || !hasPainted }}
+      onOk={() => {
+        if (maskRef.current && hasPainted) onApply(maskRef.current.toDataURL('image/png'))
+      }}
+    >
+      <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}>
+        红色区域会被重绘；未涂抹区域保留。白色保留，透明区域重绘。
+      </div>
+      <div style={{ textAlign: 'center', background: '#181818', padding: 12, minHeight: 260 }}>
+        <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', maxHeight: '60vh' }}>
+          <img
+            ref={imageRef}
+            src={src}
+            alt="mask source"
+            onLoad={resetCanvases}
+            style={{ display: 'block', maxWidth: '100%', maxHeight: '60vh', userSelect: 'none' }}
+          />
+          <canvas
+            ref={paintRef}
+            onPointerDown={markPoint}
+            onPointerMove={drawLine}
+            onPointerUp={(event) => {
+              drawingRef.current = false
+              lastPointRef.current = null
+              event.currentTarget.releasePointerCapture(event.pointerId)
+            }}
+            onPointerCancel={() => {
+              drawingRef.current = false
+              lastPointRef.current = null
+            }}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', cursor: 'crosshair', touchAction: 'none' }}
+          />
+          <canvas ref={maskRef} hidden />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+        <span style={{ fontSize: 12 }}>笔刷大小</span>
+        <Slider min={10} max={240} value={brushSize} onChange={setBrushSize} style={{ flex: 1 }} />
+        <span style={{ width: 36, textAlign: 'right', fontSize: 12 }}>{brushSize}px</span>
+      </div>
+    </Modal>
   )
 }

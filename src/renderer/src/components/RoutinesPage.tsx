@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import {
   Button,
+  Drawer,
   Empty,
   Input,
   Popconfirm,
@@ -602,6 +603,14 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         </div>
 
         {form && (
+          <Drawer
+            title={form.id ? '编辑工作流' : '新建工作流'}
+            open
+            placement="right"
+            width={560}
+            destroyOnClose
+            onClose={() => setForm(null)}
+          >
           <div className={styles.card}>
             <span className={styles.label}>Name</span>
             <Input
@@ -771,6 +780,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
               </Button>
             </div>
           </div>
+          </Drawer>
         )}
 
         {routines.length === 0 && !form && (

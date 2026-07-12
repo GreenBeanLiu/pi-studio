@@ -124,6 +124,7 @@ function buildWorkflow(
   seed: number,
   checkpoint: string,
   refImageName?: string,
+  maskImageName?: string,
 ): Record<string, unknown> {
   const wf: Record<string, unknown> = {
     4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoint } },
@@ -142,7 +143,7 @@ function buildWorkflow(
         model: ['4', 0],
         positive: ['6', 0],
         negative: ['7', 0],
-        latent_image: refImageName ? ['11', 0] : ['5', 0],
+        latent_image: refImageName ? [maskImageName ? '13' : '11', 0] : ['5', 0],
       },
     },
     8: { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
@@ -150,7 +151,15 @@ function buildWorkflow(
   }
   if (refImageName) {
     wf[10] = { class_type: 'LoadImage', inputs: { image: refImageName } }
-    wf[11] = { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } }
+    if (maskImageName) {
+      wf[12] = { class_type: 'LoadImageMask', inputs: { image: maskImageName, channel: 'alpha' } }
+      wf[13] = {
+        class_type: 'VAEEncodeForInpaint',
+        inputs: { pixels: ['10', 0], vae: ['4', 2], mask: ['12', 0], grow_mask_by: 6 },
+      }
+    } else {
+      wf[11] = { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } }
+    }
   } else {
     wf[5] = { class_type: 'EmptyLatentImage', inputs: { width: 1024, height: 1024, batch_size: 1 } }
   }
@@ -158,12 +167,34 @@ function buildWorkflow(
 }
 
 /** 把参考图(公网 URL)喂给 ComfyUI:下载 → POST /upload/image → 返回服务端文件名。 */
+function parseImageDataUrl(value: string): { data: ArrayBuffer; contentType: string } | null {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/is.exec(value.trim())
+  if (!match) return null
+  try {
+    const bytes = Buffer.from(match[2], 'base64')
+    return {
+      data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      contentType: match[1].toLowerCase(),
+    }
+  } catch {
+    return null
+  }
+}
+
 async function comfyUploadRef(refUrl: string): Promise<string> {
-  const img = await fetch(refUrl, { signal: AbortSignal.timeout(60_000) })
-  if (!img.ok) throw new Error(`下载参考图失败(${img.status})`)
-  const blob = new Blob([await img.arrayBuffer()], { type: 'image/png' })
+  const dataUrl = parseImageDataUrl(refUrl)
+  let blob: Blob
+  let filename = `ref-${Date.now()}.png`
+  if (dataUrl) {
+    blob = new Blob([dataUrl.data], { type: dataUrl.contentType })
+    filename = `ref-${Date.now()}.${dataUrl.contentType.split('/')[1] || 'png'}`
+  } else {
+    const img = await fetch(refUrl, { signal: AbortSignal.timeout(60_000) })
+    if (!img.ok) throw new Error(`下载参考图失败(${img.status})`)
+    blob = new Blob([await img.arrayBuffer()], { type: img.headers.get('content-type') || 'image/png' })
+  }
   const form = new FormData()
-  form.append('image', blob, `ref-${Date.now()}.png`)
+  form.append('image', blob, filename)
   form.append('overwrite', 'true')
   const up = await fetch(`${COMFY_BASE}/upload/image`, { method: 'POST', body: form })
   if (!up.ok) throw new Error(`ComfyUI 上传参考图失败(${up.status})`)
@@ -171,7 +202,8 @@ async function comfyUploadRef(refUrl: string): Promise<string> {
   return j.subfolder ? `${j.subfolder}/${j.name}` : j.name
 }
 
-async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenResult> {
+async function comfyGenerate(prompt: string, refUrl?: string, maskUrl?: string): Promise<ImageGenResult> {
+  if (maskUrl && !refUrl) return { error: '蒙版编辑需要先选择一张底图' }
   const runtime = await comfyRuntime.start()
   if (!runtime.ok) return { error: runtime.error }
 
@@ -191,10 +223,11 @@ async function comfyGenerate(prompt: string, refUrl?: string): Promise<ImageGenR
 
   const seed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER)
   const refName = refUrl ? await comfyUploadRef(refUrl) : undefined
+  const maskName = maskUrl ? await comfyUploadRef(maskUrl) : undefined
   const submit = await fetch(`${COMFY_BASE}/prompt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: buildWorkflow(prompt, seed, checkpoint, refName) }),
+    body: JSON.stringify({ prompt: buildWorkflow(prompt, seed, checkpoint, refName, maskName) }),
   })
   if (!submit.ok) {
     return { error: `ComfyUI /prompt ${submit.status}: ${(await submit.text()).slice(0, 300)}` }
@@ -246,6 +279,26 @@ async function cloudFetch(
   })
 }
 
+async function cloudUploadReference(dataUrl: string): Promise<string> {
+  const parsed = parseImageDataUrl(dataUrl)
+  if (!parsed) throw new Error('上传参考图格式无效')
+  const resp = await cloudFetch('/imagegen/reference', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_base64: Buffer.from(parsed.data).toString('base64'),
+      content_type: parsed.contentType,
+    }),
+  }, 60_000)
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(`参考图上传失败(${resp.status}): ${text.slice(0, 200)}`)
+  }
+  const result = (await resp.json()) as { url?: string }
+  if (!result.url) throw new Error('参考图上传成功但没有返回 URL')
+  return result.url
+}
+
 async function probeCloud(path: string, timeoutMs: number): Promise<Response | null> {
   try {
     const response = await cloudFetch(path, {}, timeoutMs)
@@ -256,7 +309,11 @@ async function probeCloud(path: string, timeoutMs: number): Promise<Response | n
 }
 
 /** 云端生成/改图:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
-async function cloudGenerate(prompt: string, referenceUrls?: string[]): Promise<ImageGenResult> {
+async function cloudGenerate(
+  prompt: string,
+  referenceUrls?: string[],
+  maskUrl?: string,
+): Promise<ImageGenResult> {
   const cloud = getCloud()
   if (!cloud.available) {
     return { error: cloud.error ?? '云端图像服务未配置' }
@@ -265,7 +322,11 @@ async function cloudGenerate(prompt: string, referenceUrls?: string[]): Promise<
   const resp = await cloudFetch('/imagegen', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, ...(referenceUrls?.length ? { referenceUrls } : {}) }),
+    body: JSON.stringify({
+      prompt,
+      ...(referenceUrls?.length ? { referenceUrls } : {}),
+      ...(maskUrl ? { maskUrl } : {}),
+    }),
   }, CLOUD_TIMEOUT_MS)
   if (!resp.ok || !resp.body) {
     const text = await resp.text().catch(() => '')
@@ -309,10 +370,11 @@ export async function generateImage(payload: {
   prompt: string
   engine: 'openai' | 'comfy'
   referenceUrls?: string[]
+  maskDataUrl?: string
 }): Promise<ImageGenResult> {
   try {
     if (payload.engine === 'comfy') {
-      const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0])
+      const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0], payload.maskDataUrl)
       // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
       if ('dataUrl' in r && getCloud().available) {
         try {
@@ -336,7 +398,16 @@ export async function generateImage(payload: {
       }
       return r
     }
-    return await cloudGenerate(payload.prompt, payload.referenceUrls)
+    const references = await Promise.all(
+      (payload.referenceUrls ?? []).map((reference) =>
+        reference.startsWith('data:') ? cloudUploadReference(reference) : reference,
+      ),
+    )
+    if (payload.maskDataUrl && !references.length) {
+      return { error: '蒙版编辑需要先选择一张底图' }
+    }
+    const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl) : undefined
+    return await cloudGenerate(payload.prompt, references, maskUrl)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return {
@@ -398,7 +469,12 @@ export function registerImageGenHandlers(): void {
     'imageGen:generate',
     (
       _e,
-      payload: { prompt: string; engine: 'openai' | 'comfy'; referenceUrls?: string[] },
+      payload: {
+        prompt: string
+        engine: 'openai' | 'comfy'
+        referenceUrls?: string[]
+        maskDataUrl?: string
+      },
     ): Promise<ImageGenResult> => generateImage(payload),
   )
 

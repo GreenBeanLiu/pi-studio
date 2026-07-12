@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, session } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, session, Menu, Tray, nativeImage } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
@@ -17,10 +17,50 @@ const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const UPDATE_RETRY_DELAY_MS = 30 * 1000
 const UPDATE_MAX_RETRIES = 3
 
+let tray: Tray | null = null
+let isQuitting = false
+
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(channel, payload)
   }
+}
+
+function showMainWindow(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+function createTray(win: BrowserWindow): void {
+  if (process.platform !== 'win32' || tray) return
+
+  const iconPath = join(app.getAppPath(), 'build', 'icon.ico')
+  const icon = nativeImage.createFromPath(iconPath)
+  if (icon.isEmpty()) {
+    appendAppLog('warn', 'app', 'Tray icon is unavailable', { iconPath })
+    return
+  }
+  tray = new Tray(icon)
+  tray.setToolTip('pi-studio')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '打开 pi-studio', click: () => showMainWindow(win) },
+      { type: 'separator' },
+      {
+        label: '退出 pi-studio',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        },
+      },
+    ]),
+  )
+  tray.on('click', () => {
+    if (win.isVisible()) win.hide()
+    else showMainWindow(win)
+  })
 }
 
 // App-level (not per-window): autoUpdater listeners and the update:install
@@ -131,6 +171,12 @@ function createWindow(): void {
 
   attachWindowLoggers(mainWindow)
 
+  mainWindow.on('close', (event) => {
+    if (process.platform !== 'win32' || isQuitting) return
+    event.preventDefault()
+    mainWindow.hide()
+  })
+
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
   const openAllowedExternalUrl = (url: string): void => {
@@ -202,6 +248,9 @@ app.whenReady().then(() => {
   if (!is.dev) setupAutoUpdater()
   createWindow()
 
+  const [mainWindow] = BrowserWindow.getAllWindows()
+  if (mainWindow) createTray(mainWindow)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -212,6 +261,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
+  tray?.destroy()
+  tray = null
   appendAppLog('info', 'app', 'App quitting')
   clearAllGitRunChanges()
   piClientManager.stop().catch(() => {})
