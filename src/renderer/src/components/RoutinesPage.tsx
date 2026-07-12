@@ -146,13 +146,14 @@ function articleWorkflowTemplate(workspacePath: string, channelId?: string): For
       step('agent', '事实梳理', {
         prompt:
           '围绕主题「{{routine.input}}」联网检索,整理 5–8 条真实、可核查的关键事实/数据/案例,' +
-          '每条注明简短来源。只输出事实清单,不要写成文章。',
+          '每条必须注明来源名称和完整可点击的 http(s) URL。只输出事实清单,不要写成文章。',
       }),
       step('agent', '写正文', {
         prompt:
           '你是资深公众号编辑。基于下面的事实清单,就主题「{{routine.input}}」写一篇 1200–2000 字的微信公众号文章:' +
           '有吸引力的标题、开头钩子、分小标题的正文、结尾金句。用 Markdown,# 作文章标题,## 作小标题。\n\n' +
-          '事实清单:\n{{steps.事实梳理.output}}',
+          '事实清单:\n{{steps.事实梳理.output}}\n\n' +
+          '文末必须增加“资料来源”小节，保留并整理事实清单中的所有完整 http(s) URL，使用 Markdown 链接格式，不要只写来源名称。',
       }),
       step('imagegen', '配图', {
         engine: 'openai',

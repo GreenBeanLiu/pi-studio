@@ -187,19 +187,31 @@ function saveStore(store: Store): void {
 
 /** Upgrade the previously saved 3-step article workflow without touching custom workflows. */
 function upgradeLegacyArticleRoutine(routine: Routine, feishuChannelId?: string): boolean {
-  if (routine.name !== '微信公众号文章生成' || routine.steps.some((step) => step.type === 'feishu-doc')) return false
+  if (routine.name !== '微信公众号文章生成') return false
+  let changed = false
+  const facts = routine.steps.find((step) => step.name === '事实梳理')
+  if (facts?.prompt && !facts.prompt.includes('完整可点击')) {
+    facts.prompt += ' 每条必须注明来源名称和完整可点击的 http(s) URL。'
+    changed = true
+  }
   const source = routine.steps.find((step) => step.name === '写正文') ?? routine.steps.find((step) => step.name === '公众号初稿')
-  if (!source) return false
-  routine.steps.push({
-    id: randomUUID(),
-    name: '存飞书文档',
-    type: 'feishu-doc',
-    message: `{{steps.${source.name}.output}}`,
-    path: '{{routine.input}} · {{trigger.time}}',
-    ...(feishuChannelId ? { channelId: feishuChannelId } : {}),
-  })
-  routine.pushEachStep = true
-  return true
+  if (source?.prompt && !source.prompt.includes('资料来源')) {
+    source.prompt += ' 文末必须增加“资料来源”小节，保留所有完整 http(s) URL，并使用 Markdown 链接格式。'
+    changed = true
+  }
+  if (source && !routine.steps.some((step) => step.type === 'feishu-doc')) {
+    routine.steps.push({
+      id: randomUUID(),
+      name: '存飞书文档',
+      type: 'feishu-doc',
+      message: `{{steps.${source.name}.output}}`,
+      path: '{{routine.input}} · {{trigger.time}}',
+      ...(feishuChannelId ? { channelId: feishuChannelId } : {}),
+    })
+    changed = true
+  }
+  if (changed) routine.pushEachStep = true
+  return changed
 }
 
 export function scheduleLabel(s: RoutineSchedule): string {
@@ -221,7 +233,7 @@ export function scheduleLabel(s: RoutineSchedule): string {
 // ── 变量插值 ─────────────────────────────────────────────────────
 
 /** 每个节点跑完后的产物,供后续节点用 {{…}} 引用 */
-type StepProduct = { output: string; imageUrl?: string; artifactPath?: string }
+type StepProduct = { output: string; imageUrl?: string; imageDataUrl?: string; artifactPath?: string }
 
 type RunContext = {
   routine: Routine
@@ -381,6 +393,7 @@ async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<Step
   return {
     output: result.publicUrl ?? '(图片已生成,无公网链接)',
     ...(result.publicUrl ? { imageUrl: result.publicUrl } : {}),
+    ...(!result.publicUrl && result.dataUrl ? { imageDataUrl: result.dataUrl } : {}),
   }
 }
 
@@ -468,7 +481,10 @@ async function runFeishuDocStep(
   const content = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
   if (!content.trim()) throw new Error('没有可写入飞书文档的正文内容')
   const title = interpolate(step.path?.trim() || `${routine.name} · {{trigger.time}}`, ctx)
-  const { url } = await createFeishuDoc(channel, title, content)
+  const imageUrls = [...ctx.products.values()]
+    .map((product) => product.imageUrl ?? product.imageDataUrl)
+    .filter((url): url is string => !!url)
+  const { url } = await createFeishuDoc(channel, title, content, imageUrls)
   return { output: `[打开飞书文档](${url})`, artifactPath: url }
 }
 

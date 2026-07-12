@@ -152,6 +152,9 @@ function buildFeishuCard(payload: NotifyPayload): FeishuCard {
     },
     elements: [
       { tag: 'div', text: { tag: 'lark_md', content: content || '（无正文内容）' } },
+      ...(payload.imageUrls?.[0]
+        ? [{ tag: 'img', img_url: payload.imageUrls[0], alt: { tag: 'plain_text', content: '配图' }, preview: true }]
+        : []),
       { tag: 'hr' },
       ...(imageLines ? [{ tag: 'div', text: { tag: 'lark_md', content: imageLines } }] : []),
       {
@@ -197,7 +200,14 @@ async function feishuJson(
     | (Record<string, unknown> & { code?: number; msg?: string })
     | null
   if (!data) throw new Error(`Feishu API ${res.status}: empty response`)
-  if (data.code !== 0) throw new Error(`Feishu API ${data.code}: ${data.msg ?? '(no message)'}`)
+  if (data.code !== 0) {
+    if (data.code === 1770040) {
+      throw new Error(
+        'Feishu API 1770040: no folder permission（请在飞书应用后台开通 drive:drive 或 drive:drive.metadata:readonly，并将应用机器人所在群对该文件夹授予可管理权限）',
+      )
+    }
+    throw new Error(`Feishu API ${data.code}: ${data.msg ?? '(no message)'}`)
+  }
   return data
 }
 
@@ -247,9 +257,25 @@ async function sendFeishuViaApp(
 // ── 飞书云文档:建 docx + 写正文 ──────────────────────────────────
 
 /** Markdown 简单转 docx 块:# / ## / ### → 标题,其余整行 → 文本段落。 */
+function markdownTextElements(content: string): Array<Record<string, unknown>> {
+  const elements: Array<Record<string, unknown>> = []
+  const pattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s)]+)/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(content))) {
+    if (match.index > cursor) elements.push({ text_run: { content: content.slice(cursor, match.index) } })
+    const label = match[1] ?? match[3]
+    const url = (match[2] ?? match[3]).replace(/[，。；、）)]+$/g, '')
+    elements.push({ text_run: { content: label, text_element_style: { link: { url: encodeURIComponent(url) } } } })
+    cursor = match.index + match[0].length
+  }
+  if (cursor < content.length) elements.push({ text_run: { content: content.slice(cursor) } })
+  return elements.length ? elements : [{ text_run: { content } }]
+}
+
 function markdownToDocxBlocks(markdown: string): Array<Record<string, unknown>> {
   const runs = (content: string): Record<string, unknown> => ({
-    elements: [{ text_run: { content: content.slice(0, 9000) } }],
+    elements: markdownTextElements(content.slice(0, 9000)),
     style: {},
   })
   const blocks: Array<Record<string, unknown>> = []
@@ -267,6 +293,46 @@ function markdownToDocxBlocks(markdown: string): Array<Record<string, unknown>> 
   return blocks.length ? blocks : [{ block_type: 2, text: runs('(空)') }]
 }
 
+async function uploadFeishuDocImage(token: string, documentId: string, blockId: string, imageUrl: string, index: number): Promise<void> {
+  let buffer: Buffer
+  let contentType = 'image/png'
+  if (imageUrl.startsWith('data:')) {
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(imageUrl)
+    if (!match) throw new Error('图片 data URL 无法解析')
+    contentType = match[1]
+    buffer = Buffer.from(match[2], 'base64')
+  } else {
+    const response = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) })
+    if (!response.ok) throw new Error(`下载配图失败: HTTP ${response.status}`)
+    contentType = response.headers.get('content-type')?.split(';')[0] || contentType
+    buffer = Buffer.from(await response.arrayBuffer())
+  }
+  if (!buffer.length) throw new Error('配图内容为空')
+  if (buffer.length > 20 * 1024 * 1024) throw new Error('配图超过飞书云文档 20MB 限制')
+  const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
+  const form = new FormData()
+  form.append('file_name', `pi-studio-cover-${index + 1}.${extension}`)
+  form.append('parent_type', 'docx_image')
+  form.append('parent_node', blockId)
+  form.append('size', String(buffer.length))
+  form.append('file', new Blob([new Uint8Array(buffer)], { type: contentType }), `pi-studio-cover-${index + 1}.${extension}`)
+  const upload = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+  })
+  const data = (await upload.json().catch(() => null)) as { code?: number; msg?: string; data?: { file_token?: string } } | null
+  if (!data || data.code !== 0 || !data.data?.file_token) {
+    throw new Error(`上传飞书文档配图失败: ${data?.code ?? upload.status} ${data?.msg ?? ''}`.trim())
+  }
+  await feishuJson(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${blockId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replace_image: { token: data.data.file_token } }),
+  })
+}
+
 /**
  * 建飞书云文档并写入正文,返回文档 URL。需要应用开通 docx:document 权限。
  * 传了 folderToken 就建在该文件夹(用户可见),否则建在应用空间(可能只有应用可见)。
@@ -275,6 +341,7 @@ export async function createFeishuDoc(
   channel: Extract<Channel, { type: 'feishu-app' }>,
   title: string,
   markdown: string,
+  imageUrls: string[] = [],
 ): Promise<{ url: string; documentId: string }> {
   const token = await getFeishuTenantToken(channel.appId, channel.appSecret)
   const created = await feishuJson('https://open.feishu.cn/open-apis/docx/v1/documents', {
@@ -299,6 +366,19 @@ export async function createFeishuDoc(
         body: JSON.stringify({ children: blocks.slice(i, i + 50), index: i }),
       },
     )
+  }
+  for (let i = 0; i < imageUrls.length; i += 1) {
+    const createdImage = await feishuJson(
+      `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ children: [{ block_type: 27, image: {} }], index: blocks.length + i }),
+      },
+    )
+    const imageBlockId = (createdImage.data as { children?: Array<{ block_id?: string }> } | undefined)?.children?.[0]?.block_id
+    if (!imageBlockId) throw new Error('创建飞书文档图片块失败:未返回 block_id')
+    await uploadFeishuDocImage(token, documentId, imageBlockId, imageUrls[i], i)
   }
   return { url: `https://feishu.cn/docx/${documentId}`, documentId }
 }
