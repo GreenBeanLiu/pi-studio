@@ -305,6 +305,7 @@ export type Channel = {
   appId?: string
   appSecret?: string
   chatId?: string
+  folderToken?: string
 }
 
 export type RoutineRun = {

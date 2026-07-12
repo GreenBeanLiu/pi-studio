@@ -12,6 +12,7 @@ import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, createFeishuDoc, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
+import { isRoutineStepComplete } from './routine-step-validation'
 import {
   RoutineScheduler,
   dueSlotKey,
@@ -182,6 +183,23 @@ function loadStore(): Store {
 
 function saveStore(store: Store): void {
   writeFileSync(storePath(), JSON.stringify(store, null, 2), 'utf8')
+}
+
+/** Upgrade the previously saved 3-step article workflow without touching custom workflows. */
+function upgradeLegacyArticleRoutine(routine: Routine, feishuChannelId?: string): boolean {
+  if (routine.name !== '微信公众号文章生成' || routine.steps.some((step) => step.type === 'feishu-doc')) return false
+  const source = routine.steps.find((step) => step.name === '写正文') ?? routine.steps.find((step) => step.name === '公众号初稿')
+  if (!source) return false
+  routine.steps.push({
+    id: randomUUID(),
+    name: '存飞书文档',
+    type: 'feishu-doc',
+    message: `{{steps.${source.name}.output}}`,
+    path: '{{routine.input}} · {{trigger.time}}',
+    ...(feishuChannelId ? { channelId: feishuChannelId } : {}),
+  })
+  routine.pushEachStep = true
+  return true
 }
 
 export function scheduleLabel(s: RoutineSchedule): string {
@@ -451,7 +469,7 @@ async function runFeishuDocStep(
   if (!content.trim()) throw new Error('没有可写入飞书文档的正文内容')
   const title = interpolate(step.path?.trim() || `${routine.name} · {{trigger.time}}`, ctx)
   const { url } = await createFeishuDoc(channel, title, content)
-  return { output: `飞书文档已创建:${url}`, artifactPath: url }
+  return { output: `[打开飞书文档](${url})`, artifactPath: url }
 }
 
 async function executeRoutine(store: Store, routine: Routine): Promise<void> {
@@ -632,15 +650,14 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
 
 // ── 注册 ─────────────────────────────────────────────────────────
 
-const stepIsComplete = (step: RoutineStep): boolean => {
-  if (!step.name.trim()) return false
-  if (step.type === 'notify') return !!step.channelId
-  if (step.type === 'review' || step.type === 'export') return true
-  return !!step.prompt?.trim()
-}
+const stepIsComplete = isRoutineStepComplete
 
 export function registerRoutines(): void {
   const store = loadStore()
+  const feishuChannelId = loadChannels().find((channel) => channel.type === 'feishu-app')?.id
+  let migrated = false
+  for (const routine of store.routines) migrated = upgradeLegacyArticleRoutine(routine, feishuChannelId) || migrated
+  if (migrated) saveStore(store)
   const scheduler = new RoutineScheduler<Routine>({
     maxConcurrent: MAX_CONCURRENT,
     clock: () => new Date(),

@@ -681,6 +681,11 @@ export default function SettingsModal({
                           onChange={(e) => setChannelDraft({ ...channelDraft, chatId: e.target.value })}
                           placeholder="群 chat_id（oc_…，留空自动用机器人所在的第一个群）"
                         />
+                        <Input
+                          value={channelDraft.folderToken ?? ''}
+                          onChange={(e) => setChannelDraft({ ...channelDraft, folderToken: e.target.value })}
+                          placeholder="云文档文件夹 token（分享链接中 /folder/ 后的字符串）"
+                        />
                       </>
                     )}
                     <div className={styles.actionRow}>

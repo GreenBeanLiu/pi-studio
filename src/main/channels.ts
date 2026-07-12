@@ -132,13 +132,27 @@ const HEADER_TEMPLATE: Record<NotifyPayload['status'], string> = {
 
 function buildFeishuCard(payload: NotifyPayload): FeishuCard {
   const imageLines = (payload.imageUrls ?? []).map((u, i) => `[🖼 图片 ${i + 1}](${u})`).join('\n')
+  const content = payload.markdown
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => {
+      const heading = /^(#{1,3})\s+(.*)$/.exec(line.trim())
+      if (heading) return `**${heading[2]}**`
+      if (/^[-*]\s+/.test(line.trim())) return `• ${line.trim().slice(2)}`
+      return line
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .slice(0, 2800)
   return {
+    config: { wide_screen_mode: true, enable_forward: true },
     header: {
       template: HEADER_TEMPLATE[payload.status],
       title: { tag: 'plain_text', content: payload.title },
     },
     elements: [
-      { tag: 'div', text: { tag: 'lark_md', content: payload.markdown.slice(0, 3000) } },
+      { tag: 'div', text: { tag: 'lark_md', content: content || '（无正文内容）' } },
+      { tag: 'hr' },
       ...(imageLines ? [{ tag: 'div', text: { tag: 'lark_md', content: imageLines } }] : []),
       {
         tag: 'note',
