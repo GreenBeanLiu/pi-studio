@@ -112,7 +112,7 @@ const emptyForm = (workspacePath: string): FormState => ({
   notify: 'error',
 })
 
-function articleWorkflowTemplate(workspacePath: string): FormState {
+function articleWorkflowTemplate(workspacePath: string, channelId?: string): FormState {
   return {
     ...emptyForm(workspacePath),
     name: '微信公众号文章生成',
@@ -151,6 +151,7 @@ function articleWorkflowTemplate(workspacePath: string): FormState {
       {
         ...createStep('notify'),
         name: '发送预览提醒',
+        ...(channelId ? { channelId } : {}),
         message: '公众号草稿已生成：{{prev.output}}\n请打开文件人工确认后再发布。',
       },
     ],
@@ -656,7 +657,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           >
             新建
           </Button>
-          <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? ''))}>
+          <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? '', channels[0]?.id))}>
             公众号模板
           </Button>
         </div>
