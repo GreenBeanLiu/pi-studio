@@ -10,9 +10,13 @@ import {
   RefreshCw,
   Brush,
   Eraser,
+  Redo2,
   Upload,
   Trash2,
+  Undo2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import {
   api,
@@ -70,14 +74,19 @@ const useStyles = createStyles(({ token, css }) => ({
   page: css`
     flex: 1;
     min-height: 0;
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(320px, 2fr) minmax(0, 3fr);
     gap: 16px;
     padding: 16px;
     background: ${token.colorBgLayout};
+
+    @media (max-width: 900px) {
+      grid-template-columns: 1fr;
+      overflow-y: auto;
+    }
   `,
   panel: css`
-    width: 360px;
-    flex-shrink: 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -116,7 +125,6 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
   gallery: css`
-    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -126,6 +134,15 @@ const useStyles = createStyles(({ token, css }) => ({
     border-radius: ${token.borderRadiusLG}px;
     padding: 16px;
     overflow-y: auto;
+  `,
+  maskViewport: css`
+    position: relative;
+    overflow: auto;
+    max-height: 60vh;
+    min-height: 260px;
+    padding: 12px;
+    background: #181818;
+    overscroll-behavior: contain;
   `,
   galleryHead: css`
     display: flex;
@@ -877,12 +894,16 @@ function MaskEditor({
   const maskRef = useRef<HTMLCanvasElement>(null)
   const drawingRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
-  const historyRef = useRef<Array<{ paint: ImageData; mask: ImageData }>>([])
-  const [brushSize, setBrushSize] = useState(24)
+  type CanvasSnapshot = { paint: ImageData; mask: ImageData }
+  const historyRef = useRef<CanvasSnapshot[]>([])
+  const redoRef = useRef<CanvasSnapshot[]>([])
+  const [brushSize, setBrushSize] = useState(16)
   const [mode, setMode] = useState<'paint' | 'erase'>('paint')
   const [ready, setReady] = useState(false)
   const [hasPainted, setHasPainted] = useState(false)
   const [undoCount, setUndoCount] = useState(0)
+  const [redoCount, setRedoCount] = useState(0)
+  const [zoom, setZoom] = useState(1)
 
   function resetCanvases() {
     const image = imageRef.current
@@ -900,19 +921,69 @@ function MaskEditor({
     maskContext.fillStyle = '#fff'
     maskContext.fillRect(0, 0, mask.width, mask.height)
     historyRef.current = []
+    redoRef.current = []
     setUndoCount(0)
+    setRedoCount(0)
     setHasPainted(false)
     setMode('paint')
+    setZoom(1)
     setReady(true)
   }
 
   useEffect(() => {
     if (!open) return
     setReady(false)
-    setBrushSize(24)
+    setBrushSize(16)
     const image = imageRef.current
     if (image?.complete) requestAnimationFrame(resetCanvases)
   }, [open, src])
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+      const key = event.key.toLowerCase()
+      const modifier = event.ctrlKey || event.metaKey
+      if (modifier && key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (modifier && key === 'y') {
+        event.preventDefault()
+        redo()
+        return
+      }
+      if (key === 'b') setMode('paint')
+      else if (key === 'e') setMode('erase')
+      else if (key === '[') setBrushSize((size) => Math.max(4, size - 4))
+      else if (key === ']') setBrushSize((size) => Math.min(72, size + 4))
+      else if (key === '+' || key === '=') setZoom((value) => Math.min(3, value + 0.1))
+      else if (key === '-' || key === '_') setZoom((value) => Math.max(1, value - 0.1))
+      else if (key === '0') setZoom(1)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open])
+
+  function snapshot(): CanvasSnapshot | null {
+    const paint = paintRef.current
+    const mask = maskRef.current
+    const paintContext = paint?.getContext('2d')
+    const maskContext = mask?.getContext('2d')
+    if (!paint || !mask || !paintContext || !maskContext) return null
+    return {
+      paint: paintContext.getImageData(0, 0, paint.width, paint.height),
+      mask: maskContext.getImageData(0, 0, mask.width, mask.height),
+    }
+  }
+
+  function restore(snapshotValue: CanvasSnapshot) {
+    paintRef.current?.getContext('2d')?.putImageData(snapshotValue.paint, 0, 0)
+    maskRef.current?.getContext('2d')?.putImageData(snapshotValue.mask, 0, 0)
+  }
 
   function point(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = paintRef.current
@@ -945,11 +1016,10 @@ function MaskEditor({
     paintContext.strokeStyle = 'rgba(255, 64, 64, 0.48)'
     paintContext.lineTo(x, y)
     paintContext.stroke()
-    maskContext.globalCompositeOperation = mode === 'erase' ? 'source-over' : 'destination-out'
     maskContext.strokeStyle = '#fff'
+    maskContext.globalCompositeOperation = mode === 'erase' ? 'source-over' : 'destination-out'
     maskContext.beginPath()
     maskContext.moveTo(last.x, last.y)
-    maskContext.globalCompositeOperation = 'destination-out'
     maskContext.lineCap = 'round'
     maskContext.lineJoin = 'round'
     maskContext.lineWidth = width
@@ -973,14 +1043,11 @@ function MaskEditor({
     const paintContext = paintCanvas.getContext('2d')
     const maskContext = maskCanvas.getContext('2d')
     if (!paintContext || !maskContext) return
-    historyRef.current = [
-      ...historyRef.current.slice(-29),
-      {
-        paint: paintContext.getImageData(0, 0, paintCanvas.width, paintCanvas.height),
-        mask: maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height),
-      },
-    ]
+    const before = snapshot()
+    if (before) historyRef.current = [...historyRef.current.slice(-29), before]
+    redoRef.current = []
     setUndoCount(historyRef.current.length)
+    setRedoCount(0)
     paintContext.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over'
     paintContext.beginPath()
     paintContext.fillStyle = 'rgba(255, 64, 64, 0.48)'
@@ -995,15 +1062,29 @@ function MaskEditor({
   }
 
   function undo() {
-    const paint = paintRef.current
-    const mask = maskRef.current
-    if (!paint || !mask || historyRef.current.length === 0) return
+    const current = snapshot()
     const previous = historyRef.current.pop()
-    if (!previous) return
-    paint.getContext('2d')?.putImageData(previous.paint, 0, 0)
-    mask.getContext('2d')?.putImageData(previous.mask, 0, 0)
+    if (!current || !previous) return
+    redoRef.current = [...redoRef.current.slice(-29), current]
+    restore(previous)
     setUndoCount(historyRef.current.length)
+    setRedoCount(redoRef.current.length)
     setHasPainted(historyRef.current.length > 0)
+  }
+
+  function redo() {
+    const current = snapshot()
+    const next = redoRef.current.pop()
+    if (!current || !next) return
+    historyRef.current = [...historyRef.current.slice(-29), current]
+    restore(next)
+    setUndoCount(historyRef.current.length)
+    setRedoCount(redoRef.current.length)
+    setHasPainted(true)
+  }
+
+  function changeZoom(delta: number) {
+    setZoom((value) => Math.min(3, Math.max(1, Math.round((value + delta) * 10) / 10)))
   }
 
   return (
@@ -1023,19 +1104,31 @@ function MaskEditor({
       <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}>
         红色区域会被重绘；未涂抹区域保留。白色保留，透明区域重绘。
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <Button size="small" type={mode === 'paint' ? 'primary' : 'default'} icon={<Brush size={13} />} onClick={() => setMode('paint')}>
           涂抹
         </Button>
         <Button size="small" type={mode === 'erase' ? 'primary' : 'default'} icon={<Eraser size={13} />} onClick={() => setMode('erase')}>
           橡皮擦
         </Button>
-        <Button size="small" disabled={!undoCount} onClick={undo}>
+        <Tooltip title="Ctrl/Cmd + Z">
+          <Button size="small" disabled={!undoCount} icon={<Undo2 size={13} />} onClick={undo}>
           撤销
-        </Button>
+          </Button>
+        </Tooltip>
+        <Tooltip title="Ctrl/Cmd + Shift + Z 或 Ctrl/Cmd + Y">
+          <Button size="small" disabled={!redoCount} icon={<Redo2 size={13} />} onClick={redo}>
+            重做
+          </Button>
+        </Tooltip>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8c8c8c' }}>B 涂抹 · E 橡皮 · [ ] 笔刷</span>
       </div>
-      <div style={{ textAlign: 'center', background: '#181818', padding: 12, minHeight: 260 }}>
-        <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', maxHeight: '60vh' }}>
+      <div style={{ position: 'relative', overflow: 'auto', maxHeight: '60vh', minHeight: 260, padding: 12, background: '#181818', overscrollBehavior: 'contain' }} onWheel={(event) => {
+        event.preventDefault()
+        changeZoom(event.deltaY < 0 ? 0.1 : -0.1)
+      }}>
+        <div style={{ textAlign: 'center', minWidth: '100%' }}>
+        <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', maxHeight: '60vh', transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
           <img
             ref={imageRef}
             src={src}
@@ -1060,10 +1153,14 @@ function MaskEditor({
           />
           <canvas ref={maskRef} hidden />
         </div>
+        </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+        <Button size="small" icon={<ZoomOut size={13} />} onClick={() => changeZoom(-0.1)} disabled={zoom <= 1} />
+        <span style={{ width: 42, textAlign: 'center', fontSize: 12 }}>{Math.round(zoom * 100)}%</span>
+        <Button size="small" icon={<ZoomIn size={13} />} onClick={() => changeZoom(0.1)} disabled={zoom >= 3} />
         <span style={{ fontSize: 12 }}>笔刷大小</span>
-        <Slider min={4} max={96} value={brushSize} onChange={setBrushSize} style={{ flex: 1 }} />
+        <Slider min={4} max={72} value={brushSize} onChange={setBrushSize} style={{ flex: 1 }} />
         <span style={{ width: 36, textAlign: 'right', fontSize: 12 }}>{brushSize}px</span>
       </div>
     </Modal>
