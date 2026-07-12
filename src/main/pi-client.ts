@@ -1,7 +1,9 @@
 import { existsSync } from 'fs'
 import { join } from 'path'
-import type { RpcClient as RpcClientType } from '@earendil-works/pi-coding-agent'
-import type { AgentEvent } from '@earendil-works/pi-agent-core'
+import type {
+  AgentSessionEvent,
+  RpcClient as RpcClientType,
+} from '@earendil-works/pi-coding-agent'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
 import { loadSettings } from './settings'
@@ -11,7 +13,7 @@ import {
   sandboxSessionPathToHost,
 } from './sandbox'
 
-export type PiEventListener = (event: AgentEvent) => void
+export type PiEventListener = (event: AgentSessionEvent) => void
 export type AgentStatusEvent =
   | { status: 'started'; cwd: string; restoredSession: boolean; sessionFile?: string }
   | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }

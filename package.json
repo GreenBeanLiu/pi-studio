@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.3.40",
+  "version": "0.3.41",
   "description": "Windows desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
@@ -18,12 +18,12 @@
     "release:dry": "node scripts/release-local.mjs --dry-run --skip-build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.10",
+    "@earendil-works/pi-coding-agent": "^0.80.6",
     "electron-updater": "^6.8.3"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "^0.79.10",
-    "@earendil-works/pi-ai": "^0.79.10",
+    "@earendil-works/pi-agent-core": "^0.80.6",
+    "@earendil-works/pi-ai": "^0.80.6",
     "@electron-toolkit/eslint-config-prettier": "^2.0.0",
     "@electron-toolkit/eslint-config-ts": "^2.0.0",
     "@electron-toolkit/preload": "^3.0.1",

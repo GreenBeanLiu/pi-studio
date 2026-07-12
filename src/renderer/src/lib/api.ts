@@ -1,4 +1,5 @@
-import type { AgentEvent, AgentMessage } from '@earendil-works/pi-agent-core'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
+import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type {
   AssistantMessage,
   UserMessage,
@@ -7,7 +8,7 @@ import type {
   ThinkingContent,
   ImageContent,
   ToolCall,
-} from '@earendil-works/pi-ai/base'
+} from '@earendil-works/pi-ai/compat'
 
 // Type-safe wrapper around window.api (exposed by preload)
 declare global {
@@ -441,7 +442,7 @@ export type ExtensionUiResponse =
   | { type: 'extension_ui_response'; id: string; confirmed: boolean }
   | { type: 'extension_ui_response'; id: string; cancelled: true }
 
-export type PiRuntimeEvent = AgentEvent | ExtensionUiRequest
+export type PiRuntimeEvent = AgentSessionEvent | ExtensionUiRequest
 
 export type AgentStatusEvent =
   | { status: 'started'; cwd: string; restoredSession: boolean; sessionFile?: string }
@@ -479,7 +480,7 @@ export type GitChangedFile = {
 }
 
 export type {
-  AgentEvent,
+  AgentSessionEvent,
   AgentMessage,
   AssistantMessage,
   UserMessage,
