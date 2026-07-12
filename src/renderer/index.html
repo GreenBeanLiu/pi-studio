@@ -31,7 +31,7 @@
             save: () => Promise.resolve({ ok: true, path: 'mock-diagnostics.json' }),
           },
           settings: {
-            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, subagentsEnabled: true, imageEngine: '', comfyDir: '', comfyPythonPath: '', comfyLaunchArgs: '', comfyCheckpoint: '', cloudImageRelay: '', cloudImageKey: '', recentWorkspaces: [] }),
+            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, sandboxEnabled: false, subagentsEnabled: true, imageEngine: '', comfyDir: '', comfyPythonPath: '', comfyLaunchArgs: '', comfyCheckpoint: '', cloudImageRelay: '', cloudImageKey: '', recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),
             testConnection: () => Promise.resolve({ ok: true, message: 'mock connection ok' }),
             listModels: () => Promise.resolve({ ok: true, message: 'mock models loaded', models: ['gpt-5.5', 'gpt-5.4'] }),
@@ -40,6 +40,12 @@
             load: () => Promise.resolve({ scope: 'default', policy: { commandAllowlist: [], commandBlocklist: [], writeAllowlist: [], writeBlocklist: [], requireConfirmationForDangerousCommands: true, blockProtectedPaths: true, blockOutsideWorkspace: true } }),
             save: (policy) => Promise.resolve({ ok: true, scope: 'default', policy }),
             addRule: ({ target, rule }) => Promise.resolve({ ok: true, scope: 'default', policy: { commandAllowlist: target === 'commandAllowlist' ? [rule] : [], commandBlocklist: target === 'commandBlocklist' ? [rule] : [], writeAllowlist: target === 'writeAllowlist' ? [rule] : [], writeBlocklist: target === 'writeBlocklist' ? [rule] : [], requireConfirmationForDangerousCommands: true, blockProtectedPaths: true, blockOutsideWorkspace: true } }),
+          },
+          sandbox: {
+            detect: () => Promise.resolve({ docker: { cliFound: false, daemonRunning: false, version: '' }, wsl: { available: false, distros: [] } }),
+            imageStatus: () => Promise.resolve({ tag: 'pi-studio-sandbox:preview', exists: false, daemonRunning: false }),
+            buildImage: () => Promise.resolve({ error: 'mock: not running in Electron' }),
+            onBuildProgress: () => () => {},
           },
           workspace: {
             list: () => Promise.resolve([]),

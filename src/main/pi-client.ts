@@ -4,6 +4,12 @@ import type { RpcClient as RpcClientType } from '@earendil-works/pi-coding-agent
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
+import { loadSettings } from './settings'
+import {
+  prepareSandboxLaunch,
+  sandboxSessionPathToContainer,
+  sandboxSessionPathToHost,
+} from './sandbox'
 
 export type PiEventListener = (event: AgentEvent) => void
 export type AgentStatusEvent =
@@ -62,6 +68,7 @@ class PiClientManager {
   private workspacePath: string | null = null
   private unsubscribe: (() => void) | null = null
   private lastSessionFile: string | null = null
+  private sandboxSessionPaths = false
   private activeRunId = 0
   private expectedStopRunIds = new Set<number>()
 
@@ -89,7 +96,13 @@ class PiClientManager {
 
     const runId = ++this.activeRunId
     const RpcClient = await loadRpcClient()
-    const client = new RpcClient({ cwd, env, provider, model, cliPath: resolvePiCliPath() })
+    // 沙箱模式:改用中继 shim 让 pi 在 Docker 容器里跑(daemon/镜像没就绪会抛错)
+    const sandboxEnabled = loadSettings().sandboxEnabled
+    const launch = sandboxEnabled
+      ? await prepareSandboxLaunch(cwd, env)
+      : { cliPath: resolvePiCliPath(), env }
+    this.sandboxSessionPaths = sandboxEnabled
+    const client = new RpcClient({ cwd, env: launch.env, provider, model, cliPath: launch.cliPath })
     await client.start()
     this.attachAgentProcessLoggers(client, cwd, runId, onStatus)
 
@@ -100,7 +113,10 @@ class PiClientManager {
     let restoredSession = false
     if (restoreSessionFile) {
       try {
-        const result = await client.switchSession(restoreSessionFile)
+        const sessionPath = this.sandboxSessionPaths
+          ? sandboxSessionPathToContainer(restoreSessionFile)
+          : restoreSessionFile
+        const result = await client.switchSession(sessionPath)
         restoredSession = !(result as { cancelled?: boolean }).cancelled
         if (restoredSession) this.lastSessionFile = restoreSessionFile
       } catch (err) {
@@ -113,7 +129,7 @@ class PiClientManager {
     }
 
     try {
-      const state = await client.getState()
+      const state = await this.getState()
       if (state?.sessionFile) this.lastSessionFile = state.sessionFile
     } catch (err) {
       appendAppLog('warn', 'agent.state', 'Failed to read initial agent state', normalizeError(err))
@@ -145,6 +161,7 @@ class PiClientManager {
     }
     this.client = null
     this.workspacePath = null
+    this.sandboxSessionPaths = false
   }
 
   getWorkspacePath(): string | null {
@@ -255,8 +272,12 @@ class PiClientManager {
 
   async getState(): Promise<Awaited<ReturnType<RpcClient['getState']>>> {
     const state = await this.require().getState()
-    if (state?.sessionFile) this.lastSessionFile = state.sessionFile
-    return state
+    if (!state?.sessionFile) return state
+    const sessionFile = this.sandboxSessionPaths
+      ? sandboxSessionPathToHost(state.sessionFile)
+      : state.sessionFile
+    this.lastSessionFile = sessionFile
+    return sessionFile === state.sessionFile ? state : { ...state, sessionFile }
   }
 
   getMessages(): ReturnType<RpcClient['getMessages']> {
@@ -292,7 +313,10 @@ class PiClientManager {
   }
 
   switchSession(sessionPath: string): ReturnType<RpcClient['switchSession']> {
-    return this.require().switchSession(sessionPath)
+    const path = this.sandboxSessionPaths
+      ? sandboxSessionPathToContainer(sessionPath)
+      : sessionPath
+    return this.require().switchSession(path)
   }
 
   getCommands(): ReturnType<RpcClient['getCommands']> {

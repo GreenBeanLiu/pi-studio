@@ -23,10 +23,7 @@ type SettingsData = {
   heliconeApiKey: string
   /** Blocks dangerous commands and writes to sensitive paths before tools execute */
   securityGuardEnabled: boolean
-  /**
-   * 沙箱模式偏好(Docker/WSL 隔离运行 pi)。当前仅持久化偏好 + 探测环境,
-   * 执行侧尚未接入(见 docs/sandbox-mode-plan.md),所以打开不代表已隔离。
-   */
+  /** Docker 沙箱模式：通过 RPC shim 在版本绑定的容器镜像内运行 pi。 */
   sandboxEnabled: boolean
   /** Enables bundled scout/planner/worker/reviewer subagent workflow prompts */
   subagentsEnabled: boolean

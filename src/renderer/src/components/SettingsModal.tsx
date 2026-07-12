@@ -10,6 +10,7 @@ import {
   type ProviderConnectionResult,
   type ProviderModelListResult,
   type SandboxDetect,
+  type SandboxImageStatus,
   type SecurityPolicy,
 } from '../lib/api'
 
@@ -241,15 +242,38 @@ export default function SettingsModal({
   const [policyError, setPolicyError] = useState<string | null>(null)
   const [sandboxDetect, setSandboxDetect] = useState<SandboxDetect | null>(null)
   const [sandboxDetecting, setSandboxDetecting] = useState(false)
+  const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
+  const [sandboxBuilding, setSandboxBuilding] = useState(false)
+  const [sandboxBuildLog, setSandboxBuildLog] = useState('')
 
   async function detectSandbox() {
     setSandboxDetecting(true)
     try {
-      setSandboxDetect(await api.sandbox.detect())
+      const [d, img] = await Promise.all([api.sandbox.detect(), api.sandbox.imageStatus()])
+      setSandboxDetect(d)
+      setSandboxImage(img)
     } catch {
       setSandboxDetect(null)
     } finally {
       setSandboxDetecting(false)
+    }
+  }
+
+  async function buildSandboxImage() {
+    setSandboxBuilding(true)
+    setSandboxBuildLog('开始构建镜像（首次约几分钟，拉取 node 基础镜像 + 安装 pi）…')
+    const off = api.sandbox.onBuildProgress((line) => setSandboxBuildLog(line))
+    try {
+      const r = await api.sandbox.buildImage()
+      if ('error' in r) {
+        setSandboxBuildLog(`构建失败：${r.error}`)
+      } else {
+        setSandboxBuildLog('构建完成 ✓')
+        await detectSandbox()
+      }
+    } finally {
+      off()
+      setSandboxBuilding(false)
     }
   }
 
@@ -719,11 +743,11 @@ export default function SettingsModal({
 
               <div className={styles.section}>
                 <span className={styles.label}>
-                  沙箱模式（Docker / WSL）
+                  沙箱模式（Docker）
                   <Tag color="orange" style={{ marginLeft: 8 }}>
-                    开发中
+                    实验性
                   </Tag>
-                  <span className={styles.labelHint}>在隔离环境里运行 agent，避免它直接碰主机</span>
+                  <span className={styles.labelHint}>在 Docker 容器里隔离运行 agent，避免它直接碰主机</span>
                 </span>
                 <div className={styles.actionRow}>
                   <Switch
@@ -732,17 +756,17 @@ export default function SettingsModal({
                     onChange={(checked) => patch({ sandboxEnabled: checked })}
                   />
                   <span className={styles.labelHint}>
-                    {settings.sandboxEnabled ? '已开启（偏好）' : '已关闭'}
+                    {settings.sandboxEnabled ? '已开启' : '已关闭'}
                   </span>
                 </div>
                 <Alert
-                  type="warning"
+                  type="info"
                   showIcon
-                  message="当前仅保存偏好，执行侧尚未接入 —— 打开不代表已隔离。"
-                  description="真隔离方案与实现计划见仓库 docs/sandbox-mode-plan.md。"
+                  message="开启后需 Docker 运行 + 镜像已构建，重新打开工作区才隔离生效。"
+                  description="工作区被挂载到容器 /workspace，agent 的 bash/读写都困在容器内；未就绪时打开工作区会明确报错。方案详见 docs/sandbox-mode-plan.md。"
                 />
                 <div className={styles.actionRow}>
-                  <span className={styles.label}>环境探测</span>
+                  <span className={styles.label}>环境</span>
                   <Button size="small" loading={sandboxDetecting} onClick={detectSandbox}>
                     重新检测
                   </Button>
@@ -757,14 +781,27 @@ export default function SettingsModal({
                           : '未检测到 Docker'
                       : 'Docker 检测中…'}
                   </Tag>
-                  <Tag color={sandboxDetect?.wsl.available ? 'green' : 'default'}>
-                    {sandboxDetect
-                      ? sandboxDetect.wsl.available
-                        ? `WSL 就绪（${sandboxDetect.wsl.distros.join(', ')}）`
-                        : '未检测到 WSL 发行版'
-                      : 'WSL 检测中…'}
+                  <Tag color={sandboxImage?.exists ? 'green' : 'default'}>
+                    {sandboxImage
+                      ? sandboxImage.exists
+                        ? `镜像已就绪（${sandboxImage.tag}）`
+                        : '镜像未构建'
+                      : '镜像检测中…'}
                   </Tag>
                 </div>
+                {sandboxDetect?.docker.daemonRunning && !sandboxImage?.exists && (
+                  <div className={styles.actionRow}>
+                    <Button size="small" type="primary" loading={sandboxBuilding} onClick={buildSandboxImage}>
+                      构建镜像
+                    </Button>
+                    <span className={styles.labelHint}>首次约几分钟，之后复用</span>
+                  </div>
+                )}
+                {sandboxBuildLog && (
+                  <span className={styles.labelHint} style={{ wordBreak: 'break-all' }}>
+                    {sandboxBuildLog}
+                  </span>
+                )}
               </div>
             </div>
           )}

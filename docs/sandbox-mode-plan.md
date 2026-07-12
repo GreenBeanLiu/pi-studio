@@ -1,17 +1,20 @@
-# 沙箱模式（Docker）实现调研
+# 沙箱模式（Docker）实现说明
 
-> 状态：调研文档，尚未实现。回答"pi-studio 有没有沙箱、怎么加"。
+> 状态：已实现第一版执行链路（v0.3.39 后续开发中）。设置页可探测 Docker、构建版本绑定的镜像；开启后工作区通过 RPC shim 在容器内运行。
 
 ## 现状
 
-pi-studio 把 pi CLI 作为子进程**直接跑在 Windows 主机上**，拥有完整权限
-（`src/main/pi-client.ts` 的 `PiClientManager.startWorkspace` → `new RpcClient({ cwd, env, ... })`
-→ pi 在 `resolvePiCliPath()` 定位的 `dist/cli.js` 上以 `--mode rpc` 启动）。
+pi-studio 默认把 pi CLI 作为子进程跑在 Windows 主机上；开启沙箱后，
+`src/main/pi-client.ts` 会把 `RpcClient` 的 `cliPath` 切到
+`%APPDATA%/pi-studio/sandbox-rpc-shim.cjs`。shim 透明转发 stdin/stdout，
+再由 `docker run` 启动容器内的 `pi --mode rpc`。
 
 唯一防护是可选的 **securityGuard** 扩展（`src/main/security-guard-extension.ts`）——
 进程内软拦截危险命令/敏感路径写入，基于规则黑名单，**不是隔离**，而且用户默认可关。
 
-**结论：没有真沙箱。** agent 的 bash/write 能碰主机任何东西。
+沙箱容器只挂载当前工作区到 `/workspace`，并挂载 pi-studio 专用的
+`agentConfigDir()` 到 `/agent`；API key 等环境变量按名称透传，不把值写进镜像或命令行。
+未开启时仍保持原有本机执行行为。
 
 ## 关键架构发现（决定可行性）
 
@@ -92,8 +95,10 @@ Windows Sandbox 底层都是 Hyper-V 虚机。Linux 那种内核级、便宜的 
 - **Gondolin 微 VM**：对 pi-studio 改动更小（pi 仍在主机，spawn 加 `-e gondolin` 扩展把工具路由进 Linux micro-VM），但要装 QEMU + Node≥23.6，工具也在 Linux 跑。
 - **只强化 securityGuard**：非真沙箱，但零额外环境、当天可用——默认打开 + 扩黑名单 + 可选"危险命令执行前确认弹窗"。可作为真沙箱前的过渡。
 
-## 建议落地顺序（若决定做）
+## 当前落地状态与后续任务
 
-1. 先加「沙箱模式」设置开关 + Docker/镜像可用性检测（不接执行，纯探测 + UI）。
-2. 落 shim + 主机侧 docker run 组装，先在一个干净工作区跑通 prompt→bash 隔离验证。
-3. 再补 agentConfigDir 挂载（models 覆盖/扩展/session）、镜像构建引导、边界提示。
+1. **已完成**：设置开关、Docker/WSL 探测、版本绑定的镜像 tag、镜像构建进度，以及 Docker RPC shim。
+2. **已完成**：工作区 `/workspace`、agent 配置 `/agent` 的挂载和 API key/TAVILY/Helicone/代理环境变量透传；Docker 未就绪或镜像缺失时会在打开工作区阶段明确报错。
+3. **已完成**：容器返回的 `/agent/...` 会映射回 Windows 主机路径，历史会话列表、切换和导出仍可用；停止工作区时 shim 会把 SIGTERM/SIGINT 转发给 `docker run`，避免后台容器残留；镜像构建请求互斥，重复点击会复用同一次构建。
+4. **待验证**：在真实 agent 工作区执行一次 prompt→bash→文件写入，并确认写入范围只落在挂载的工作区；同时补充 Docker Desktop 未运行、镜像构建失败、停止超时的 UI 回归测试。
+5. **后续增强**：沙箱模式切换后可选择自动重启当前工作区；增加容器 CPU/内存/网络策略配置，并在会话列表中标注当前会话运行于沙箱。

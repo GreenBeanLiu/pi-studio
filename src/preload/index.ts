@@ -36,6 +36,13 @@ const api = {
 
   sandbox: {
     detect: () => ipcRenderer.invoke('sandbox:detect'),
+    imageStatus: () => ipcRenderer.invoke('sandbox:imageStatus'),
+    buildImage: () => ipcRenderer.invoke('sandbox:buildImage'),
+    onBuildProgress: (cb: (line: string) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, line: string): void => cb(line)
+      ipcRenderer.on('sandbox:buildProgress', handler)
+      return () => ipcRenderer.off('sandbox:buildProgress', handler)
+    },
   },
 
   securityPolicy: {

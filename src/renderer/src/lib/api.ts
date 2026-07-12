@@ -97,6 +97,9 @@ declare global {
       }
       sandbox: {
         detect: () => Promise<SandboxDetect>
+        imageStatus: () => Promise<SandboxImageStatus>
+        buildImage: () => Promise<{ ok: true } | { error: string }>
+        onBuildProgress: (cb: (line: string) => void) => () => void
       }
       securityPolicy: {
         load: () => Promise<SecurityPolicyLoadResult>
@@ -319,6 +322,12 @@ export type ProviderModelListResult =
 export type SandboxDetect = {
   docker: { cliFound: boolean; daemonRunning: boolean; version: string }
   wsl: { available: boolean; distros: string[] }
+}
+
+export type SandboxImageStatus = {
+  tag: string
+  exists: boolean
+  daemonRunning: boolean
 }
 
 export type Workspace = {
