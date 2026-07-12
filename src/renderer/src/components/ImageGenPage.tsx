@@ -9,6 +9,7 @@ import {
   Link2,
   RefreshCw,
   Brush,
+  Eraser,
   Upload,
   Trash2,
   X,
@@ -549,7 +550,18 @@ function ImageGenInner() {
 
         {baseImage && (
           <div className={styles.baseChip}>
-            <img src={baseImage} alt="base" />
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <img src={baseImage} alt="base" />
+              <Button
+                size="small"
+                type="primary"
+                shape="circle"
+                icon={<Brush size={12} />}
+                title="涂抹需要重绘的区域"
+                onClick={() => setMaskEditorOpen(true)}
+                style={{ position: 'absolute', right: 3, bottom: 3 }}
+              />
+            </div>
             <span style={{ flex: 1 }}>基于这张图修改</span>
             <Button
               size="small"
@@ -563,17 +575,10 @@ function ImageGenInner() {
           </div>
         )}
 
-        {baseImage && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="small" onClick={() => setMaskEditorOpen(true)}>
-              {maskDataUrl ? '重新涂抹区域' : '涂抹需要重绘的区域'}
-            </Button>
-            {maskDataUrl && (
-              <Button size="small" onClick={() => setMaskDataUrl(null)}>
-                清除蒙版
-              </Button>
-            )}
-          </div>
+        {maskDataUrl && (
+          <Button size="small" onClick={() => setMaskDataUrl(null)}>
+            清除蒙版
+          </Button>
         )}
 
         <input
@@ -872,9 +877,12 @@ function MaskEditor({
   const maskRef = useRef<HTMLCanvasElement>(null)
   const drawingRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
-  const [brushSize, setBrushSize] = useState(80)
+  const historyRef = useRef<Array<{ paint: ImageData; mask: ImageData }>>([])
+  const [brushSize, setBrushSize] = useState(24)
+  const [mode, setMode] = useState<'paint' | 'erase'>('paint')
   const [ready, setReady] = useState(false)
   const [hasPainted, setHasPainted] = useState(false)
+  const [undoCount, setUndoCount] = useState(0)
 
   function resetCanvases() {
     const image = imageRef.current
@@ -891,14 +899,17 @@ function MaskEditor({
     maskContext.globalCompositeOperation = 'source-over'
     maskContext.fillStyle = '#fff'
     maskContext.fillRect(0, 0, mask.width, mask.height)
+    historyRef.current = []
+    setUndoCount(0)
     setHasPainted(false)
+    setMode('paint')
     setReady(true)
   }
 
   useEffect(() => {
     if (!open) return
     setReady(false)
-    setBrushSize(80)
+    setBrushSize(24)
     const image = imageRef.current
     if (image?.complete) requestAnimationFrame(resetCanvases)
   }, [open, src])
@@ -925,6 +936,7 @@ function MaskEditor({
     const maskContext = maskCanvas.getContext('2d')
     if (!paintContext || !maskContext) return
     const last = lastPointRef.current ?? { x, y }
+    paintContext.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over'
     paintContext.beginPath()
     paintContext.moveTo(last.x, last.y)
     paintContext.lineCap = 'round'
@@ -933,6 +945,8 @@ function MaskEditor({
     paintContext.strokeStyle = 'rgba(255, 64, 64, 0.48)'
     paintContext.lineTo(x, y)
     paintContext.stroke()
+    maskContext.globalCompositeOperation = mode === 'erase' ? 'source-over' : 'destination-out'
+    maskContext.strokeStyle = '#fff'
     maskContext.beginPath()
     maskContext.moveTo(last.x, last.y)
     maskContext.globalCompositeOperation = 'destination-out'
@@ -959,15 +973,37 @@ function MaskEditor({
     const paintContext = paintCanvas.getContext('2d')
     const maskContext = maskCanvas.getContext('2d')
     if (!paintContext || !maskContext) return
+    historyRef.current = [
+      ...historyRef.current.slice(-29),
+      {
+        paint: paintContext.getImageData(0, 0, paintCanvas.width, paintCanvas.height),
+        mask: maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height),
+      },
+    ]
+    setUndoCount(historyRef.current.length)
+    paintContext.globalCompositeOperation = mode === 'erase' ? 'destination-out' : 'source-over'
     paintContext.beginPath()
     paintContext.fillStyle = 'rgba(255, 64, 64, 0.48)'
     paintContext.arc(x, y, width / 2, 0, Math.PI * 2)
     paintContext.fill()
-    maskContext.globalCompositeOperation = 'destination-out'
+    maskContext.globalCompositeOperation = mode === 'erase' ? 'source-over' : 'destination-out'
+    maskContext.fillStyle = '#fff'
     maskContext.beginPath()
     maskContext.arc(x, y, width / 2, 0, Math.PI * 2)
     maskContext.fill()
     setHasPainted(true)
+  }
+
+  function undo() {
+    const paint = paintRef.current
+    const mask = maskRef.current
+    if (!paint || !mask || historyRef.current.length === 0) return
+    const previous = historyRef.current.pop()
+    if (!previous) return
+    paint.getContext('2d')?.putImageData(previous.paint, 0, 0)
+    mask.getContext('2d')?.putImageData(previous.mask, 0, 0)
+    setUndoCount(historyRef.current.length)
+    setHasPainted(historyRef.current.length > 0)
   }
 
   return (
@@ -986,6 +1022,17 @@ function MaskEditor({
     >
       <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}>
         红色区域会被重绘；未涂抹区域保留。白色保留，透明区域重绘。
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <Button size="small" type={mode === 'paint' ? 'primary' : 'default'} icon={<Brush size={13} />} onClick={() => setMode('paint')}>
+          涂抹
+        </Button>
+        <Button size="small" type={mode === 'erase' ? 'primary' : 'default'} icon={<Eraser size={13} />} onClick={() => setMode('erase')}>
+          橡皮擦
+        </Button>
+        <Button size="small" disabled={!undoCount} onClick={undo}>
+          撤销
+        </Button>
       </div>
       <div style={{ textAlign: 'center', background: '#181818', padding: 12, minHeight: 260 }}>
         <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', maxHeight: '60vh' }}>
@@ -1016,7 +1063,7 @@ function MaskEditor({
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
         <span style={{ fontSize: 12 }}>笔刷大小</span>
-        <Slider min={10} max={240} value={brushSize} onChange={setBrushSize} style={{ flex: 1 }} />
+        <Slider min={4} max={96} value={brushSize} onChange={setBrushSize} style={{ flex: 1 }} />
         <span style={{ width: 36, textAlign: 'right', fontSize: 12 }}>{brushSize}px</span>
       </div>
     </Modal>
