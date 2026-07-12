@@ -3,6 +3,7 @@ import { createStyles, cx } from 'antd-style'
 import {
   Button,
   Drawer,
+  Dropdown,
   Empty,
   Input,
   Popconfirm,
@@ -48,6 +49,10 @@ import {
   type RoutineSchedule,
   type Workspace,
 } from '../lib/api'
+import {
+  createRoutineStepFromPreset,
+  routineNodePresetOptions,
+} from '../lib/routine-node-presets'
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
@@ -113,47 +118,19 @@ const emptyForm = (workspacePath: string): FormState => ({
 })
 
 function articleWorkflowTemplate(workspacePath: string, channelId?: string): FormState {
+  const presetStep = (id: string): RoutineStep =>
+    createRoutineStepFromPreset(id, channelId) ?? createStep()
   return {
     ...emptyForm(workspacePath),
     name: '微信公众号文章生成',
     input: '填写本次文章主题、目标读者、语气、参考资料和行动号召',
     steps: [
-      {
-        ...createStep(),
-        name: '资料与事实',
-        prompt:
-          '围绕 {{routine.input}} 检索并整理 5-8 条可靠资料。列出关键事实、来源链接、争议点和不能确认的内容，不要开始写文章。',
-      },
-      {
-        ...createStep(),
-        name: '文章大纲',
-        prompt:
-          '基于上一步资料，为 {{routine.input}} 设计公众号文章大纲：标题候选 5 个、摘要、开头钩子、3-5 个小节、结尾 CTA。保留来源对应关系。',
-      },
-      {
-        ...createStep(),
-        name: '公众号初稿',
-        prompt:
-          '根据资料和大纲写一篇适合微信公众号的中文初稿。要求：事实可追溯、段落短、标题清晰、避免营销夸大，正文约 1800-2500 字，包含标题、摘要和正文。',
-      },
-      {
-        ...createStep(),
-        name: '事实与合规审校',
-        prompt:
-          '审校上一步公众号初稿，逐条检查事实、来源、广告法风险、绝对化表述、错别字和标题党问题。先列问题，再给出可直接替换的修订稿。',
-      },
-      {
-        ...createStep('export'),
-        name: '保存公众号草稿',
-        path: '.pi-studio/articles/wechat-draft',
-        format: 'html',
-      },
-      {
-        ...createStep('notify'),
-        name: '发送预览提醒',
-        ...(channelId ? { channelId } : {}),
-        message: '公众号草稿已生成：{{prev.output}}\n请打开文件人工确认后再发布。',
-      },
+      presetStep('article.research'),
+      presetStep('article.outline'),
+      presetStep('article.draft'),
+      presetStep('article.review'),
+      presetStep('output.wechat-html'),
+      presetStep('output.notify'),
     ],
   }
 }
@@ -642,6 +619,26 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     label: STEP_TYPE_META[t].label,
   }))
 
+  function addPresetStep(presetId: string) {
+    if (!form) return
+    const step = createRoutineStepFromPreset(presetId, channels[0]?.id)
+    if (!step) return
+    setForm({ ...form, steps: [...form.steps, step] })
+  }
+
+  const nodeMenu = {
+    items: routineNodePresetOptions().map((preset) => ({
+      key: preset.key,
+      label: (
+        <div>
+          <div>{preset.label}</div>
+          <div style={{ fontSize: 11, opacity: 0.65 }}>{preset.description}</div>
+        </div>
+      ),
+    })),
+    onClick: ({ key }: { key: string }) => addPresetStep(key),
+  }
+
   return (
     <div className={styles.page}>
       <section className={`${styles.col} ${styles.left}`}>
@@ -658,7 +655,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
             新建
           </Button>
           <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? '', channels[0]?.id))}>
-            公众号模板
+            快速模板
           </Button>
         </div>
 
@@ -687,7 +684,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
             />
             <span className={styles.label}>{`步骤 (${form.steps.length})`}</span>
             <span className={styles.hint}>
-              {'节点间传值:{{prev.output}} 上一步输出、{{steps.步骤名.output}} 任意步骤输出、{{steps.步骤名.imageUrl}} 生图链接。智能体节点不写变量时自动接收上一步输出。'}
+              {'从节点库添加资料、写作、审校、封面、导出和通知节点；节点间传值:{{prev.output}} 上一步输出、{{steps.步骤名.output}} 任意步骤输出、{{steps.步骤名.imageUrl}} 生图链接。'}
             </span>
             {form.steps.map((step, index) => (
               <div key={step.id} className={styles.card} style={{ padding: 10 }}>
@@ -774,9 +771,11 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                 )}
               </div>
             ))}
-            <Button size="small" type="dashed" icon={<Plus size={13} />} onClick={() => setForm({ ...form, steps: [...form.steps, createStep()] })}>
-              Add step
-            </Button>
+            <Dropdown menu={nodeMenu} trigger={['click']}>
+              <Button size="small" type="dashed" icon={<Plus size={13} />}>
+                添加节点
+              </Button>
+            </Dropdown>
             <span className={styles.label}>工作区(agent 的运行目录)</span>
             <div className={styles.formRow}>
               <Input
