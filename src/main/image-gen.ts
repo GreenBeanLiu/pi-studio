@@ -313,6 +313,7 @@ async function cloudGenerate(
   prompt: string,
   referenceUrls?: string[],
   maskUrl?: string,
+  size?: ImageGenSize,
 ): Promise<ImageGenResult> {
   const cloud = getCloud()
   if (!cloud.available) {
@@ -324,6 +325,7 @@ async function cloudGenerate(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
+      ...(size ? { size } : {}),
       ...(referenceUrls?.length ? { referenceUrls } : {}),
       ...(maskUrl ? { maskUrl } : {}),
     }),
@@ -365,12 +367,16 @@ async function cloudGenerate(
   return { error: '云端连接在收到结果前断开了' }
 }
 
+/** 云端 gpt-image-2 支持的尺寸(值直接透传给中继/trigger 任务)。 */
+export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
+
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
 export async function generateImage(payload: {
   prompt: string
   engine: 'openai' | 'comfy'
   referenceUrls?: string[]
   maskDataUrl?: string
+  size?: ImageGenSize
 }): Promise<ImageGenResult> {
   try {
     if (payload.engine === 'comfy') {
@@ -407,7 +413,7 @@ export async function generateImage(payload: {
       return { error: '蒙版编辑需要先选择一张底图' }
     }
     const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl) : undefined
-    return await cloudGenerate(payload.prompt, references, maskUrl)
+    return await cloudGenerate(payload.prompt, references, maskUrl, payload.size)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return {
@@ -474,6 +480,7 @@ export function registerImageGenHandlers(): void {
         engine: 'openai' | 'comfy'
         referenceUrls?: string[]
         maskDataUrl?: string
+        size?: ImageGenSize
       },
     ): Promise<ImageGenResult> => generateImage(payload),
   )

@@ -163,6 +163,7 @@ const api = {
       engine: 'openai' | 'comfy'
       referenceUrls?: string[]
       maskDataUrl?: string
+      size?: 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
     }) =>
       ipcRenderer.invoke('imageGen:generate', payload),
     history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),

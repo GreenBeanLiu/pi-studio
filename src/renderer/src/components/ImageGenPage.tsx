@@ -21,6 +21,7 @@ import {
 import {
   api,
   type ImageGenEngine,
+  type ImageGenSize,
   type ImageGenHealth,
   type ImageGenHistoryItem,
 } from '../lib/api'
@@ -309,6 +310,7 @@ function ImageGenInner() {
   const [prompt, setPrompt] = useState('')
   const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
+  const [size, setSize] = useState<ImageGenSize>('square_hd')
   const [comfyBusy, setComfyBusy] = useState(false)
   const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
   const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
@@ -437,6 +439,8 @@ function ImageGenInner() {
       const r = await api.imageGen.generate({
         prompt: full,
         engine,
+        // 尺寸仅云端 gpt-image-2 生效;本地 ComfyUI 由 workflow 固定
+        ...(engine === 'openai' ? { size } : {}),
         ...(refUrls ? { referenceUrls: refUrls } : {}),
         ...(maskDataUrl ? { maskDataUrl } : {}),
       })
@@ -626,6 +630,32 @@ function ImageGenInner() {
               onClick={() => setPresetId(p.id)}
             >
               {p.label}
+            </Button>
+          ))}
+        </div>
+
+        <span className={styles.label}>
+          尺寸
+          {engine === 'comfy' && (
+            <span style={{ opacity: 0.6 }}> · 本地引擎固定 1024×1024，此项仅云端生效</span>
+          )}
+        </span>
+        <div className={styles.chips}>
+          {(
+            [
+              { id: 'square_hd', label: '方形 1:1' },
+              { id: 'landscape_4_3', label: '横版 3:2' },
+              { id: 'portrait_4_3', label: '竖版 2:3' },
+            ] as { id: ImageGenSize; label: string }[]
+          ).map((s) => (
+            <Button
+              key={s.id}
+              size="small"
+              type={size === s.id ? 'primary' : 'default'}
+              disabled={engine === 'comfy'}
+              onClick={() => setSize(s.id)}
+            >
+              {s.label}
             </Button>
           ))}
         </div>

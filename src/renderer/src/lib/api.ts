@@ -190,6 +190,7 @@ declare global {
           engine: ImageGenEngine
           referenceUrls?: string[]
           maskDataUrl?: string
+          size?: ImageGenSize
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
@@ -212,6 +213,9 @@ declare global {
 export type PiProvider = 'anthropic' | 'openai'
 
 export type ImageGenEngine = 'openai' | 'comfy'
+
+/** 云端 gpt-image-2 尺寸:方形 / 横版(1536×1024)/ 竖版(1024×1536) */
+export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
 
 export type ImageGenHealth = {
   ok: boolean
