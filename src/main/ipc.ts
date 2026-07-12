@@ -154,6 +154,10 @@ export function registerIpcHandlers(): void {
       },
     ) => {
       saveSettings(settings)
+      // 通知所有窗口设置已变,让聊天页模型切换器等即时同步(无需重开工作区)
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('settings:changed')
+      }
       return { ok: true }
     },
   )

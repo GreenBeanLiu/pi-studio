@@ -26,6 +26,11 @@ const api = {
     testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
     listModels: (s: unknown) => ipcRenderer.invoke('settings:listModels', s),
     syncCustomModels: (ids: string[]) => ipcRenderer.invoke('settings:syncCustomModels', ids),
+    onChanged: (cb: () => void) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('settings:changed', handler)
+      return () => ipcRenderer.off('settings:changed', handler)
+    },
   },
 
   securityPolicy: {

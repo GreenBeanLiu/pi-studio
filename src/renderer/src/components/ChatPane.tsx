@@ -1345,6 +1345,27 @@ export default function ChatPane({
       .catch(() => {})
   }, [models, favoriteModels])
 
+  // 设置页保存后即时同步(无需重开工作区):重载模型切换列表 + 可用模型清单,
+  // 并让上面的自定义模型注册重新评估(新增的第三方 id 立刻可选)。
+  useEffect(() => {
+    const off = api.settings.onChanged(() => {
+      api.settings
+        .load()
+        .then((s) =>
+          setFavoriteModels(
+            (s.favoriteModels ?? '')
+              .split(/[,，\n]/)
+              .map((t) => t.trim())
+              .filter(Boolean),
+          ),
+        )
+        .catch(() => {})
+      syncedCustomModelsRef.current = null
+      api.pi.getAvailableModels().then(setModels).catch(() => {})
+    })
+    return off
+  }, [])
+
   // For the completion notification — the event subscription effect runs once,
   // so it reads the current workspace through a ref.
   const workspaceRef = useRef(workspace)

@@ -90,6 +90,7 @@ declare global {
           baseUrl: string
         }) => Promise<ProviderModelListResult>
         syncCustomModels: (ids: string[]) => Promise<{ ok: boolean }>
+        onChanged: (cb: () => void) => () => void
       }
       securityPolicy: {
         load: () => Promise<SecurityPolicyLoadResult>
