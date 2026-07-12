@@ -6,6 +6,9 @@ import { loadSettings, apiKeyEnvVar, agentConfigDir, writeModelsOverride } from 
 import { loadRpcClient, resolvePiCliPath } from './pi-client'
 import { prepareSandboxLaunch } from './sandbox'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
+import { syncWebSearchExtension } from './web-search-extension'
+import { syncSecurityGuardExtension } from './security-guard-extension'
+import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
@@ -203,7 +206,8 @@ function interpolate(template: string, ctx: RunContext): string {
   })
 }
 
-const hasVariables = (text: string): boolean => /\{\{[^{}]+\}\}/.test(text)
+const hasPreviousProductReference = (text: string): boolean =>
+  /\{\{\s*(?:prev\.|steps\.)/.test(text)
 
 // ── 执行器 ───────────────────────────────────────────────────────
 
@@ -246,6 +250,9 @@ async function ensureAgentClient(routine: Routine, session: AgentSession): Promi
   if (session.client) return session.client
   const settings = loadSettings()
   if (!settings.apiKey) throw new Error('未配置 API Key(agent 节点需要)')
+  syncWebSearchExtension(!!settings.tavilyApiKey)
+  syncSecurityGuardExtension(settings.securityGuardEnabled)
+  syncWorkspaceMemoryExtension()
   writeModelsOverride(
     settings.provider,
     settings.baseUrl,
@@ -284,7 +291,7 @@ async function runAgentStep(
   const client = await ensureAgentClient(routine, session)
   let prompt = interpolate(step.prompt ?? '', ctx)
   // 兼容老流程:prompt 里没写变量时,自动把上一步输出接在后面
-  if (!hasVariables(step.prompt ?? '') && ctx.prev) {
+  if (!hasPreviousProductReference(step.prompt ?? '') && ctx.prev) {
     prompt = `${prompt}\n\nPrevious step result:\n${ctx.prev.output.slice(0, 4000)}`
   }
   await new Promise<void>((resolve, reject) => {

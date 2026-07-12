@@ -769,7 +769,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       placeholder=".pi-studio/articles/article-draft"
                       addonBefore="文件"
                     />
-                    <span className={styles.hint}>只能写入工作区内的相对路径；没有扩展名会按格式自动补全。</span>
+                    <span className={styles.hint}>只能写入工作区内的相对路径；HTML 会把上一步 Markdown 转成公众号正文片段。</span>
                   </>
                 )}
               </div>

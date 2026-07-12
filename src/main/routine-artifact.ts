@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'fs'
+import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'fs'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'path'
 
 export type RoutineArtifactFormat = 'markdown' | 'html'
@@ -81,6 +81,20 @@ function safeRelativePath(workspacePath: string, requestedPath: string): string 
   return target
 }
 
+function assertRealPathInsideWorkspace(workspacePath: string, targetPath: string): void {
+  const root = realpathSync(resolve(workspacePath))
+  const parent = realpathSync(dirname(targetPath))
+  const normalize = (value: string): string => (process.platform === 'win32' ? value.toLowerCase() : value)
+  const rootKey = normalize(root)
+  const parentKey = normalize(parent)
+  if (parentKey !== rootKey && !parentKey.startsWith(`${rootKey}${sep}`)) {
+    throw new Error('产物路径不能通过符号链接离开当前工作区')
+  }
+  if (existsSync(targetPath) && lstatSync(targetPath).isSymbolicLink()) {
+    throw new Error('不会覆盖工作区内指向外部的符号链接')
+  }
+}
+
 export function writeRoutineArtifact(
   workspacePath: string,
   requestedPath: string,
@@ -91,6 +105,7 @@ export function writeRoutineArtifact(
   const expectedExtension = format === 'html' ? '.html' : '.md'
   const finalPath = extname(target) ? target : `${target}${expectedExtension}`
   mkdirSync(dirname(finalPath), { recursive: true })
+  assertRealPathInsideWorkspace(workspacePath, finalPath)
   const body = format === 'html' ? markdownToWechatHtml(content) : content
   writeFileSync(finalPath, body, 'utf8')
   return { path: finalPath, format, bytes: Buffer.byteLength(body, 'utf8') }
