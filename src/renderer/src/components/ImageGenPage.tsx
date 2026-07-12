@@ -75,7 +75,7 @@ const useStyles = createStyles(({ token, css }) => ({
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(320px, 2fr) minmax(0, 3fr);
+    grid-template-columns: minmax(340px, 35fr) minmax(0, 65fr);
     gap: 16px;
     padding: 16px;
     background: ${token.colorBgLayout};

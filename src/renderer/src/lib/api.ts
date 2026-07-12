@@ -231,6 +231,7 @@ export type ImageGenHealth = {
 }
 
 export type RoutineSchedule =
+  | { type: 'manual' }
   | { type: 'interval'; minutes: number }
   | { type: 'hourly'; minute: number }
   | { type: 'daily'; time: string }

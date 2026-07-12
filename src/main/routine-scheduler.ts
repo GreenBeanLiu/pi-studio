@@ -1,4 +1,5 @@
 export type SchedulableSchedule =
+  | { type: 'manual' }
   | { type: 'interval'; minutes: number }
   | { type: 'hourly'; minute: number }
   | { type: 'daily'; time: string }
@@ -32,6 +33,9 @@ export function dueSlotKey(routine: Pick<SchedulableRoutine, 'schedule' | 'lastR
   const hhmm = `${pad(now.getHours())}:${pad(now.getMinutes())}`
 
   switch (schedule.type) {
+    case 'manual':
+      // 按需触发:永不自动跑,只能手动「运行」
+      return null
     case 'interval': {
       const lastRunAt = routine.lastRunAt ?? 0
       return now.getTime() - lastRunAt >= schedule.minutes * 60_000 ? `interval-${now.getTime()}` : null

@@ -185,6 +185,8 @@ function saveStore(store: Store): void {
 export function scheduleLabel(s: RoutineSchedule): string {
   const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
   switch (s.type) {
+    case 'manual':
+      return '按需（手动）'
     case 'interval':
       return `每 ${s.minutes} 分钟`
     case 'hourly':

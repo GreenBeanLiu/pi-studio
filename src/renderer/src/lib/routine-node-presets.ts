@@ -68,7 +68,8 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
       name: '公众号封面图',
       type: 'imagegen',
       engine: 'openai',
-      prompt: '根据上一步文章内容生成一张适合微信公众号的横版封面图，画面简洁，不要文字和 Logo。',
+      prompt:
+        '为这篇微信公众号文章生成一张横版封面图（16:9），画面简洁有吸引力、贴合主题，不要文字和 Logo。\n\n文章正文：{{steps.公众号初稿.output}}',
     },
   },
   {
