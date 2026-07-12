@@ -97,6 +97,18 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
     },
   },
   {
+    id: 'output.feishu-doc',
+    category: 'output',
+    label: '存飞书文档',
+    description: '把正文存成飞书云文档',
+    step: {
+      name: '存飞书文档',
+      type: 'feishu-doc',
+      message: '{{prev.output}}',
+      path: '{{routine.name}} · {{trigger.time}}',
+    },
+  },
+  {
     id: 'output.notify',
     category: 'output',
     label: '发送预览提醒',

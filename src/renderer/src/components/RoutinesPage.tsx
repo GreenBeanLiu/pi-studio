@@ -37,6 +37,7 @@ import {
   MinusCircle,
   Loader2,
   FileText,
+  FileUp,
   ShieldCheck,
 } from 'lucide-react'
 import {
@@ -86,6 +87,7 @@ const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot 
   review: { label: '人工审核', icon: ShieldCheck },
   notify: { label: '通知', icon: Bell },
   export: { label: '导出文章', icon: FileText },
+  'feishu-doc': { label: '存飞书文档', icon: FileUp },
 }
 
 type FormState = {
@@ -101,6 +103,7 @@ type FormState = {
   day: number
   notify: RoutineNotify
   notifyChannelId?: string
+  pushEachStep?: boolean
 }
 
 const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
@@ -110,6 +113,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
   ...(type === 'review' ? { message: '请检查上一步生成的内容，确认后继续。' } : {}),
   ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
+  ...(type === 'feishu-doc' ? { message: '{{prev.output}}', path: '{{routine.name}} · {{trigger.time}}' } : {}),
 })
 const emptyForm = (workspacePath: string): FormState => ({
   name: '',
@@ -125,25 +129,41 @@ const emptyForm = (workspacePath: string): FormState => ({
 })
 
 function articleWorkflowTemplate(workspacePath: string, channelId?: string): FormState {
-  const presetStep = (id: string): RoutineStep =>
-    createRoutineStepFromPreset(id, channelId) ?? createStep()
+  const step = (type: RoutineStepType, name: string, extra: Partial<RoutineStep>): RoutineStep => ({
+    ...createStep(type),
+    name,
+    ...extra,
+  })
+  // 全自动:只给主题,智能体自己查事实 → 写正文 → 配图 → 存飞书文档;每步实时推到飞书跟进。
   return {
     ...emptyForm(workspacePath),
     name: '微信公众号文章生成',
-    // 按需触发:有选题了再点「运行」,不定时自动跑
     scheduleType: 'manual',
-    input: '填写本次文章主题、目标读者、语气、参考资料和行动号召',
+    pushEachStep: true,
+    notifyChannelId: channelId,
+    input: '只写文章主题即可,例如:AI 如何改变远程办公',
     steps: [
-      presetStep('article.research'),
-      presetStep('article.outline'),
-      presetStep('article.draft'),
-      presetStep('article.review'),
-      presetStep('article.approval'),
-      // 导出用上一步(审核通过的正文);封面图放导出之后,引用初稿正文生成,
-      // 通知节点会自动带上本次流程里所有生图产物的链接
-      presetStep('output.wechat-html'),
-      presetStep('media.cover'),
-      presetStep('output.notify'),
+      step('agent', '事实梳理', {
+        prompt:
+          '围绕主题「{{routine.input}}」联网检索,整理 5–8 条真实、可核查的关键事实/数据/案例,' +
+          '每条注明简短来源。只输出事实清单,不要写成文章。',
+      }),
+      step('agent', '写正文', {
+        prompt:
+          '你是资深公众号编辑。基于下面的事实清单,就主题「{{routine.input}}」写一篇 1200–2000 字的微信公众号文章:' +
+          '有吸引力的标题、开头钩子、分小标题的正文、结尾金句。用 Markdown,# 作文章标题,## 作小标题。\n\n' +
+          '事实清单:\n{{steps.事实梳理.output}}',
+      }),
+      step('imagegen', '配图', {
+        engine: 'openai',
+        prompt:
+          '为这篇微信公众号文章生成一张横版封面图(16:9),画面简洁有吸引力、贴合主题,不要文字和 Logo。\n\n' +
+          '文章:{{steps.写正文.output}}',
+      }),
+      step('feishu-doc', '存飞书文档', {
+        message: '{{steps.写正文.output}}',
+        path: '{{routine.input}} · {{trigger.time}}',
+      }),
     ],
   }
 }
@@ -491,7 +511,11 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
   const stepComplete = (s: RoutineStep): boolean =>
     !!s.name.trim() &&
-    (s.type === 'notify' ? !!s.channelId : s.type === 'review' || s.type === 'export' ? true : !!s.prompt?.trim())
+    (s.type === 'notify'
+      ? !!s.channelId
+      : s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc'
+        ? true
+        : !!s.prompt?.trim())
 
   async function saveForm() {
     if (!form) return
@@ -509,6 +533,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       schedule: buildSchedule(form),
       notify: form.notify,
       ...(form.notifyChannelId ? { notifyChannelId: form.notifyChannelId } : {}),
+      ...(form.pushEachStep ? { pushEachStep: true } : {}),
     })
     setRoutines(next)
     setForm(null)
@@ -539,6 +564,13 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type === 'review' ? { message: step.message ?? '请检查上一步生成的内容，确认后继续。' } : {}),
           ...(type === 'export'
             ? { path: step.path ?? '.pi-studio/articles/article-draft', format: step.format ?? ('html' as const) }
+            : {}),
+          ...(type === 'feishu-doc'
+            ? {
+                message: step.message ?? '{{prev.output}}',
+                path: step.path ?? '{{routine.name}} · {{trigger.time}}',
+                channelId: step.channelId,
+              }
             : {}),
         }
       }),
@@ -573,6 +605,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       day: r.schedule.type === 'weekly' ? r.schedule.day : 1,
       notify: r.notify,
       notifyChannelId: r.notifyChannelId,
+      pushEachStep: r.pushEachStep,
     })
   }
 
@@ -751,14 +784,17 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   <Button size="small" type="text" icon={<ArrowDown size={13} />} disabled={index === form.steps.length - 1} onClick={() => moveStep(index, 1)} />
                   <Button size="small" type="text" danger icon={<Trash2 size={13} />} disabled={form.steps.length === 1} onClick={() => deleteStep(step.id)} />
                 </div>
-                {step.type !== 'notify' && step.type !== 'export' && step.type !== 'review' && (
-                  <Input.TextArea
-                    value={step.prompt ?? ''}
-                    onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
-                    placeholder={step.type === 'imagegen' ? '画什么(支持 {{prev.output}} 等变量)' : 'Instruction for this node'}
-                    autoSize={{ minRows: 3, maxRows: 8 }}
-                  />
-                )}
+                {step.type !== 'notify' &&
+                  step.type !== 'export' &&
+                  step.type !== 'review' &&
+                  step.type !== 'feishu-doc' && (
+                    <Input.TextArea
+                      value={step.prompt ?? ''}
+                      onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
+                      placeholder={step.type === 'imagegen' ? '画什么(支持 {{prev.output}} 等变量)' : 'Instruction for this node'}
+                      autoSize={{ minRows: 3, maxRows: 8 }}
+                    />
+                  )}
                 {step.type === 'imagegen' && (
                   <div className={styles.formRow}>
                     <span className={styles.hint}>引擎</span>
@@ -823,6 +859,38 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                     placeholder="审核提示"
                     autoSize={{ minRows: 2, maxRows: 4 }}
                   />
+                )}
+                {step.type === 'feishu-doc' && (
+                  <>
+                    <div className={styles.formRow}>
+                      <span className={styles.hint}>飞书应用</span>
+                      <Select
+                        value={step.channelId}
+                        onChange={(v) => updateStep(step.id, { channelId: v })}
+                        style={{ flex: 1 }}
+                        allowClear
+                        placeholder="自动选第一个「飞书应用」渠道"
+                        options={channels
+                          .filter((c) => c.type === 'feishu-app')
+                          .map((c) => ({ value: c.id, label: c.name }))}
+                      />
+                    </div>
+                    <Input
+                      value={step.path ?? ''}
+                      onChange={(e) => updateStep(step.id, { path: e.target.value })}
+                      placeholder="{{routine.name}} · {{trigger.time}}"
+                      addonBefore="标题"
+                    />
+                    <Input.TextArea
+                      value={step.message ?? ''}
+                      onChange={(e) => updateStep(step.id, { message: e.target.value })}
+                      placeholder={'写入正文(支持 {{…}} 变量,留空 = 上一步输出)'}
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                    />
+                    <span className={styles.hint}>
+                      需要「飞书应用」渠道且应用开通 docx:document 权限;在飞书里建个文件夹分享给应用,把 folder_token 填到渠道设置,文档就会存到你能看到的地方。
+                    </span>
+                  </>
                 )}
               </div>
             ))}
@@ -918,6 +986,15 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   options={channels.map((c) => ({ value: c.id, label: c.name }))}
                 />
               )}
+            </div>
+            <div className={styles.formRow}>
+              <Switch
+                checked={!!form.pushEachStep}
+                onChange={(v) => setForm({ ...form, pushEachStep: v })}
+              />
+              <span className={styles.hint}>
+                每步跑完就把该步产出实时推到上面的渠道(在飞书/手机上跟进进度,替代 App 内小预览)
+              </span>
             </div>
             <div className={styles.formRow} style={{ justifyContent: 'flex-end' }}>
               <Button size="small" onClick={() => setForm(null)}>

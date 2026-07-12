@@ -243,7 +243,7 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export'
+export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc'
 
 export type RoutineStep = {
   id: string
@@ -268,6 +268,7 @@ export type Routine = {
   enabled: boolean
   notify: RoutineNotify
   notifyChannelId?: string
+  pushEachStep?: boolean
   createdAt: number
   lastRunAt?: number
 }

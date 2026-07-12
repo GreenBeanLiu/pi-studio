@@ -13,7 +13,7 @@ import { appendAppLog, normalizeError } from './app-log'
 
 export type Channel = { id: string; name: string } & (
   | { type: 'feishu-webhook'; url: string; secret?: string }
-  | { type: 'feishu-app'; appId: string; appSecret: string; chatId?: string }
+  | { type: 'feishu-app'; appId: string; appSecret: string; chatId?: string; folderToken?: string }
   | { type: 'webhook'; url: string }
   | { type: 'local' }
 )
@@ -228,6 +228,65 @@ async function sendFeishuViaApp(
       content: JSON.stringify(card),
     }),
   })
+}
+
+// ── 飞书云文档:建 docx + 写正文 ──────────────────────────────────
+
+/** Markdown 简单转 docx 块:# / ## / ### → 标题,其余整行 → 文本段落。 */
+function markdownToDocxBlocks(markdown: string): Array<Record<string, unknown>> {
+  const runs = (content: string): Record<string, unknown> => ({
+    elements: [{ text_run: { content: content.slice(0, 9000) } }],
+    style: {},
+  })
+  const blocks: Array<Record<string, unknown>> = []
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trimEnd()
+    if (!line.trim()) continue
+    const h = /^(#{1,3})\s+(.*)$/.exec(line.trim())
+    if (h) {
+      const level = h[1].length // 1|2|3
+      blocks.push({ block_type: level + 2, [`heading${level}`]: runs(h[2]) }) // heading1=3
+    } else {
+      blocks.push({ block_type: 2, text: runs(line) })
+    }
+  }
+  return blocks.length ? blocks : [{ block_type: 2, text: runs('(空)') }]
+}
+
+/**
+ * 建飞书云文档并写入正文,返回文档 URL。需要应用开通 docx:document 权限。
+ * 传了 folderToken 就建在该文件夹(用户可见),否则建在应用空间(可能只有应用可见)。
+ */
+export async function createFeishuDoc(
+  channel: Extract<Channel, { type: 'feishu-app' }>,
+  title: string,
+  markdown: string,
+): Promise<{ url: string; documentId: string }> {
+  const token = await getFeishuTenantToken(channel.appId, channel.appSecret)
+  const created = await feishuJson('https://open.feishu.cn/open-apis/docx/v1/documents', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: (title || '未命名文档').slice(0, 800),
+      ...(channel.folderToken?.trim() ? { folder_token: channel.folderToken.trim() } : {}),
+    }),
+  })
+  const documentId = (created.data as { document?: { document_id?: string } } | undefined)?.document
+    ?.document_id
+  if (!documentId) throw new Error('建飞书文档失败:未返回 document_id(检查应用是否开通 docx:document 权限)')
+
+  const blocks = markdownToDocxBlocks(markdown)
+  for (let i = 0; i < blocks.length; i += 50) {
+    await feishuJson(
+      `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ children: blocks.slice(i, i + 50), index: i }),
+      },
+    )
+  }
+  return { url: `https://feishu.cn/docx/${documentId}`, documentId }
 }
 
 // ── 注册 ─────────────────────────────────────────────────────────

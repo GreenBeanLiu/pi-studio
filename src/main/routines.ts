@@ -10,7 +10,7 @@ import { syncWebSearchExtension } from './web-search-extension'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
-import { loadChannels, sendToChannel, type Channel } from './channels'
+import { loadChannels, sendToChannel, createFeishuDoc, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import {
   RoutineScheduler,
@@ -30,7 +30,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export'
+export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc'
 
 export type RoutineStep = {
   id: string
@@ -64,6 +64,8 @@ export type Routine = {
   notify: RoutineNotify
   /** 兜底汇总通知发到哪个渠道;空 = 渠道列表第一个 */
   notifyChannelId?: string
+  /** 每步跑完就把该步产出推到 notifyChannelId(在飞书/手机上跟进,替代 App 内小预览) */
+  pushEachStep?: boolean
   createdAt: number
   lastRunAt?: number
   /** 上次触发的时间槽(防止同一槽位重复触发,也让错过的槽当天补跑) */
@@ -433,6 +435,25 @@ async function runNotifyStep(
   return { output: `已发送到「${channel.name}」` }
 }
 
+async function runFeishuDocStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  channels: Channel[],
+): Promise<StepProduct> {
+  const channel =
+    (step.channelId ? channels.find((c) => c.id === step.channelId) : undefined) ??
+    channels.find((c) => c.type === 'feishu-app')
+  if (!channel || channel.type !== 'feishu-app')
+    throw new Error('存飞书文档需要一个「飞书应用」渠道(设置→通知渠道),且应用需开通 docx:document 权限')
+  // 正文来源:默认上一步;模板里可用 step.message 指定,如 {{steps.写正文.output}}
+  const content = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
+  if (!content.trim()) throw new Error('没有可写入飞书文档的正文内容')
+  const title = interpolate(step.path?.trim() || `${routine.name} · {{trigger.time}}`, ctx)
+  const { url } = await createFeishuDoc(channel, title, content)
+  return { output: `飞书文档已创建:${url}`, artifactPath: url }
+}
+
 async function executeRoutine(store: Store, routine: Routine): Promise<void> {
   const startedAt = Date.now()
   let status: RoutineRun['status'] = 'ok'
@@ -457,6 +478,10 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
 
   const session: AgentSession = { client: null }
   const channels = loadChannels()
+  // 每步推送目标:开了 pushEachStep 就用兜底通知那个渠道(或第一个非本地渠道)
+  const pushChannel = routine.pushEachStep
+    ? (channels.find((c) => c.id === routine.notifyChannelId) ?? channels.find((c) => c.type !== 'local'))
+    : undefined
   const ctx: RunContext = {
     routine,
     triggerTime: new Date().toLocaleString(),
@@ -481,9 +506,11 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
                   ? await runReviewStep(routine, step, ctx)
                 : step.type === 'export'
                   ? await runExportStep(routine, step, ctx)
-                : await runAgentStep(routine, step, ctx, session, () => {
-                    timedOut = true
-                  })
+                  : step.type === 'feishu-doc'
+                    ? await runFeishuDocStep(routine, step, ctx, channels)
+                    : await runAgentStep(routine, step, ctx, session, () => {
+                        timedOut = true
+                      })
           ctx.products.set(step.name, product)
           ctx.prev = product
           stepResults[index] = {
@@ -496,6 +523,21 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
             durationMs: Date.now() - stepStartedAt,
           }
           stepProgress(index, 'ok')
+          // 每步推送:跑完就把这步产出推到飞书(替代 App 内小预览)
+          if (pushChannel && step.type !== 'notify') {
+            void sendToChannel(pushChannel, {
+              title: `${routine.name} · ${index + 1}. ${step.name}`,
+              status: 'info',
+              markdown: product.output.slice(0, 3000),
+              ...(product.imageUrl ? { imageUrls: [product.imageUrl] } : {}),
+            }).catch((err) =>
+              appendAppLog('warn', 'routines.pushStep', 'Per-step push failed', {
+                routine: routine.name,
+                step: step.name,
+                error: normalizeError(err),
+              }),
+            )
+          }
         } catch (err) {
           if (err instanceof Error && err.message === '人工审核超时，工作流已停止') timedOut = true
           const failStatus = timedOut ? ('timeout' as const) : ('error' as const)
