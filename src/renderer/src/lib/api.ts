@@ -21,6 +21,7 @@ declare global {
       }
       app: {
         version: () => Promise<string>
+        piVersion: () => Promise<string>
       }
       diagnostics: {
         getLogs: () => Promise<{ ok: true; content: string }>

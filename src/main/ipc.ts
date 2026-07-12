@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
-import { existsSync, writeFileSync } from 'fs'
-import { dirname, resolve, sep } from 'path'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { dirname, join, resolve, sep } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import {
   listSessions,
@@ -20,7 +20,7 @@ import {
   saveCustomModelIds,
   type PiProvider,
 } from './settings'
-import { piClientManager, type AgentStatusEvent } from './pi-client'
+import { piClientManager, resolvePiCliPath, type AgentStatusEvent } from './pi-client'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
 import {
@@ -91,6 +91,16 @@ export function registerIpcHandlers(): void {
 
   // ── App ──────────────────────────────────────────────────────────
   ipcMain.handle('app:version', () => app.getVersion())
+  // 底层 pi 引擎(@earendil-works/pi-coding-agent)的版本 —— pi-studio 基于它开发
+  ipcMain.handle('app:piVersion', () => {
+    try {
+      // resolvePiCliPath() → .../pi-coding-agent/dist/cli.js;上两级是包根
+      const pkg = join(dirname(dirname(resolvePiCliPath())), 'package.json')
+      return (JSON.parse(readFileSync(pkg, 'utf8')).version as string) || ''
+    } catch {
+      return ''
+    }
+  })
   ipcMain.handle('diagnostics:getLogs', () => ({ ok: true, content: readRecentAppLog() }))
   ipcMain.handle(
     'diagnostics:save',

@@ -12,6 +12,7 @@ const api = {
 
   app: {
     version: () => ipcRenderer.invoke('app:version'),
+    piVersion: () => ipcRenderer.invoke('app:piVersion'),
   },
 
   diagnostics: {

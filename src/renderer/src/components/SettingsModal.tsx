@@ -223,6 +223,7 @@ export default function SettingsModal({
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
   const [version, setVersion] = useState('')
+  const [piVersion, setPiVersion] = useState('')
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<ProviderConnectionResult | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -248,6 +249,7 @@ export default function SettingsModal({
       })
       .catch((err) => setPolicyError((err as Error).message ?? '读取安全策略失败'))
     api.app.version().then(setVersion).catch(() => {})
+    api.app.piVersion().then(setPiVersion).catch(() => {})
   }, [])
 
   async function handleSave() {
@@ -898,6 +900,10 @@ export default function SettingsModal({
               <div className={styles.aboutRow}>
                 <span>版本</span>
                 <span>v{version || '…'}</span>
+              </div>
+              <div className={styles.aboutRow}>
+                <span>pi 引擎</span>
+                <span>{piVersion ? `v${piVersion}` : '…'}</span>
               </div>
               <div className={styles.aboutRow}>
                 <span>自动更新</span>
