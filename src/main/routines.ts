@@ -2,8 +2,10 @@ import { app, BrowserWindow, ipcMain, Notification } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { loadSettings, apiKeyEnvVar, agentConfigDir } from './settings'
+import { loadSettings, apiKeyEnvVar, agentConfigDir, writeModelsOverride } from './settings'
 import { loadRpcClient, resolvePiCliPath } from './pi-client'
+import { prepareSandboxLaunch } from './sandbox'
+import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
 import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
@@ -15,7 +17,7 @@ import {
 
 /**
  * 例行任务(Routines):定时执行一条由类型化节点组成的流水线。
- * 节点类型:agent(pi 会话) / imagegen(生图) / notify(推送到某个通知渠道)。
+ * 节点类型:agent(pi 会话) / imagegen(生图) / export(工作区产物) / notify(推送到某个通知渠道)。
  * 节点间用 {{prev.output}} / {{steps.<名字>.output}} / {{steps.<名字>.imageUrl}} 传值。
  * agent 节点每次 run spawn 一个全新 RpcClient 子进程(独立 session),跑完即弃 ——
  * 绝不打扰用户当前打开的聊天会话。
@@ -25,7 +27,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'notify'
+export type RoutineStepType = 'agent' | 'imagegen' | 'notify' | 'export'
 
 export type RoutineStep = {
   id: string
@@ -39,11 +41,17 @@ export type RoutineStep = {
   channelId?: string
   /** notify:消息模板(支持 {{…}} 变量),空则默认发上一步输出 */
   message?: string
+  /** export:工作区内的相对产物路径;没有扩展名时按 format 自动补全 */
+  path?: string
+  /** export:Markdown 原文或公众号 HTML 片段 */
+  format?: RoutineArtifactFormat
 }
 
 export type Routine = {
   id: string
   name: string
+  /** 本次运行的固定选题/Brief,支持 {{…}} 变量。 */
+  input?: string
   /** Retained only to migrate previously saved single-step routines. */
   prompt?: string
   steps: RoutineStep[]
@@ -67,6 +75,8 @@ export type RoutineStepResult = {
   summary: string
   /** imagegen 节点的公网图片链接 */
   imageUrl?: string
+  /** export 节点写出的工作区文件 */
+  artifactPath?: string
   durationMs: number
 }
 
@@ -97,6 +107,7 @@ type Store = { routines: Routine[]; runs: RoutineRun[] }
 const RUN_TIMEOUT_MS = 20 * 60 * 1000
 const MAX_RUNS_KEPT = 100
 const MAX_CONCURRENT = 2
+const MAX_STEP_OUTPUT_CHARS = 60_000
 
 const storePath = (): string => join(app.getPath('userData'), 'routines.json')
 
@@ -109,6 +120,8 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
     ...(step.engine !== undefined ? { engine: step.engine } : {}),
     ...(step.channelId !== undefined ? { channelId: step.channelId } : {}),
     ...(step.message !== undefined ? { message: step.message } : {}),
+    ...(step.path !== undefined ? { path: step.path } : {}),
+    ...(step.format !== undefined ? { format: step.format } : {}),
   }
 }
 
@@ -153,7 +166,7 @@ export function scheduleLabel(s: RoutineSchedule): string {
 // ── 变量插值 ─────────────────────────────────────────────────────
 
 /** 每个节点跑完后的产物,供后续节点用 {{…}} 引用 */
-type StepProduct = { output: string; imageUrl?: string }
+type StepProduct = { output: string; imageUrl?: string; artifactPath?: string }
 
 type RunContext = {
   routine: Routine
@@ -164,7 +177,7 @@ type RunContext = {
 
 /**
  * 替换模板里的 {{prev.output}} / {{steps.<名字>.output}} / {{steps.<名字>.imageUrl}} /
- * {{routine.name}} / {{routine.workspace}} / {{trigger.time}}。
+ * {{routine.name}} / {{routine.workspace}} / {{routine.input}} / {{trigger.time}}。
  * 未知变量原样保留,让错误在结果里可见而不是被吞掉。
  */
 function interpolate(template: string, ctx: RunContext): string {
@@ -173,6 +186,7 @@ function interpolate(template: string, ctx: RunContext): string {
     if (token === 'prev.imageUrl') return ctx.prev?.imageUrl ?? whole
     if (token === 'routine.name') return ctx.routine.name
     if (token === 'routine.workspace') return ctx.routine.workspacePath
+    if (token === 'routine.input') return ctx.routine.input ?? ''
     if (token === 'trigger.time') return ctx.triggerTime
     if (token.startsWith('steps.')) {
       const rest = token.slice('steps.'.length)
@@ -232,18 +246,28 @@ async function ensureAgentClient(routine: Routine, session: AgentSession): Promi
   if (session.client) return session.client
   const settings = loadSettings()
   if (!settings.apiKey) throw new Error('未配置 API Key(agent 节点需要)')
+  writeModelsOverride(
+    settings.provider,
+    settings.baseUrl,
+    !!settings.heliconeApiKey,
+    settings.customModelIds,
+  )
   const RpcClient = await loadRpcClient()
+  const env = {
+    [apiKeyEnvVar(settings.provider)]: settings.apiKey,
+    PI_CODING_AGENT_DIR: agentConfigDir(),
+    ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
+    ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
+  }
+  const launch = settings.sandboxEnabled
+    ? await prepareSandboxLaunch(routine.workspacePath, env)
+    : { cliPath: resolvePiCliPath(), env }
   const client = new RpcClient({
     cwd: routine.workspacePath,
-    env: {
-      [apiKeyEnvVar(settings.provider)]: settings.apiKey,
-      PI_CODING_AGENT_DIR: agentConfigDir(),
-      ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
-      ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
-    },
+    env: launch.env,
     provider: settings.provider,
     model: settings.model || undefined,
-    cliPath: resolvePiCliPath(),
+    cliPath: launch.cliPath,
   })
   await client.start()
   session.client = client
@@ -285,7 +309,9 @@ async function runAgentStep(
     role?: string
     content?: Array<{ type?: string; text?: string }> | string
   }>
-  return { output: (latestAssistantText(messages) || '(no text output)').slice(0, 4000) }
+  return {
+    output: (latestAssistantText(messages) || '(no text output)').slice(0, MAX_STEP_OUTPUT_CHARS),
+  }
 }
 
 async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
@@ -297,6 +323,18 @@ async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<Step
     output: result.publicUrl ?? '(图片已生成,无公网链接)',
     ...(result.publicUrl ? { imageUrl: result.publicUrl } : {}),
   }
+}
+
+async function runExportStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+  const content = ctx.prev?.output ?? ''
+  if (!content.trim()) throw new Error('导出节点没有可写入的上一步内容')
+  const format = step.format ?? 'markdown'
+  const requestedPath = interpolate(
+    step.path?.trim() || `.pi-studio/articles/${Date.now()}-article`,
+    ctx,
+  )
+  const artifact = writeRoutineArtifact(routine.workspacePath, requestedPath, format, content)
+  return { output: artifact.path, artifactPath: artifact.path }
 }
 
 async function runNotifyStep(
@@ -362,6 +400,8 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
               ? await runImagegenStep(step, ctx)
               : step.type === 'notify'
                 ? await runNotifyStep(routine, step, ctx, channels)
+                : step.type === 'export'
+                  ? await runExportStep(routine, step, ctx)
                 : await runAgentStep(routine, step, ctx, session, () => {
                     timedOut = true
                   })
@@ -371,8 +411,9 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
             id: step.id,
             name: step.name,
             status: 'ok',
-            summary: product.output,
+            summary: product.output.slice(0, 4000),
             ...(product.imageUrl ? { imageUrl: product.imageUrl } : {}),
+            ...(product.artifactPath ? { artifactPath: product.artifactPath } : {}),
             durationMs: Date.now() - stepStartedAt,
           }
           stepProgress(index, 'ok')
@@ -472,6 +513,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
 const stepIsComplete = (step: RoutineStep): boolean => {
   if (!step.name.trim()) return false
   if (step.type === 'notify') return !!step.channelId
+  if (step.type === 'export') return true
   return !!step.prompt?.trim()
 }
 

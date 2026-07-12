@@ -34,6 +34,7 @@ import {
   Circle,
   MinusCircle,
   Loader2,
+  FileText,
 } from 'lucide-react'
 import {
   api,
@@ -73,11 +74,13 @@ const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot 
   agent: { label: '智能体', icon: Bot },
   imagegen: { label: '生图', icon: ImageIcon },
   notify: { label: '通知', icon: Bell },
+  export: { label: '导出文章', icon: FileText },
 }
 
 type FormState = {
   id?: string
   name: string
+  input: string
   steps: RoutineStep[]
   workspacePath: string
   scheduleType: RoutineSchedule['type']
@@ -94,9 +97,11 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   name: '',
   type,
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
+  ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
 })
 const emptyForm = (workspacePath: string): FormState => ({
   name: '',
+  input: '',
   steps: [createStep()],
   workspacePath,
   scheduleType: 'daily',
@@ -106,6 +111,51 @@ const emptyForm = (workspacePath: string): FormState => ({
   day: 1,
   notify: 'error',
 })
+
+function articleWorkflowTemplate(workspacePath: string): FormState {
+  return {
+    ...emptyForm(workspacePath),
+    name: '微信公众号文章生成',
+    input: '填写本次文章主题、目标读者、语气、参考资料和行动号召',
+    steps: [
+      {
+        ...createStep(),
+        name: '资料与事实',
+        prompt:
+          '围绕 {{routine.input}} 检索并整理 5-8 条可靠资料。列出关键事实、来源链接、争议点和不能确认的内容，不要开始写文章。',
+      },
+      {
+        ...createStep(),
+        name: '文章大纲',
+        prompt:
+          '基于上一步资料，为 {{routine.input}} 设计公众号文章大纲：标题候选 5 个、摘要、开头钩子、3-5 个小节、结尾 CTA。保留来源对应关系。',
+      },
+      {
+        ...createStep(),
+        name: '公众号初稿',
+        prompt:
+          '根据资料和大纲写一篇适合微信公众号的中文初稿。要求：事实可追溯、段落短、标题清晰、避免营销夸大，正文约 1800-2500 字，包含标题、摘要和正文。',
+      },
+      {
+        ...createStep(),
+        name: '事实与合规审校',
+        prompt:
+          '审校上一步公众号初稿，逐条检查事实、来源、广告法风险、绝对化表述、错别字和标题党问题。先列问题，再给出可直接替换的修订稿。',
+      },
+      {
+        ...createStep('export'),
+        name: '保存公众号草稿',
+        path: '.pi-studio/articles/wechat-draft',
+        format: 'html',
+      },
+      {
+        ...createStep('notify'),
+        name: '发送预览提醒',
+        message: '公众号草稿已生成：{{prev.output}}\n请打开文件人工确认后再发布。',
+      },
+    ],
+  }
+}
 
 /** 步骤在流程图里的显示状态:实时进度 > 最近一次运行结果 > 待机 */
 type StepDisplayStatus = 'idle' | 'running' | 'ok' | 'error' | 'timeout' | 'skipped'
@@ -417,7 +467,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   }
 
   const stepComplete = (s: RoutineStep): boolean =>
-    !!s.name.trim() && (s.type === 'notify' ? !!s.channelId : !!s.prompt?.trim())
+    !!s.name.trim() &&
+    (s.type === 'notify' ? !!s.channelId : s.type === 'export' ? true : !!s.prompt?.trim())
 
   async function saveForm() {
     if (!form) return
@@ -429,6 +480,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     const next = await api.routines.save({
       ...(form.id ? { id: form.id } : {}),
       name: form.name.trim(),
+      input: form.input.trim(),
       steps,
       workspacePath: form.workspacePath.trim(),
       schedule: buildSchedule(form),
@@ -461,6 +513,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type !== 'notify' ? { prompt: step.prompt ?? '' } : {}),
           ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
           ...(type === 'notify' ? { channelId: step.channelId ?? channels[0]?.id, message: step.message ?? '' } : {}),
+          ...(type === 'export'
+            ? { path: step.path ?? '.pi-studio/articles/article-draft', format: step.format ?? ('html' as const) }
+            : {}),
         }
       }),
     })
@@ -484,6 +539,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     setForm({
       id: r.id,
       name: r.name,
+      input: r.input ?? '',
       steps: r.steps?.length ? r.steps.map((s) => ({ ...s })) : [createStep()],
       workspacePath: r.workspacePath,
       scheduleType: r.schedule.type,
@@ -600,6 +656,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           >
             新建
           </Button>
+          <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? ''))}>
+            公众号模板
+          </Button>
         </div>
 
         {form && (
@@ -617,6 +676,13 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Workflow name"
+            />
+            <span className={styles.label}>本次选题 / Brief</span>
+            <Input.TextArea
+              value={form.input}
+              onChange={(e) => setForm({ ...form, input: e.target.value })}
+              placeholder="例如：面向独立开发者，解释 AI 编程工具如何减少重复劳动，并给出 3 个实践建议"
+              autoSize={{ minRows: 3, maxRows: 7 }}
             />
             <span className={styles.label}>{`步骤 (${form.steps.length})`}</span>
             <span className={styles.hint}>
@@ -640,7 +706,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   <Button size="small" type="text" icon={<ArrowDown size={13} />} disabled={index === form.steps.length - 1} onClick={() => moveStep(index, 1)} />
                   <Button size="small" type="text" danger icon={<Trash2 size={13} />} disabled={form.steps.length === 1} onClick={() => deleteStep(step.id)} />
                 </div>
-                {step.type !== 'notify' && (
+                {step.type !== 'notify' && step.type !== 'export' && (
                   <Input.TextArea
                     value={step.prompt ?? ''}
                     onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
@@ -680,6 +746,29 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       placeholder={'发什么(支持 {{prev.output}} 等变量,留空 = 上一步输出)'}
                       autoSize={{ minRows: 2, maxRows: 6 }}
                     />
+                  </>
+                )}
+                {step.type === 'export' && (
+                  <>
+                    <div className={styles.formRow}>
+                      <span className={styles.hint}>格式</span>
+                      <Select
+                        value={step.format ?? 'html'}
+                        onChange={(v) => updateStep(step.id, { format: v })}
+                        style={{ width: 160 }}
+                        options={[
+                          { value: 'html', label: '公众号 HTML' },
+                          { value: 'markdown', label: 'Markdown' },
+                        ]}
+                      />
+                    </div>
+                    <Input
+                      value={step.path ?? ''}
+                      onChange={(e) => updateStep(step.id, { path: e.target.value })}
+                      placeholder=".pi-studio/articles/article-draft"
+                      addonBefore="文件"
+                    />
+                    <span className={styles.hint}>只能写入工作区内的相对路径；没有扩展名会按格式自动补全。</span>
                   </>
                 )}
               </div>
@@ -886,6 +975,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       <div className={styles.nodeSub}>
                         → {channelName(step.channelId)}
                         {step.message?.trim() ? ` · ${step.message.slice(0, 60)}` : ' · (上一步输出)'}
+                      </div>
+                    ) : step.type === 'export' ? (
+                      <div className={styles.nodeSub}>
+                        → {step.path || '.pi-studio/articles/article-draft'} · {step.format === 'markdown' ? 'Markdown' : '公众号 HTML'}
                       </div>
                     ) : (
                       <div className={styles.nodePrompt} title={step.prompt}>

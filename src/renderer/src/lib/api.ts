@@ -235,7 +235,7 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'notify'
+export type RoutineStepType = 'agent' | 'imagegen' | 'notify' | 'export'
 
 export type RoutineStep = {
   id: string
@@ -245,11 +245,14 @@ export type RoutineStep = {
   engine?: ImageGenEngine
   channelId?: string
   message?: string
+  path?: string
+  format?: 'markdown' | 'html'
 }
 
 export type Routine = {
   id: string
   name: string
+  input?: string
   prompt?: string
   steps: RoutineStep[]
   workspacePath: string
@@ -267,6 +270,7 @@ export type RoutineStepResult = {
   status: 'ok' | 'error' | 'timeout' | 'skipped'
   summary: string
   imageUrl?: string
+  artifactPath?: string
   durationMs: number
 }
 
