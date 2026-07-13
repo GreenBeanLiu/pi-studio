@@ -6,6 +6,10 @@ describe('routine step validation', () => {
     expect(isRoutineStepComplete({ name: '存飞书文档', type: 'feishu-doc' })).toBe(true)
   })
 
+  it('keeps a wechat draft node when it has no agent prompt', () => {
+    expect(isRoutineStepComplete({ name: '微信公众号草稿', type: 'wechat-draft' })).toBe(true)
+  })
+
   it('still requires prompts and notification channels for their respective nodes', () => {
     expect(isRoutineStepComplete({ name: '写正文', type: 'agent' })).toBe(false)
     expect(isRoutineStepComplete({ name: '发送通知', type: 'notify' })).toBe(false)

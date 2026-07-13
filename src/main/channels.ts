@@ -5,6 +5,7 @@ import { createHmac, randomUUID } from 'crypto'
 import { loadSettings } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
 import { imageInsertionPositions } from './feishu-doc-layout'
+import { extractWechatDigest, extractWechatTitle, markdownToWechatHtml } from './wechat-article'
 
 /**
  * 通知渠道注册表:渠道是配置数据,不是代码分支。
@@ -15,6 +16,7 @@ import { imageInsertionPositions } from './feishu-doc-layout'
 export type Channel = { id: string; name: string } & (
   | { type: 'feishu-webhook'; url: string; secret?: string }
   | { type: 'feishu-app'; appId: string; appSecret: string; chatId?: string; folderToken?: string }
+  | { type: 'wechat-official'; appId: string; appSecret: string }
   | { type: 'webhook'; url: string }
   | { type: 'local' }
 )
@@ -94,6 +96,8 @@ export async function sendToChannel(channel: Channel, payload: NotifyPayload): P
       return postFeishuWebhook(channel.url, channel.secret ?? '', buildFeishuCard(payload))
     case 'feishu-app':
       return sendFeishuViaApp(channel, buildFeishuCard(payload))
+    case 'wechat-official':
+      throw new Error('微信公众号渠道只能用于「微信公众号草稿」节点,不能作为通知渠道')
     case 'webhook': {
       const res = await fetch(channel.url, {
         method: 'POST',
@@ -396,6 +400,105 @@ export async function createFeishuDoc(
   return { url: `https://feishu.cn/docx/${documentId}`, documentId }
 }
 
+// ── 微信公众号:获取 token、上传图片、创建草稿 ─────────────────────
+
+type WechatOfficialChannel = Extract<Channel, { type: 'wechat-official' }>
+
+async function getWechatAccessToken(channel: WechatOfficialChannel): Promise<string> {
+  const response = await fetch(
+    `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(channel.appId)}&secret=${encodeURIComponent(channel.appSecret)}`,
+    { signal: AbortSignal.timeout(15_000) },
+  )
+  const data = (await response.json().catch(() => null)) as { access_token?: string; errcode?: number; errmsg?: string } | null
+  if (!response.ok || !data?.access_token) throw new Error(`微信 API ${data?.errcode ?? response.status}: ${data?.errmsg ?? '获取 access_token 失败'}`)
+  return data.access_token
+}
+
+async function imageBuffer(imageUrl: string): Promise<{ buffer: Buffer; contentType: string }> {
+  if (imageUrl.startsWith('data:')) {
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(imageUrl)
+    if (!match) throw new Error('微信配图 data URL 无法解析')
+    return { buffer: Buffer.from(match[2], 'base64'), contentType: match[1] }
+  }
+  const response = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) })
+  if (!response.ok) throw new Error(`下载微信配图失败: HTTP ${response.status}`)
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type')?.split(';')[0] || 'image/png',
+  }
+}
+
+async function uploadWechatInlineImage(token: string, imageUrl: string, index: number): Promise<string> {
+  const { buffer, contentType } = await imageBuffer(imageUrl)
+  if (!buffer.length || buffer.length > 10 * 1024 * 1024) throw new Error('微信正文配图为空或超过 10MB 限制')
+  const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
+  const filename = `pi-studio-inline-${index + 1}.${extension}`
+  const form = new FormData()
+  form.append('media', new Blob([new Uint8Array(buffer)], { type: contentType }), filename)
+  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token=${encodeURIComponent(token)}`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+  })
+  const data = (await response.json().catch(() => null)) as { url?: string; errcode?: number; errmsg?: string } | null
+  if (!response.ok || !data?.url) throw new Error(`微信正文图片上传失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
+  return data.url
+}
+
+async function uploadWechatCover(token: string, imageUrl: string): Promise<string> {
+  const { buffer, contentType } = await imageBuffer(imageUrl)
+  if (!buffer.length || buffer.length > 10 * 1024 * 1024) throw new Error('微信封面图为空或超过 10MB 限制')
+  const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
+  const form = new FormData()
+  form.append('media', new Blob([new Uint8Array(buffer)], { type: contentType }), `pi-studio-cover.${extension}`)
+  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${encodeURIComponent(token)}&type=image`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+  })
+  const data = (await response.json().catch(() => null)) as { media_id?: string; errcode?: number; errmsg?: string } | null
+  if (!response.ok || !data?.media_id) throw new Error(`微信封面上传失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
+  return data.media_id
+}
+
+export async function testWechatOfficial(channel: WechatOfficialChannel): Promise<void> {
+  await getWechatAccessToken(channel)
+}
+
+export async function createWechatDraft(
+  channel: WechatOfficialChannel,
+  title: string,
+  markdown: string,
+  imageUrls: string[] = [],
+): Promise<{ mediaId: string; title: string }> {
+  if (!imageUrls.length) throw new Error('微信公众号草稿至少需要一张封面图,请在工作流中添加 imagegen 节点')
+  const token = await getWechatAccessToken(channel)
+  const coverMediaId = await uploadWechatCover(token, imageUrls[0])
+  const inlineUrls: string[] = []
+  for (let i = 1; i < imageUrls.length; i += 1) inlineUrls.push(await uploadWechatInlineImage(token, imageUrls[i], i - 1))
+  const articleTitle = extractWechatTitle(markdown, title)
+  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${encodeURIComponent(token)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      articles: [{
+        title: articleTitle,
+        author: 'pi-studio',
+        digest: extractWechatDigest(markdown),
+        content: markdownToWechatHtml(markdown, inlineUrls),
+        content_source_url: '',
+        thumb_media_id: coverMediaId,
+        need_open_comment: 1,
+        only_fans_can_comment: 0,
+      }],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  })
+  const data = (await response.json().catch(() => null)) as { media_id?: string; errcode?: number; errmsg?: string } | null
+  if (!response.ok || !data?.media_id) throw new Error(`微信草稿创建失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
+  return { mediaId: data.media_id, title: articleTitle }
+}
+
 // ── 注册 ─────────────────────────────────────────────────────────
 
 export function registerChannels(): void {
@@ -409,6 +512,10 @@ export function registerChannels(): void {
   // 用传入的(可能还没保存的)渠道配置发一条测试消息
   ipcMain.handle('channels:test', async (_e, channel: Channel) => {
     try {
+      if (channel.type === 'wechat-official') {
+        await testWechatOfficial(channel)
+        return { ok: true }
+      }
       await sendToChannel(channel, {
         title: '🔔 pi-studio 测试消息',
         status: 'info',

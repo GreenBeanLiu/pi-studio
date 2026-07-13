@@ -247,7 +247,7 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc'
+export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -298,7 +298,7 @@ export type RoutineReviewRequest = {
   preview: string
 }
 
-export type ChannelType = 'feishu-webhook' | 'feishu-app' | 'webhook' | 'local'
+export type ChannelType = 'feishu-webhook' | 'feishu-app' | 'wechat-official' | 'webhook' | 'local'
 
 export type Channel = {
   id: string

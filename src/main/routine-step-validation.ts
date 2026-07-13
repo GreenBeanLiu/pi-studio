@@ -1,4 +1,4 @@
-export type RoutineStepKind = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc'
+export type RoutineStepKind = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStepLike = {
   name: string
@@ -11,6 +11,6 @@ export type RoutineStepLike = {
 export function isRoutineStepComplete(step: RoutineStepLike): boolean {
   if (!step.name.trim()) return false
   if (step.type === 'notify') return !!step.channelId
-  if (step.type === 'review' || step.type === 'export' || step.type === 'feishu-doc') return true
+  if (step.type === 'review' || step.type === 'export' || step.type === 'feishu-doc' || step.type === 'wechat-draft') return true
   return !!step.prompt?.trim()
 }

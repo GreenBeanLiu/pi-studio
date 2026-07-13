@@ -88,6 +88,7 @@ const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot 
   notify: { label: '通知', icon: Bell },
   export: { label: '导出文章', icon: FileText },
   'feishu-doc': { label: '存飞书文档', icon: FileUp },
+  'wechat-draft': { label: '微信公众号草稿', icon: FileText },
 }
 
 type FormState = {
@@ -114,6 +115,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   ...(type === 'review' ? { message: '请检查上一步生成的内容，确认后继续。' } : {}),
   ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
   ...(type === 'feishu-doc' ? { message: '{{prev.output}}', path: '{{routine.name}} · {{trigger.time}}' } : {}),
+  ...(type === 'wechat-draft' ? { message: '{{prev.output}}', path: '{{routine.name}} · {{trigger.time}}' } : {}),
 })
 const emptyForm = (workspacePath: string): FormState => ({
   name: '',
@@ -540,7 +542,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     !!s.name.trim() &&
     (s.type === 'notify'
       ? !!s.channelId
-      : s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc'
+      : s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft'
         ? true
         : !!s.prompt?.trim())
 
@@ -596,6 +598,13 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
             ? {
                 message: step.message ?? '{{prev.output}}',
                 path: step.path ?? '{{routine.name}} · {{trigger.time}}',
+                channelId: step.channelId,
+              }
+            : {}),
+          ...(type === 'wechat-draft'
+            ? {
+                message: step.message ?? '{{prev.output}}',
+                path: step.path ?? '{{routine.input}} · {{trigger.time}}',
                 channelId: step.channelId,
               }
             : {}),
@@ -819,7 +828,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                 {step.type !== 'notify' &&
                   step.type !== 'export' &&
                   step.type !== 'review' &&
-                  step.type !== 'feishu-doc' && (
+                  step.type !== 'feishu-doc' &&
+                  step.type !== 'wechat-draft' && (
                     <Input.TextArea
                       value={step.prompt ?? ''}
                       onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
@@ -921,6 +931,38 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                     />
                     <span className={styles.hint}>
                       需要「飞书应用」渠道且应用开通 docx:document 权限;在飞书里建个文件夹分享给应用,把 folder_token 填到渠道设置,文档就会存到你能看到的地方。配图节点会按正文段落分布插入文档内部。
+                    </span>
+                  </>
+                )}
+                {step.type === 'wechat-draft' && (
+                  <>
+                    <div className={styles.formRow}>
+                      <span className={styles.hint}>微信公众号</span>
+                      <Select
+                        value={step.channelId}
+                        onChange={(v) => updateStep(step.id, { channelId: v })}
+                        style={{ flex: 1 }}
+                        allowClear
+                        placeholder="自动选第一个「微信公众号」渠道"
+                        options={channels
+                          .filter((c) => c.type === 'wechat-official')
+                          .map((c) => ({ value: c.id, label: c.name }))}
+                      />
+                    </div>
+                    <Input
+                      value={step.path ?? ''}
+                      onChange={(e) => updateStep(step.id, { path: e.target.value })}
+                      placeholder="{{routine.input}} · {{trigger.time}}"
+                      addonBefore="标题"
+                    />
+                    <Input.TextArea
+                      value={step.message ?? ''}
+                      onChange={(e) => updateStep(step.id, { message: e.target.value })}
+                      placeholder="写入正文(支持 {{…}} 变量,留空 = 上一步输出)"
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                    />
+                    <span className={styles.hint}>
+                      只创建微信公众号草稿，不会自动群发；需要至少一个生图节点作为封面，后续生图节点会作为正文插图。
                     </span>
                   </>
                 )}

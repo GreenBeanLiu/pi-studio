@@ -10,7 +10,7 @@ import { syncWebSearchExtension } from './web-search-extension'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
-import { loadChannels, sendToChannel, createFeishuDoc, type Channel } from './channels'
+import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import { isRoutineStepComplete } from './routine-step-validation'
 import {
@@ -31,7 +31,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc'
+export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -495,7 +495,7 @@ async function runNotifyStep(
   channels: Channel[],
 ): Promise<StepProduct> {
   const channel = channels.find((c) => c.id === step.channelId)
-  if (!channel) throw new Error('通知渠道不存在,去 设置→通知渠道 检查')
+  if (!channel || channel.type === 'wechat-official') throw new Error('通知节点需要可发送的通知渠道,微信公众号渠道请使用草稿节点')
   const markdown = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
   const imageUrls = [...ctx.products.values()].map((p) => p.imageUrl).filter((u): u is string => !!u)
   await sendToChannel(channel, {
@@ -533,6 +533,30 @@ async function runFeishuDocStep(
   return { output: `[打开飞书文档](${url})`, artifactPath: url }
 }
 
+async function runWechatDraftStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  channels: Channel[],
+): Promise<StepProduct> {
+  const channel =
+    (step.channelId ? channels.find((candidate) => candidate.id === step.channelId) : undefined) ??
+    channels.find((candidate) => candidate.type === 'wechat-official')
+  if (!channel || channel.type !== 'wechat-official')
+    throw new Error('微信公众号草稿需要一个「微信公众号」渠道(设置→通知渠道)')
+  const content = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
+  if (!content.trim()) throw new Error('没有可写入微信公众号草稿的正文内容')
+  const title = interpolate(step.path?.trim() || `${routine.name} · {{trigger.time}}`, ctx)
+  const imageUrls = routine.steps
+    .filter((candidate) => candidate.type === 'imagegen')
+    .map((candidate) => ctx.products.get(candidate.name))
+    .filter((product): product is StepProduct => !!product)
+    .map((product) => product.imageUrl ?? product.imageDataUrl)
+    .filter((url): url is string => !!url)
+  const draft = await createWechatDraft(channel, title, content, imageUrls)
+  return { output: `微信公众号草稿已创建: ${draft.title}（media_id: ${draft.mediaId}）`, artifactPath: draft.mediaId }
+}
+
 async function executeRoutine(store: Store, routine: Routine): Promise<void> {
   const startedAt = Date.now()
   let status: RoutineRun['status'] = 'ok'
@@ -564,7 +588,8 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
   const channels = loadChannels()
   // 每步推送目标:开了 pushEachStep 就用兜底通知那个渠道(或第一个非本地渠道)
   const pushChannel = routine.pushEachStep
-    ? (channels.find((c) => c.id === routine.notifyChannelId) ?? channels.find((c) => c.type !== 'local'))
+    ? (channels.find((c) => c.id === routine.notifyChannelId && c.type !== 'wechat-official') ??
+        channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official'))
     : undefined
   const ctx: RunContext = {
     routine,
@@ -592,6 +617,8 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
                   ? await runExportStep(routine, step, ctx)
                   : step.type === 'feishu-doc'
                     ? await runFeishuDocStep(routine, step, ctx, channels)
+                    : step.type === 'wechat-draft'
+                      ? await runWechatDraftStep(routine, step, ctx, channels)
                     : await runAgentStep(routine, step, ctx, session, () => {
                         timedOut = true
                       })
@@ -679,7 +706,9 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
         body: (errorMsg ?? summary).slice(0, 150),
       }).show()
     }
-    const target = channels.find((c) => c.id === routine.notifyChannelId) ?? channels.find((c) => c.type !== 'local')
+    const target =
+      channels.find((c) => c.id === routine.notifyChannelId && c.type !== 'wechat-official') ??
+      channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official')
     if (target) {
       const statusText = status === 'ok' ? '完成' : status === 'timeout' ? '超时' : '失败'
       const durationS = Math.max(1, Math.round((run.endedAt - run.startedAt) / 1000))

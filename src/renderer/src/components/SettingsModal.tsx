@@ -335,6 +335,7 @@ export default function SettingsModal({
   const CHANNEL_TYPE_LABEL: Record<ChannelType, string> = {
     'feishu-webhook': '飞书群机器人',
     'feishu-app': '飞书应用',
+    'wechat-official': '微信公众号',
     webhook: '通用 Webhook',
     local: '系统通知',
   }
@@ -349,6 +350,7 @@ export default function SettingsModal({
     if (!c.name.trim()) return false
     if (c.type === 'feishu-webhook' || c.type === 'webhook') return !!c.url?.trim()
     if (c.type === 'feishu-app') return !!c.appId?.trim() && !!c.appSecret?.trim()
+    if (c.type === 'wechat-official') return !!c.appId?.trim() && !!c.appSecret?.trim()
     return true
   }
 
@@ -686,6 +688,23 @@ export default function SettingsModal({
                           onChange={(e) => setChannelDraft({ ...channelDraft, folderToken: e.target.value })}
                           placeholder="云文档文件夹 token（分享链接中 /folder/ 后的字符串）"
                         />
+                      </>
+                    )}
+                    {channelDraft.type === 'wechat-official' && (
+                      <>
+                        <Input
+                          value={channelDraft.appId ?? ''}
+                          onChange={(e) => setChannelDraft({ ...channelDraft, appId: e.target.value })}
+                          placeholder="微信公众号 AppID（wx…）"
+                        />
+                        <Input.Password
+                          value={channelDraft.appSecret ?? ''}
+                          onChange={(e) => setChannelDraft({ ...channelDraft, appSecret: e.target.value })}
+                          placeholder="微信公众号 AppSecret"
+                        />
+                        <span className={styles.labelHint}>
+                          先配置开发者权限和服务器 IP 白名单；此渠道只创建草稿，不会自动群发。
+                        </span>
                       </>
                     )}
                     <div className={styles.actionRow}>

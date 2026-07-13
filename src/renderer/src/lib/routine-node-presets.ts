@@ -109,6 +109,18 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
     },
   },
   {
+    id: 'output.wechat-draft',
+    category: 'output',
+    label: '微信公众号草稿',
+    description: '上传图片并创建微信公众号草稿（不自动群发）',
+    step: {
+      name: '微信公众号草稿',
+      type: 'wechat-draft',
+      message: '{{prev.output}}',
+      path: '{{routine.input}} · {{trigger.time}}',
+    },
+  },
+  {
     id: 'output.notify',
     category: 'output',
     label: '发送预览提醒',
