@@ -4,6 +4,7 @@ import { isCompatibleCheckpoint } from './comfy-workflow'
 import { ComfyRuntime, parseLaunchArgs, type ComfyRuntimeHealth } from './comfy-runtime'
 import { resolveCloudImageConfig } from './network-policy'
 import { loadSettings } from './settings'
+import { resolveCloudImageResult } from './image-gen-result'
 
 // 本地引擎:直连 ComfyUI(默认 8188,可由本应用托管启停)。
 // 云端引擎:VPS 中继(trail-api)→ trigger.dev 跑 gpt-image-2 → R2,SSE 拿结果。
@@ -314,6 +315,7 @@ async function cloudGenerate(
   referenceUrls?: string[],
   maskUrl?: string,
   size?: ImageGenSize,
+  downloadResult = true,
 ): Promise<ImageGenResult> {
   const cloud = getCloud()
   if (!cloud.available) {
@@ -356,10 +358,14 @@ async function cloudGenerate(
       if (event === 'result') {
         const url = data.urls?.[0]
         if (!url) return { error: '云端任务完成但没有返回图片 URL' }
-        const img = await fetch(url, { signal: AbortSignal.timeout(60_000) })
-        if (!img.ok) return { error: `下载结果图失败(${img.status})` }
-        const b64 = Buffer.from(await img.arrayBuffer()).toString('base64')
-        return { dataUrl: `data:image/png;base64,${b64}`, publicUrl: url }
+        const resolved = await resolveCloudImageResult(url, downloadResult)
+        if ('downloadError' in resolved) {
+          appendAppLog('warn', 'imagegen.cloud', 'Cloud result preview download failed; using public URL', {
+            url,
+            error: resolved.downloadError,
+          })
+        }
+        return resolved
       }
       // event: status — 阶段进度,目前不透传到 UI
     }
@@ -377,6 +383,8 @@ export async function generateImage(payload: {
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
+  /** Workflows already consume the durable public URL and do not need a blocking base64 copy. */
+  downloadResult?: boolean
 }): Promise<ImageGenResult> {
   try {
     if (payload.engine === 'comfy') {
@@ -413,7 +421,13 @@ export async function generateImage(payload: {
       return { error: '蒙版编辑需要先选择一张底图' }
     }
     const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl) : undefined
-    return await cloudGenerate(payload.prompt, references, maskUrl, payload.size)
+    return await cloudGenerate(
+      payload.prompt,
+      references,
+      maskUrl,
+      payload.size,
+      payload.downloadResult !== false,
+    )
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return {

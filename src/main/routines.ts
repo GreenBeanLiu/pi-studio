@@ -406,7 +406,11 @@ async function runAgentStep(
 async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
   const prompt = interpolate(step.prompt ?? '', ctx)
   if (!prompt.trim()) throw new Error('生图节点的提示词为空')
-  const result = await generateImage({ prompt, engine: step.engine ?? 'openai' })
+  const result = await generateImage({
+    prompt,
+    engine: step.engine ?? 'openai',
+    downloadResult: false,
+  })
   if ('error' in result) throw new Error(result.error)
   const uri = result.publicUrl ?? result.dataUrl
   return {
