@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, Notification } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings, apiKeyEnvVar, agentConfigDir, writeModelsOverride } from './settings'
@@ -13,7 +13,13 @@ import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import { isRoutineStepComplete } from './routine-step-validation'
-import { queueRoutineCloudDelete, queueRoutineCloudSync } from './routine-cloud-sync'
+import {
+  configureRoutineCloudOutbox,
+  queueRoutineCloudSync,
+  routineSyncOrigin,
+} from './routine-cloud-sync'
+import { RoutineDatabase } from './routine-database'
+import { JsonWorkflowDeleteOutbox } from './workflow-delete-outbox'
 import {
   RoutineScheduler,
   dueSlotKey,
@@ -130,6 +136,10 @@ const MAX_STEP_OUTPUT_CHARS = 60_000
 const REVIEW_TIMEOUT_MS = 30 * 60 * 1000
 
 const storePath = (): string => join(app.getPath('userData'), 'routines.json')
+const databasePath = (): string => join(app.getPath('userData'), 'routines.sqlite3')
+const deleteOutboxPath = (): string => join(app.getPath('userData'), 'cloud-sync-outbox.json')
+let routineDatabase: RoutineDatabase | null = null
+let jsonDeleteOutbox: JsonWorkflowDeleteOutbox | null = null
 
 type PendingReview = {
   routineId: string
@@ -167,6 +177,7 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
 }
 
 function loadStore(): Store {
+  if (routineDatabase) return routineDatabase.load()
   try {
     if (existsSync(storePath())) {
       const raw = JSON.parse(readFileSync(storePath(), 'utf8')) as Partial<Store>
@@ -186,9 +197,27 @@ function loadStore(): Store {
   return { routines: [], runs: [] }
 }
 
-function saveStore(store: Store): void {
-  writeFileSync(storePath(), JSON.stringify(store, null, 2), 'utf8')
+function saveStore(
+  store: Store,
+  deleted?: { origin: string; workflowId: string },
+): void {
+  if (routineDatabase) {
+    routineDatabase.save(store, deleted)
+  } else {
+    if (deleted) jsonDeleteOutbox?.commitDelete(store, deleted.origin, deleted.workflowId)
+    else {
+      jsonDeleteOutbox?.assertReady()
+      writeStoreSnapshot(store)
+    }
+  }
   queueRoutineCloudSync(store)
+}
+
+function writeStoreSnapshot(store: Store): void {
+  const target = storePath()
+  const temporary = `${target}.tmp`
+  writeFileSync(temporary, JSON.stringify(store, null, 2), 'utf8')
+  renameSync(temporary, target)
 }
 
 /** Upgrade the previously saved article workflow without touching custom workflows. */
@@ -757,6 +786,39 @@ async function executeRoutine(
 const stepIsComplete = isRoutineStepComplete
 
 export function registerRoutines(): void {
+  jsonDeleteOutbox = new JsonWorkflowDeleteOutbox(deleteOutboxPath(), storePath())
+  const databaseAlreadyExists = existsSync(databasePath())
+  try {
+    routineDatabase = new RoutineDatabase(databasePath(), storePath())
+    try {
+      const legacyDeletes = jsonDeleteOutbox.readAll()
+      routineDatabase.importWorkflowDeletes(legacyDeletes)
+      if (legacyDeletes.length > 0) jsonDeleteOutbox.archiveAndClear()
+    } catch (error) {
+      appendAppLog(
+        'error',
+        'routines.database',
+        'Failed to import the legacy cloud delete outbox',
+        normalizeError(error),
+      )
+    }
+    configureRoutineCloudOutbox(routineDatabase)
+    app.once('will-quit', () => {
+      routineDatabase?.close()
+      routineDatabase = null
+    })
+  } catch (error) {
+    routineDatabase?.close()
+    routineDatabase = null
+    if (databaseAlreadyExists || existsSync(databasePath())) throw error
+    configureRoutineCloudOutbox(jsonDeleteOutbox)
+    appendAppLog(
+      'error',
+      'routines.database',
+      'Failed to initialize SQLite; using legacy JSON storage',
+      normalizeError(error),
+    )
+  }
   const store = loadStore()
   queueRoutineCloudSync(store)
   const feishuChannelId = loadChannels().find((channel) => channel.type === 'feishu-app')?.id
@@ -816,12 +878,14 @@ export function registerRoutines(): void {
   )
 
   ipcMain.handle('routines:delete', (_e, id: string) => {
+    const nextRoutines = store.routines.filter((routine) => routine.id !== id)
+    saveStore(
+      { ...store, routines: nextRoutines },
+      { origin: routineSyncOrigin(), workflowId: id },
+    )
+    store.routines = nextRoutines
     scheduler.cancel(id)
     cancelPendingReviews(id, '工作流已删除，审核请求已取消')
-    // Persist remote deletion intent before acknowledging the local removal.
-    queueRoutineCloudDelete(id)
-    store.routines = store.routines.filter((r) => r.id !== id)
-    saveStore(store)
     return store.routines
   })
 

@@ -1,17 +1,16 @@
 import { app, safeStorage } from 'electron'
 import { createHash } from 'crypto'
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { appendAppLog, normalizeError } from './app-log'
 import type { Routine, RoutineRun, RoutineStep, RoutineStepResult } from './routines'
+import type { WorkflowDeleteOutbox } from './workflow-delete-outbox'
 
 declare const __TRAILAI_API_URL__: string
 
 type RoutineStoreSnapshot = { routines: Routine[]; runs: RoutineRun[] }
 type InstallationCredential = { installationId: string; token: string }
 type StoredCredential = { origin: string; installationId: string; tokenEncrypted: string }
-type DeleteIntent = { origin: string; installationId: string | null; workflowId: string }
-
 function iso(timestamp: number | undefined): string | null {
   return timestamp ? new Date(timestamp).toISOString() : null
 }
@@ -101,11 +100,7 @@ function credentialPath(): string {
   return join(app.getPath('userData'), 'cloud-sync.json')
 }
 
-function outboxPath(): string {
-  return join(app.getPath('userData'), 'cloud-sync-outbox.json')
-}
-
-function syncOrigin(): string {
+export function routineSyncOrigin(): string {
   const value = process.env.PI_STUDIO_SYNC_URL?.trim() || __TRAILAI_API_URL__
   const url = new URL(value)
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1'
@@ -119,7 +114,7 @@ function loadCredential(): InstallationCredential | null {
   if (!safeStorage.isEncryptionAvailable() || !existsSync(credentialPath())) return null
   try {
     const stored = JSON.parse(readFileSync(credentialPath(), 'utf8')) as StoredCredential
-    if (stored.origin !== syncOrigin()) return null
+    if (stored.origin !== routineSyncOrigin()) return null
     return {
       installationId: stored.installationId,
       token: safeStorage.decryptString(Buffer.from(stored.tokenEncrypted, 'base64')),
@@ -134,61 +129,11 @@ function saveCredential(credential: InstallationCredential): void {
     throw new Error('OS-protected credential storage is unavailable')
   }
   const stored: StoredCredential = {
-    origin: syncOrigin(),
+    origin: routineSyncOrigin(),
     installationId: credential.installationId,
     tokenEncrypted: safeStorage.encryptString(credential.token).toString('base64'),
   }
   writeFileSync(credentialPath(), JSON.stringify(stored, null, 2), 'utf8')
-}
-
-function loadPendingDeletes(): DeleteIntent[] {
-  if (!existsSync(outboxPath())) return []
-  try {
-    const entries = JSON.parse(readFileSync(outboxPath(), 'utf8')) as unknown
-    if (!Array.isArray(entries)) throw new Error('delete outbox must be an array')
-    return entries.filter(
-      (entry): entry is DeleteIntent =>
-        !!entry &&
-        typeof entry === 'object' &&
-        typeof (entry as DeleteIntent).origin === 'string' &&
-        ((entry as DeleteIntent).installationId === null ||
-          typeof (entry as DeleteIntent).installationId === 'string') &&
-        typeof (entry as DeleteIntent).workflowId === 'string',
-    )
-  } catch (error) {
-    throw new Error(`Cloud sync delete outbox is damaged: ${String(error)}`)
-  }
-}
-
-function savePendingDeletes(entries: readonly DeleteIntent[]): void {
-  const unique = new Map(
-    entries.map((entry) => [`${entry.origin}\n${entry.installationId}\n${entry.workflowId}`, entry]),
-  )
-  const target = outboxPath()
-  const temporary = `${target}.tmp`
-  writeFileSync(temporary, JSON.stringify([...unique.values()], null, 2), 'utf8')
-  renameSync(temporary, target)
-}
-
-export function pendingDeletesForCredential(
-  entries: readonly DeleteIntent[],
-  credential: InstallationCredential,
-  origin: string,
-): DeleteIntent[] {
-  return entries.filter(
-    (entry) => entry.origin === origin && entry.installationId === credential.installationId,
-  )
-}
-
-function claimPendingDeletes(credential: InstallationCredential): DeleteIntent[] {
-  const origin = syncOrigin()
-  const claimed = loadPendingDeletes().map((entry) =>
-    entry.origin === origin && entry.installationId === null
-      ? { ...entry, installationId: credential.installationId }
-      : entry,
-  )
-  savePendingDeletes(claimed)
-  return pendingDeletesForCredential(claimed, credential, origin)
 }
 
 async function cloudRequest(
@@ -200,7 +145,7 @@ async function cloudRequest(
   headers.set('Accept', 'application/json')
   if (options.body) headers.set('Content-Type', 'application/json')
   if (credential) headers.set('Authorization', `Bearer ${credential.token}`)
-  return fetch(`${syncOrigin()}${path}`, {
+  return fetch(`${routineSyncOrigin()}${path}`, {
     ...options,
     headers,
     signal: AbortSignal.timeout(15_000),
@@ -252,7 +197,10 @@ async function syncSnapshot(snapshot: RoutineStoreSnapshot): Promise<void> {
     )
   }
 
-  for (const intent of claimPendingDeletes(credential)) {
+  for (const intent of deleteOutbox?.claimWorkflowDeletes(
+    routineSyncOrigin(),
+    credential.installationId,
+  ) ?? []) {
     await expectOk(
       await cloudRequest(
         `/pi/workflows/${encodeURIComponent(intent.workflowId)}`,
@@ -261,19 +209,13 @@ async function syncSnapshot(snapshot: RoutineStoreSnapshot): Promise<void> {
       ),
       'Deleting remote workflow',
     )
-    savePendingDeletes(
-      loadPendingDeletes().filter(
-        (candidate) =>
-          candidate.origin !== intent.origin ||
-          candidate.installationId !== intent.installationId ||
-          candidate.workflowId !== intent.workflowId,
-      ),
-    )
+    deleteOutbox?.ackWorkflowDelete(intent.id)
   }
 }
 
 let pendingSnapshot: RoutineStoreSnapshot | null = null
 let syncLoop: Promise<void> | null = null
+let deleteOutbox: WorkflowDeleteOutbox | null = null
 let retryTimer: NodeJS.Timeout | null = null
 let retryDelayMs = 15_000
 const MAX_RETRY_DELAY_MS = 5 * 60_000
@@ -287,6 +229,17 @@ function scheduleRetry(): void {
   retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS)
 }
 
+function recordSyncState(key: string, value: string): void {
+  try {
+    deleteOutbox?.setSyncState(key, value)
+  } catch (error) {
+    appendAppLog('warn', 'routines.cloudSyncState', 'Failed to persist cloud sync state', {
+      key,
+      error: normalizeError(error),
+    })
+  }
+}
+
 async function drainSyncQueue(): Promise<void> {
   while (pendingSnapshot) {
     const snapshot = pendingSnapshot
@@ -297,9 +250,15 @@ async function drainSyncQueue(): Promise<void> {
         workflows: snapshot.routines.length,
         runs: snapshot.runs.length,
       })
+      recordSyncState('last_success_at', new Date().toISOString())
+      recordSyncState('last_error', '')
       retryDelayMs = 15_000
     } catch (error) {
       pendingSnapshot ??= snapshot
+      recordSyncState(
+        'last_error',
+        error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+      )
       appendAppLog('warn', 'routines.cloudSync', 'Routine snapshot sync failed', normalizeError(error))
       scheduleRetry()
       return
@@ -321,11 +280,6 @@ export function queueRoutineCloudSync(snapshot: RoutineStoreSnapshot): void {
   startSyncLoop()
 }
 
-/** Persist an explicit delete so absence or a damaged local store can never imply deletion. */
-export function queueRoutineCloudDelete(workflowId: string): void {
-  const credential = loadCredential()
-  savePendingDeletes([
-    ...loadPendingDeletes(),
-    { origin: syncOrigin(), installationId: credential?.installationId ?? null, workflowId },
-  ])
+export function configureRoutineCloudOutbox(outbox: WorkflowDeleteOutbox): void {
+  deleteOutbox = outbox
 }

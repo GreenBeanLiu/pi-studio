@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   cloudStepId,
-  pendingDeletesForCredential,
   routineRunPayload,
   routineWorkflowPayload,
 } from './routine-cloud-sync'
@@ -66,19 +65,5 @@ describe('routine cloud payloads', () => {
       input_snapshot: 'AI topic',
       steps: [{ workflow_step_id: routine.steps[0].id, type: 'agent', duration_ms: 1000 }],
     })
-  })
-})
-
-describe('delete outbox scoping', () => {
-  it('only consumes intents for the active origin and installation', () => {
-    const entries = [
-      { origin: 'https://a.example', installationId: 'one', workflowId: 'a' },
-      { origin: 'https://b.example', installationId: 'one', workflowId: 'b' },
-      { origin: 'https://a.example', installationId: 'two', workflowId: 'c' },
-      { origin: 'https://a.example', installationId: null, workflowId: 'pending' },
-    ]
-    expect(
-      pendingDeletesForCredential(entries, { installationId: 'one', token: 'secret' }, 'https://a.example'),
-    ).toEqual([entries[0]])
   })
 })

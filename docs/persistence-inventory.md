@@ -1,6 +1,6 @@
 # Persistence inventory
 
-pi-studio currently has no relational database. Persistent state is split between JSON/files,
+pi-studio now uses SQLite for workflow state. Other persistent state remains split between JSON/files,
 Pi session files, the selected workspace, Docker, and remote integrations.
 
 ## Current local state
@@ -9,7 +9,9 @@ Pi session files, the selected workspace, Docker, and remote integrations.
 | --- | --- | --- | --- |
 | `userData/settings.json` | Provider/model settings, recent workspaces, encrypted API keys | Yes | No |
 | `userData/channels.json` | Feishu/WeChat/webhook channel configuration and encrypted secrets | Yes | No; secrets must remain in OS-protected storage |
-| `userData/routines.json` | Workflows, steps, schedules, recent runs and step results | Temporary | Yes |
+| `userData/routines.json` | First-run import source or pre-SQLite fallback store | Yes, until SQLite is established | Imported once |
+| `userData/routines.sqlite3` | Transactional workflows, steps, runs and sync delete outbox | No | Current local source of truth |
+| `userData/cloud-sync-outbox.json` | Legacy/fallback workflow deletion intents | Yes, only for fallback or migration backup | Imported into SQLite when healthy |
 | `userData/security-policies.json` | Default/workspace command and write policies | Yes | No |
 | `userData/pi-agent/sessions/**` | Pi conversation JSONL and session metadata | Yes; Pi is source of truth | Index only, do not duplicate full messages |
 | `userData/pi-agent/models.json` | Generated provider/model override | Yes; generated file | No |
@@ -30,9 +32,18 @@ Pi session files, the selected workspace, Docker, and remote integrations.
 
 ## Proposed structured database
 
-The next version should use PostgreSQL behind the TrailAI backend for state that benefits from
-querying, cross-device sync, retention, idempotency, or migrations. The desktop app must use an
-authenticated backend API; it must never connect to PostgreSQL directly.
+pi-studio uses SQLite locally for offline-first transactional state and PostgreSQL behind the TrailAI
+backend for backup and future cross-device sync. The desktop app uses an authenticated backend API;
+it never connects to PostgreSQL directly.
+
+On first launch after the SQLite upgrade, `routines.json` is imported in one transaction and copied to
+`routines.json.backup-v1`. Subsequent reads and writes use `routines.sqlite3`. Explicit workflow
+deletions and their sync intents commit in the same SQLite transaction. A v0.3.50
+`cloud-sync-outbox.json` is also imported and archived. Before the first SQLite database exists, a
+runtime without `node:sqlite` can continue with the JSON store and a durable JSON delete outbox.
+JSON-mode deletions use a small recovery journal so the store removal and delete intent finish together
+after a crash. Once SQLite exists it is the only source of truth; initialization failures stop workflow
+storage instead of falling back to a stale JSON copy.
 
 The initial migration is `database/migrations/001_pi_studio_core.sql` and uses an isolated
 `pi_studio` schema in the existing `trailai` database:
