@@ -188,7 +188,7 @@ function saveStore(store: Store): void {
   writeFileSync(storePath(), JSON.stringify(store, null, 2), 'utf8')
 }
 
-/** Upgrade the previously saved 3-step article workflow without touching custom workflows. */
+/** Upgrade the previously saved article workflow without touching custom workflows. */
 function upgradeLegacyArticleRoutine(routine: Routine, feishuChannelId?: string): boolean {
   if (routine.name !== '微信公众号文章生成') return false
   let changed = false
@@ -201,6 +201,44 @@ function upgradeLegacyArticleRoutine(routine: Routine, feishuChannelId?: string)
   if (source?.prompt && !source.prompt.includes('资料来源')) {
     source.prompt += ' 文末必须增加“资料来源”小节，保留所有完整 http(s) URL，并使用 Markdown 链接格式。'
     changed = true
+  }
+  if (source) {
+    const imageSteps = routine.steps.filter((step) => step.type === 'imagegen')
+    const missingImageSteps = [
+      {
+        name: '正文配图 1',
+        prompt:
+          '从这篇文章中选择第一个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
+          '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.' +
+          source.name +
+          '.output}}',
+      },
+      {
+        name: '正文配图 2',
+        prompt:
+          '从这篇文章中选择第二个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
+          '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.' +
+          source.name +
+          '.output}}',
+      },
+    ]
+    const additions = missingImageSteps.filter((candidate) => !imageSteps.some((step) => step.name === candidate.name))
+    if (additions.length > 0) {
+      const feishuIndex = routine.steps.findIndex((step) => step.type === 'feishu-doc')
+      const insertAt = feishuIndex === -1 ? routine.steps.length : feishuIndex
+      routine.steps.splice(
+        insertAt,
+        0,
+        ...additions.map((candidate) => ({
+          id: randomUUID(),
+          name: candidate.name,
+          type: 'imagegen' as const,
+          engine: 'openai' as const,
+          prompt: candidate.prompt,
+        })),
+      )
+      changed = true
+    }
   }
   if (source && !routine.steps.some((step) => step.type === 'feishu-doc')) {
     routine.steps.push({

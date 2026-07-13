@@ -161,6 +161,18 @@ function articleWorkflowTemplate(workspacePath: string, channelId?: string): For
           '为这篇微信公众号文章生成一张横版封面图(16:9),画面简洁有吸引力、贴合主题,不要文字和 Logo。\n\n' +
           '文章:{{steps.写正文.output}}',
       }),
+      step('imagegen', '正文配图 1', {
+        engine: 'openai',
+        prompt:
+          '从这篇文章中选择第一个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
+          '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.写正文.output}}',
+      }),
+      step('imagegen', '正文配图 2', {
+        engine: 'openai',
+        prompt:
+          '从这篇文章中选择第二个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
+          '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.写正文.output}}',
+      }),
       step('feishu-doc', '存飞书文档', {
         message: '{{steps.写正文.output}}',
         path: '{{routine.input}} · {{trigger.time}}',
