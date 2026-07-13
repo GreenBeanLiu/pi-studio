@@ -1,0 +1,13 @@
+diff --git a/dist/modes/rpc/rpc-client.js b/dist/modes/rpc/rpc-client.js
+index af2b28976950551bcaa6526b48f1faae0c5b0a81..d9c92f9394070037892af97f5aa0a6691ec3d611 100644
+--- a/dist/modes/rpc/rpc-client.js
++++ b/dist/modes/rpc/rpc-client.js
+@@ -39,7 +39,7 @@ export class RpcClient {
+         if (this.options.args) {
+             args.push(...this.options.args);
+         }
+-        const childProcess = spawn("node", [cliPath, ...args], {
++        const childProcess = spawn(process.execPath, [cliPath, ...args], {
+             cwd: this.options.cwd,
+             env: { ...process.env, ...this.options.env },
+             stdio: ["pipe", "pipe", "pipe"],

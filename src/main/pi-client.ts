@@ -59,6 +59,14 @@ export function resolvePiCliPath(): string {
 }
 
 /**
+ * Electron's executable can run ordinary Node scripts when this flag is set.
+ * Passing it explicitly to RpcClient removes the target machine's system-Node dependency.
+ */
+export function embeddedNodeEnv(env: Record<string, string>): Record<string, string> {
+  return { ...env, ELECTRON_RUN_AS_NODE: '1' }
+}
+
+/**
  * Owns the single active RpcClient (one `pi` CLI subprocess running RPC mode)
  * for the currently open workspace. Switching workspaces stops the old
  * subprocess and starts a fresh one — conversations within a workspace are
@@ -103,8 +111,15 @@ class PiClientManager {
     const launch = sandboxEnabled
       ? await prepareSandboxLaunch(cwd, env)
       : { cliPath: resolvePiCliPath(), env }
+    const runtimeEnv = embeddedNodeEnv(launch.env)
     this.sandboxSessionPaths = sandboxEnabled
-    const client = new RpcClient({ cwd, env: launch.env, provider, model, cliPath: launch.cliPath })
+    const client = new RpcClient({
+      cwd,
+      env: runtimeEnv,
+      provider,
+      model,
+      cliPath: launch.cliPath,
+    })
     await client.start()
     this.attachAgentProcessLoggers(client, cwd, runId, onStatus)
 

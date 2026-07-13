@@ -1,5 +1,6 @@
 allowBuilds:
   '@google/genai': true
+  electron: true
   electron-winstaller: true
   esbuild: true
   protobufjs: true
@@ -9,3 +10,5 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-ai@0.79.10'
   - '@earendil-works/pi-coding-agent@0.79.10'
   - '@earendil-works/pi-tui@0.79.10'
+patchedDependencies:
+  '@earendil-works/pi-coding-agent@0.80.6': patches/@earendil-works__pi-coding-agent@0.80.6.patch
