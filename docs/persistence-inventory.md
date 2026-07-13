@@ -28,27 +28,34 @@ Pi session files, the selected workspace, Docker, and remote integrations.
 | WeChat | Uploaded permanent cover material, inline images and draft media IDs |
 | Docker | Versioned `pi-studio-sandbox:<pi-version>` images outside AppData |
 
-## Proposed structured local database
+## Proposed structured database
 
-Use SQLite only for state that benefits from querying, retention, idempotency, or migrations:
+The next version should use PostgreSQL behind the TrailAI backend for state that benefits from
+querying, cross-device sync, retention, idempotency, or migrations. The desktop app must use an
+authenticated backend API; it must never connect to PostgreSQL directly.
+
+The initial migration is `database/migrations/001_pi_studio_core.sql` and uses an isolated
+`pi_studio` schema in the existing `trailai` database:
 
 1. `schema_migrations`
    - `version`, `applied_at`
-2. `workflows`
+2. `installations`
+   - anonymous desktop installation identity and app version; no hardware fingerprint
+3. `workflows`
    - identity, name, input, workspace, schedule, enabled, notification configuration
-3. `workflow_steps`
+4. `workflow_steps`
    - workflow order, type, prompt/template and engine/channel references
-4. `workflow_runs`
+5. `workflow_runs`
    - status, trigger source, start/end time, summary and top-level error
-5. `workflow_step_runs`
+6. `workflow_step_runs`
    - per-step status, duration, text summary, artifact reference and error
-6. `image_jobs`
+7. `image_jobs`
    - local job ID, engine/provider, prompt, status, remote ID/URL and timestamps; image bytes stay in files/R2
-7. `publish_jobs`
+8. `publish_jobs`
    - target (`feishu`/`wechat`), workflow run, status, idempotency key, external document/media ID and error
 
 Do not put API keys, AppSecrets, access tokens, full Pi JSONL sessions, generated image bytes,
-or Docker images in SQLite.
+or Docker images in PostgreSQL.
 
 ## Repository boundary
 
