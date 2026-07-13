@@ -54,6 +54,18 @@ The initial migration is `database/migrations/001_pi_studio_core.sql` and uses a
 8. `publish_jobs`
    - target (`feishu`/`wechat`), workflow run, status, idempotency key, external document/media ID and error
 
+Migration `002_installation_auth_accounts.sql` adds hashed per-installation bearer tokens plus
+`accounts` and `account_installations`. Login remains optional: anonymous data is owned by one
+installation, while a later login can link installations and expose account-owned data across devices.
+Migration `003_account_owned_records.sql` makes the installation owner nullable once an account owns
+the record, so removing a linked device cannot delete account-owned workflows or history.
+Migration `004_owner_integrity.sql` enforces installation/account links and prevents a run from being
+attached to a workflow owned by another installation or account.
+Migration `005_owner_function_search_path.sql` pins the trigger lookup path so the same constraints
+work for backend connections whose default schema is `public`.
+Migration `006_preserve_account_records_on_unlink.sql` clears the creator installation from
+account-owned rows before unlinking a device, preserving the ownership invariant and the data.
+
 Do not put API keys, AppSecrets, access tokens, full Pi JSONL sessions, generated image bytes,
 or Docker images in PostgreSQL.
 

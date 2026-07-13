@@ -319,6 +319,7 @@ export type RoutineRun = {
   startedAt: number
   endedAt: number
   status: 'ok' | 'error' | 'timeout'
+  triggerSource?: 'manual' | 'schedule'
   summary: string
   steps?: RoutineStepResult[]
   error?: string

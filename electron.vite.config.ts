@@ -12,6 +12,9 @@ export default defineConfig({
       __CLOUD_IMAGE_RELAY__: JSON.stringify(
         process.env.PI_CLOUD_IMAGE_RELAY || 'https://trail-api.glanger.xyz',
       ),
+      __TRAILAI_API_URL__: JSON.stringify(
+        process.env.PI_STUDIO_SYNC_URL || 'https://trail-api.glanger.xyz',
+      ),
     },
     resolve: {
       alias: { '@main': resolve('src/main') },

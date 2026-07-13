@@ -13,6 +13,7 @@ import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import { isRoutineStepComplete } from './routine-step-validation'
+import { queueRoutineCloudDelete, queueRoutineCloudSync } from './routine-cloud-sync'
 import {
   RoutineScheduler,
   dueSlotKey,
@@ -104,6 +105,7 @@ export type RoutineRun = {
   startedAt: number
   endedAt: number
   status: 'ok' | 'error' | 'timeout'
+  triggerSource?: 'manual' | 'schedule'
   /** 各步骤产物拼接(截断) */
   summary: string
   steps?: RoutineStepResult[]
@@ -186,6 +188,7 @@ function loadStore(): Store {
 
 function saveStore(store: Store): void {
   writeFileSync(storePath(), JSON.stringify(store, null, 2), 'utf8')
+  queueRoutineCloudSync(store)
 }
 
 /** Upgrade the previously saved article workflow without touching custom workflows. */
@@ -557,7 +560,11 @@ async function runWechatDraftStep(
   return { output: `微信公众号草稿已创建: ${draft.title}（media_id: ${draft.mediaId}）`, artifactPath: draft.mediaId }
 }
 
-async function executeRoutine(store: Store, routine: Routine): Promise<void> {
+async function executeRoutine(
+  store: Store,
+  routine: Routine,
+  triggerSource: 'manual' | 'schedule',
+): Promise<void> {
   const startedAt = Date.now()
   let status: RoutineRun['status'] = 'ok'
   let timedOut = false
@@ -689,6 +696,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
     startedAt,
     endedAt: Date.now(),
     status,
+    triggerSource,
     summary,
     steps: stepResults,
     error: errorMsg,
@@ -750,6 +758,7 @@ const stepIsComplete = isRoutineStepComplete
 
 export function registerRoutines(): void {
   const store = loadStore()
+  queueRoutineCloudSync(store)
   const feishuChannelId = loadChannels().find((channel) => channel.type === 'feishu-app')?.id
   let migrated = false
   for (const routine of store.routines) migrated = upgradeLegacyArticleRoutine(routine, feishuChannelId) || migrated
@@ -757,7 +766,11 @@ export function registerRoutines(): void {
   const scheduler = new RoutineScheduler<Routine>({
     maxConcurrent: MAX_CONCURRENT,
     clock: () => new Date(),
-    execute: (routine) => executeRoutine(store, routine),
+    execute: (routine) => {
+      const triggerSource = triggerSources.get(routine.id) ?? 'schedule'
+      triggerSources.delete(routine.id)
+      return executeRoutine(store, routine, triggerSource)
+    },
     onExecutionError: (error, routine) => {
       appendAppLog('error', 'routines.scheduler', 'Routine execution escaped the scheduler', {
         routine: routine.name,
@@ -766,8 +779,11 @@ export function registerRoutines(): void {
     },
   })
 
+  const triggerSources = new Map<string, 'manual' | 'schedule'>()
+
   setInterval(() => {
-    if (scheduler.tick(store.routines).length > 0) saveStore(store)
+    const scheduled = scheduler.tick(store.routines)
+    if (scheduled.length > 0) saveStore(store)
   }, 30_000)
 
   ipcMain.handle('routines:list', () => ({ routines: store.routines, runs: store.runs }))
@@ -802,6 +818,8 @@ export function registerRoutines(): void {
   ipcMain.handle('routines:delete', (_e, id: string) => {
     scheduler.cancel(id)
     cancelPendingReviews(id, '工作流已删除，审核请求已取消')
+    // Persist remote deletion intent before acknowledging the local removal.
+    queueRoutineCloudDelete(id)
     store.routines = store.routines.filter((r) => r.id !== id)
     saveStore(store)
     return store.routines
@@ -826,6 +844,7 @@ export function registerRoutines(): void {
     if (scheduler.has(r.id)) return { error: '该任务正在执行或排队' }
     if (!scheduler.hasCapacity()) return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务` }
     r.lastRunAt = Date.now()
+    triggerSources.set(r.id, 'manual')
     saveStore(store)
     scheduler.enqueue(r)
     return { ok: true }
