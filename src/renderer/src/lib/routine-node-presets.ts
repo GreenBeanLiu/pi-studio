@@ -2,7 +2,7 @@ import type { RoutineStep, RoutineStepType } from './api'
 
 export type RoutineNodePreset = {
   id: string
-  category: 'article' | 'media' | 'output' | 'generic'
+  category: 'input' | 'article' | 'media' | 'output' | 'generic'
   label: string
   description: string
   step: Omit<RoutineStep, 'id'>
@@ -20,6 +20,13 @@ const articlePrompt = {
 }
 
 export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
+  {
+    id: 'input.material-folder',
+    category: 'input',
+    label: '读取素材文件夹',
+    description: '读取工作区内的文档和图片，供后续写作与发布使用',
+    step: { name: '本地素材', type: 'folder-input', path: '' },
+  },
   {
     id: 'article.research',
     category: 'article',

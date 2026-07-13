@@ -247,7 +247,7 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string

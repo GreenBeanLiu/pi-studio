@@ -20,6 +20,8 @@ type DatabaseSyncInstance = {
 
 export type RoutineStoreData = { routines: Routine[]; runs: RoutineRun[] }
 
+export class RoutineSqliteUnavailableError extends Error {}
+
 type PendingWorkflowDelete = {
   origin: string
   workflowId: string
@@ -46,8 +48,15 @@ function requiredNumber(value: SqlValue): number {
 function openDatabase(path: string): DatabaseSyncInstance {
   // Keep this lookup inside the constructor path so unsupported Electron runtimes
   // can still load the routines module and fall back to JSON storage.
-  const { DatabaseSync } = require('node:sqlite') as {
-    DatabaseSync: new (databasePath: string) => DatabaseSyncInstance
+  let DatabaseSync: new (databasePath: string) => DatabaseSyncInstance
+  try {
+    ;({ DatabaseSync } = require('node:sqlite') as {
+      DatabaseSync: new (databasePath: string) => DatabaseSyncInstance
+    })
+  } catch (error) {
+    throw new RoutineSqliteUnavailableError('This Electron runtime does not provide node:sqlite', {
+      cause: error,
+    })
   }
   return new DatabaseSync(path)
 }

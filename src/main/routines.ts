@@ -13,12 +13,18 @@ import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import { isRoutineStepComplete } from './routine-step-validation'
+import { readRoutineMaterialFolder } from './routine-material-folder'
+import {
+  inferRoutineImageRole,
+  selectWechatImageAssets,
+  type RoutineImageAsset,
+} from './routine-assets'
 import {
   configureRoutineCloudOutbox,
   queueRoutineCloudSync,
   routineSyncOrigin,
 } from './routine-cloud-sync'
-import { RoutineDatabase } from './routine-database'
+import { RoutineDatabase, RoutineSqliteUnavailableError } from './routine-database'
 import { JsonWorkflowDeleteOutbox } from './workflow-delete-outbox'
 import {
   RoutineScheduler,
@@ -38,7 +44,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -220,73 +226,6 @@ function writeStoreSnapshot(store: Store): void {
   renameSync(temporary, target)
 }
 
-/** Upgrade the previously saved article workflow without touching custom workflows. */
-function upgradeLegacyArticleRoutine(routine: Routine, feishuChannelId?: string): boolean {
-  if (routine.name !== '微信公众号文章生成') return false
-  let changed = false
-  const facts = routine.steps.find((step) => step.name === '事实梳理')
-  if (facts?.prompt && !facts.prompt.includes('完整可点击')) {
-    facts.prompt += ' 每条必须注明来源名称和完整可点击的 http(s) URL。'
-    changed = true
-  }
-  const source = routine.steps.find((step) => step.name === '写正文') ?? routine.steps.find((step) => step.name === '公众号初稿')
-  if (source?.prompt && !source.prompt.includes('资料来源')) {
-    source.prompt += ' 文末必须增加“资料来源”小节，保留所有完整 http(s) URL，并使用 Markdown 链接格式。'
-    changed = true
-  }
-  if (source) {
-    const imageSteps = routine.steps.filter((step) => step.type === 'imagegen')
-    const missingImageSteps = [
-      {
-        name: '正文配图 1',
-        prompt:
-          '从这篇文章中选择第一个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
-          '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.' +
-          source.name +
-          '.output}}',
-      },
-      {
-        name: '正文配图 2',
-        prompt:
-          '从这篇文章中选择第二个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
-          '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.' +
-          source.name +
-          '.output}}',
-      },
-    ]
-    const additions = missingImageSteps.filter((candidate) => !imageSteps.some((step) => step.name === candidate.name))
-    if (additions.length > 0) {
-      const feishuIndex = routine.steps.findIndex((step) => step.type === 'feishu-doc')
-      const insertAt = feishuIndex === -1 ? routine.steps.length : feishuIndex
-      routine.steps.splice(
-        insertAt,
-        0,
-        ...additions.map((candidate) => ({
-          id: randomUUID(),
-          name: candidate.name,
-          type: 'imagegen' as const,
-          engine: 'openai' as const,
-          prompt: candidate.prompt,
-        })),
-      )
-      changed = true
-    }
-  }
-  if (source && !routine.steps.some((step) => step.type === 'feishu-doc')) {
-    routine.steps.push({
-      id: randomUUID(),
-      name: '存飞书文档',
-      type: 'feishu-doc',
-      message: `{{steps.${source.name}.output}}`,
-      path: '{{routine.input}} · {{trigger.time}}',
-      ...(feishuChannelId ? { channelId: feishuChannelId } : {}),
-    })
-    changed = true
-  }
-  if (changed) routine.pushEachStep = true
-  return changed
-}
-
 export function scheduleLabel(s: RoutineSchedule): string {
   const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
   switch (s.type) {
@@ -306,7 +245,13 @@ export function scheduleLabel(s: RoutineSchedule): string {
 // ── 变量插值 ─────────────────────────────────────────────────────
 
 /** 每个节点跑完后的产物,供后续节点用 {{…}} 引用 */
-type StepProduct = { output: string; imageUrl?: string; imageDataUrl?: string; artifactPath?: string }
+type StepProduct = {
+  output: string
+  imageUrl?: string
+  imageDataUrl?: string
+  artifactPath?: string
+  images?: RoutineImageAsset[]
+}
 
 type RunContext = {
   routine: Routine
@@ -463,10 +408,42 @@ async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<Step
   if (!prompt.trim()) throw new Error('生图节点的提示词为空')
   const result = await generateImage({ prompt, engine: step.engine ?? 'openai' })
   if ('error' in result) throw new Error(result.error)
+  const uri = result.publicUrl ?? result.dataUrl
   return {
     output: result.publicUrl ?? '(图片已生成,无公网链接)',
     ...(result.publicUrl ? { imageUrl: result.publicUrl } : {}),
     ...(!result.publicUrl && result.dataUrl ? { imageDataUrl: result.dataUrl } : {}),
+    ...(uri
+      ? {
+          images: [
+            {
+              id: `generated:${step.id}`,
+              kind: 'image' as const,
+              source: 'generated' as const,
+              name: step.name,
+              role: inferRoutineImageRole(step.name),
+              uri,
+            },
+          ],
+        }
+      : {}),
+  }
+}
+
+function runFolderInputStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+): StepProduct {
+  const folderPath = interpolate(step.path?.trim() ?? '', ctx)
+  if (!folderPath) return { output: '未配置本地素材文件夹，本次仅使用后续检索和生成内容。', images: [] }
+  const materials = readRoutineMaterialFolder(routine.workspacePath, folderPath)
+  const warnings = materials.warnings.length
+    ? `\n\n## 读取提示\n${materials.warnings.map((warning) => `- ${warning}`).join('\n')}`
+    : ''
+  return {
+    output: `${materials.text || '素材文件夹中没有可读取的文本。'}${warnings}`,
+    images: materials.images,
   }
 }
 
@@ -579,13 +556,16 @@ async function runWechatDraftStep(
   const content = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
   if (!content.trim()) throw new Error('没有可写入微信公众号草稿的正文内容')
   const title = interpolate(step.path?.trim() || `${routine.name} · {{trigger.time}}`, ctx)
-  const imageUrls = routine.steps
-    .filter((candidate) => candidate.type === 'imagegen')
+  const assets = routine.steps
     .map((candidate) => ctx.products.get(candidate.name))
     .filter((product): product is StepProduct => !!product)
-    .map((product) => product.imageUrl ?? product.imageDataUrl)
-    .filter((url): url is string => !!url)
-  const draft = await createWechatDraft(channel, title, content, imageUrls)
+    .flatMap((product) => product.images ?? [])
+  const selected = selectWechatImageAssets(assets)
+  if (!selected.cover) throw new Error('微信公众号草稿至少需要一张素材图片或生成图片作为封面')
+  const draft = await createWechatDraft(channel, title, content, {
+    cover: selected.cover.uri,
+    inline: selected.inline.map((asset) => asset.uri),
+  })
   return { output: `微信公众号草稿已创建: ${draft.title}（media_id: ${draft.mediaId}）`, artifactPath: draft.mediaId }
 }
 
@@ -643,7 +623,9 @@ async function executeRoutine(
         stepProgress(index, 'running')
         try {
           const product: StepProduct =
-            step.type === 'imagegen'
+            step.type === 'folder-input'
+              ? runFolderInputStep(routine, step, ctx)
+              : step.type === 'imagegen'
               ? await runImagegenStep(step, ctx)
               : step.type === 'notify'
                 ? await runNotifyStep(routine, step, ctx, channels)
@@ -810,7 +792,13 @@ export function registerRoutines(): void {
   } catch (error) {
     routineDatabase?.close()
     routineDatabase = null
-    if (databaseAlreadyExists || existsSync(databasePath())) throw error
+    if (
+      !(error instanceof RoutineSqliteUnavailableError) ||
+      databaseAlreadyExists ||
+      existsSync(databasePath())
+    ) {
+      throw error
+    }
     configureRoutineCloudOutbox(jsonDeleteOutbox)
     appendAppLog(
       'error',
@@ -821,10 +809,6 @@ export function registerRoutines(): void {
   }
   const store = loadStore()
   queueRoutineCloudSync(store)
-  const feishuChannelId = loadChannels().find((channel) => channel.type === 'feishu-app')?.id
-  let migrated = false
-  for (const routine of store.routines) migrated = upgradeLegacyArticleRoutine(routine, feishuChannelId) || migrated
-  if (migrated) saveStore(store)
   const scheduler = new RoutineScheduler<Routine>({
     maxConcurrent: MAX_CONCURRENT,
     clock: () => new Date(),

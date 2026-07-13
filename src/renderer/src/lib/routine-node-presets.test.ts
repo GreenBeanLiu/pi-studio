@@ -4,7 +4,14 @@ import { createRoutineStepFromPreset, ROUTINE_NODE_PRESETS } from './routine-nod
 describe('routine node presets', () => {
   it('contains the article building blocks', () => {
     expect(ROUTINE_NODE_PRESETS.map((preset) => preset.id)).toEqual(
-      expect.arrayContaining(['article.research', 'article.draft', 'article.approval', 'output.wechat-html']),
+      expect.arrayContaining([
+        'input.material-folder',
+        'article.research',
+        'article.draft',
+        'article.approval',
+        'output.wechat-html',
+        'output.wechat-draft',
+      ]),
     )
   })
 

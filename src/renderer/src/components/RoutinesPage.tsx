@@ -39,6 +39,7 @@ import {
   FileText,
   FileUp,
   ShieldCheck,
+  FolderSearch,
 } from 'lucide-react'
 import {
   api,
@@ -83,6 +84,7 @@ const NOTIFY_LABEL: Record<RoutineNotify, string> = {
 
 const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot }> = {
   agent: { label: '智能体', icon: Bot },
+  'folder-input': { label: '读取素材', icon: FolderSearch },
   imagegen: { label: '生图', icon: ImageIcon },
   review: { label: '人工审核', icon: ShieldCheck },
   notify: { label: '通知', icon: Bell },
@@ -112,6 +114,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   name: '',
   type,
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
+  ...(type === 'folder-input' ? { path: '' } : {}),
   ...(type === 'review' ? { message: '请检查上一步生成的内容，确认后继续。' } : {}),
   ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
   ...(type === 'feishu-doc' ? { message: '{{prev.output}}', path: '{{routine.name}} · {{trigger.time}}' } : {}),
@@ -130,25 +133,32 @@ const emptyForm = (workspacePath: string): FormState => ({
   notify: 'error',
 })
 
-function articleWorkflowTemplate(workspacePath: string, channelId?: string): FormState {
+function articleWorkflowTemplate(workspacePath: string, channels: Channel[]): FormState {
   const step = (type: RoutineStepType, name: string, extra: Partial<RoutineStep>): RoutineStep => ({
     ...createStep(type),
     name,
     ...extra,
   })
-  // 全自动:只给主题,智能体自己查事实 → 写正文 → 配图 → 存飞书文档;每步实时推到飞书跟进。
+  const notifyChannelId = channels[0]?.id
+  const feishuChannelId = channels.find((channel) => channel.type === 'feishu-app')?.id
+  const wechatChannelId = channels.find((channel) => channel.type === 'wechat-official')?.id
+  // 本地素材可选；留空时继续使用联网检索。微信草稿先落地，已配置飞书时再额外归档。
   return {
     ...emptyForm(workspacePath),
     name: '微信公众号文章生成',
     scheduleType: 'manual',
     pushEachStep: true,
-    notifyChannelId: channelId,
+    notifyChannelId,
     input: '只写文章主题即可,例如:AI 如何改变远程办公',
     steps: [
+      step('folder-input', '本地素材', {
+        path: '',
+      }),
       step('agent', '事实梳理', {
         prompt:
           '围绕主题「{{routine.input}}」联网检索,整理 5–8 条真实、可核查的关键事实/数据/案例,' +
-          '每条必须注明来源名称和完整可点击的 http(s) URL。只输出事实清单,不要写成文章。',
+          '每条必须注明来源名称和完整可点击的 http(s) URL。优先吸收下面的本地素材，只输出事实清单,不要写成文章。\n\n' +
+          '本地素材:\n{{steps.本地素材.output}}',
       }),
       step('agent', '写正文', {
         prompt:
@@ -157,7 +167,10 @@ function articleWorkflowTemplate(workspacePath: string, channelId?: string): For
           '事实清单:\n{{steps.事实梳理.output}}\n\n' +
           '文末必须增加“资料来源”小节，保留并整理事实清单中的所有完整 http(s) URL，使用 Markdown 链接格式，不要只写来源名称。',
       }),
-      step('imagegen', '配图', {
+      step('review', '人工审核正文', {
+        message: '请检查正文的事实、结构和表达，确认后再生成并上传配图。',
+      }),
+      step('imagegen', '封面配图', {
         engine: 'openai',
         prompt:
           '为这篇微信公众号文章生成一张横版封面图(16:9),画面简洁有吸引力、贴合主题,不要文字和 Logo。\n\n' +
@@ -175,10 +188,20 @@ function articleWorkflowTemplate(workspacePath: string, channelId?: string): For
           '从这篇文章中选择第二个最适合视觉化的核心分论点，生成一张微信公众号正文插图(16:9)。' +
           '画面要具体、有信息感、不要文字和 Logo，不能与封面或其它插图重复。\n\n文章:\n{{steps.写正文.output}}',
       }),
-      step('feishu-doc', '存飞书文档', {
+      step('wechat-draft', '微信公众号草稿', {
         message: '{{steps.写正文.output}}',
         path: '{{routine.input}} · {{trigger.time}}',
+        ...(wechatChannelId ? { channelId: wechatChannelId } : {}),
       }),
+      ...(feishuChannelId
+        ? [
+            step('feishu-doc', '存飞书文档', {
+              message: '{{steps.写正文.output}}',
+              path: '{{routine.input}} · {{trigger.time}}',
+              channelId: feishuChannelId,
+            }),
+          ]
+        : []),
     ],
   }
 }
@@ -542,7 +565,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     !!s.name.trim() &&
     (s.type === 'notify'
       ? !!s.channelId
-      : s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft'
+      : s.type === 'folder-input' || s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft'
         ? true
         : !!s.prompt?.trim())
 
@@ -587,7 +610,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           id: step.id,
           name: step.name,
           type,
-          ...(type !== 'notify' ? { prompt: step.prompt ?? '' } : {}),
+          ...(type !== 'notify' && type !== 'folder-input' ? { prompt: step.prompt ?? '' } : {}),
+          ...(type === 'folder-input' ? { path: step.path ?? '' } : {}),
           ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
           ...(type === 'notify' ? { channelId: step.channelId ?? channels[0]?.id, message: step.message ?? '' } : {}),
           ...(type === 'review' ? { message: step.message ?? '请检查上一步生成的内容，确认后继续。' } : {}),
@@ -775,7 +799,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           >
             新建
           </Button>
-          <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? '', channels[0]?.id))}>
+          <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? '', channels))}>
             快速模板
           </Button>
         </div>
@@ -829,7 +853,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   step.type !== 'export' &&
                   step.type !== 'review' &&
                   step.type !== 'feishu-doc' &&
-                  step.type !== 'wechat-draft' && (
+                  step.type !== 'wechat-draft' &&
+                  step.type !== 'folder-input' && (
                     <Input.TextArea
                       value={step.prompt ?? ''}
                       onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
@@ -837,6 +862,19 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       autoSize={{ minRows: 3, maxRows: 8 }}
                     />
                   )}
+                {step.type === 'folder-input' && (
+                  <>
+                    <Input
+                      value={step.path ?? ''}
+                      onChange={(e) => updateStep(step.id, { path: e.target.value })}
+                      placeholder="例如 materials（留空则跳过本地素材）"
+                      addonBefore="工作区文件夹"
+                    />
+                    <span className={styles.hint}>
+                      递归读取文本、Markdown、HTML、CSV、JSON、YAML 和常见图片；路径必须位于当前工作区内。
+                    </span>
+                  </>
+                )}
                 {step.type === 'imagegen' && (
                   <div className={styles.formRow}>
                     <span className={styles.hint}>引擎</span>
@@ -962,7 +1000,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       autoSize={{ minRows: 2, maxRows: 6 }}
                     />
                     <span className={styles.hint}>
-                      只创建微信公众号草稿，不会自动群发；需要至少一个生图节点作为封面，后续生图节点会作为正文插图。
+                      只创建微信公众号草稿，不会自动群发；素材文件夹和生图节点里的图片都会上传微信。名称含“封面”或 cover 的图片优先作为封面，其余作为正文插图。
                     </span>
                   </>
                 )}

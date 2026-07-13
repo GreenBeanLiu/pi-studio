@@ -1,6 +1,7 @@
 import { app, ipcMain, safeStorage, Notification } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { readFile } from 'fs/promises'
+import { extname, isAbsolute, join } from 'path'
 import { createHmac, randomUUID } from 'crypto'
 import { loadSettings } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
@@ -415,6 +416,17 @@ async function getWechatAccessToken(channel: WechatOfficialChannel): Promise<str
 }
 
 async function imageBuffer(imageUrl: string): Promise<{ buffer: Buffer; contentType: string }> {
+  if (isAbsolute(imageUrl)) {
+    const contentType =
+      ({
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+      } as Record<string, string>)[extname(imageUrl).toLowerCase()] ?? 'application/octet-stream'
+    return { buffer: await readFile(imageUrl), contentType }
+  }
   if (imageUrl.startsWith('data:')) {
     const match = /^data:([^;,]+);base64,(.+)$/s.exec(imageUrl)
     if (!match) throw new Error('微信配图 data URL 无法解析')
@@ -469,13 +481,14 @@ export async function createWechatDraft(
   channel: WechatOfficialChannel,
   title: string,
   markdown: string,
-  imageUrls: string[] = [],
+  images: { cover: string; inline: string[] },
 ): Promise<{ mediaId: string; title: string }> {
-  if (!imageUrls.length) throw new Error('微信公众号草稿至少需要一张封面图,请在工作流中添加 imagegen 节点')
   const token = await getWechatAccessToken(channel)
-  const coverMediaId = await uploadWechatCover(token, imageUrls[0])
+  const coverMediaId = await uploadWechatCover(token, images.cover)
   const inlineUrls: string[] = []
-  for (let i = 1; i < imageUrls.length; i += 1) inlineUrls.push(await uploadWechatInlineImage(token, imageUrls[i], i - 1))
+  for (let i = 0; i < images.inline.length; i += 1) {
+    inlineUrls.push(await uploadWechatInlineImage(token, images.inline[i], i))
+  }
   const articleTitle = extractWechatTitle(markdown, title)
   const response = await fetch(`https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${encodeURIComponent(token)}`, {
     method: 'POST',
