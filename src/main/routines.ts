@@ -484,7 +484,11 @@ async function runFeishuDocStep(
   const content = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
   if (!content.trim()) throw new Error('没有可写入飞书文档的正文内容')
   const title = interpolate(step.path?.trim() || `${routine.name} · {{trigger.time}}`, ctx)
-  const imageUrls = [...ctx.products.values()]
+  // 文章配图只来自 imagegen 节点，避免把其它节点/通知上下文中的图片带进文档。
+  const imageUrls = routine.steps
+    .filter((candidate) => candidate.type === 'imagegen')
+    .map((candidate) => ctx.products.get(candidate.name))
+    .filter((product): product is StepProduct => !!product)
     .map((product) => product.imageUrl ?? product.imageDataUrl)
     .filter((url): url is string => !!url)
   const { url } = await createFeishuDoc(channel, title, content, imageUrls)
