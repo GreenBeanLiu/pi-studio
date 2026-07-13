@@ -174,10 +174,14 @@ function buildImage(): Promise<{ ok: true } | { error: string }> {
 
 // ── 中继 shim ────────────────────────────────────────────────────
 
-const SHIM = `// pi-studio 沙箱中继:RpcClient 以为在跑 node,实际把 stdio 转发进容器。
+export function sandboxRpcShimSource(): string {
+  return `// pi-studio 沙箱中继:RpcClient 以为在跑 node,实际把 stdio 转发进容器。
 const { spawn } = require('child_process')
 const pre = JSON.parse(process.env.PISTUDIO_DOCKER_ARGS || '[]')
-const child = spawn('docker', [...pre, 'pi', ...process.argv.slice(2)], { stdio: 'inherit' })
+const child = spawn('docker', [...pre, 'pi', ...process.argv.slice(2)], {
+  stdio: 'inherit',
+  windowsHide: true,
+})
 const forward = (signal) => {
   if (!child.killed) {
     try { child.kill(signal) } catch {}
@@ -192,10 +196,11 @@ child.on('error', (err) => {
   process.exit(1)
 })
 `
+}
 
 function ensureShim(): string {
   const p = join(app.getPath('userData'), 'sandbox-rpc-shim.cjs')
-  writeFileSync(p, SHIM, 'utf8') // 每次覆盖,保证内容跟版本一致
+  writeFileSync(p, sandboxRpcShimSource(), 'utf8') // 每次覆盖,保证内容跟版本一致
   return p
 }
 

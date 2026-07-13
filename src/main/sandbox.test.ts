@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSandboxDockerArgs,
+  sandboxRpcShimSource,
   sandboxSessionPathToContainer,
   sandboxSessionPathToHost,
 } from './sandbox'
@@ -45,6 +46,14 @@ describe('buildSandboxDockerArgs', () => {
     const args = buildSandboxDockerArgs({ ...base, envNames: ['OPENAI_API_KEY', 'OPENAI_API_KEY'] })
     const eFlags = args.filter((_, i) => args[i - 1] === '-e')
     expect(eFlags.filter((v) => v === 'OPENAI_API_KEY')).toHaveLength(1)
+  })
+})
+
+describe('sandbox RPC shim', () => {
+  it('hides the long-running docker console window on Windows', () => {
+    expect(sandboxRpcShimSource()).toMatch(
+      /spawn\('docker',[\s\S]*windowsHide:\s*true/,
+    )
   })
 })
 
