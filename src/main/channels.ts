@@ -4,6 +4,7 @@ import { join } from 'path'
 import { createHmac, randomUUID } from 'crypto'
 import { loadSettings } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
+import { imageInsertionPositions } from './feishu-doc-layout'
 
 /**
  * 通知渠道注册表:渠道是配置数据,不是代码分支。
@@ -357,29 +358,41 @@ export async function createFeishuDoc(
   if (!documentId) throw new Error('建飞书文档失败:未返回 document_id(检查应用是否开通 docx:document 权限)')
 
   const blocks = markdownToDocxBlocks(markdown)
-  for (let i = 0; i < blocks.length; i += 50) {
-    await feishuJson(
-      `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ children: blocks.slice(i, i + 50), index: i }),
-      },
-    )
+  const imagePositions = imageInsertionPositions(blocks.length, imageUrls.length)
+  let textCursor = 0
+  let documentIndex = 0
+  const appendBlocks = async (items: Array<Record<string, unknown>>): Promise<void> => {
+    for (let i = 0; i < items.length; i += 50) {
+      const batch = items.slice(i, i + 50)
+      await feishuJson(
+        `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ children: batch, index: documentIndex }),
+        },
+      )
+      documentIndex += batch.length
+    }
   }
   for (let i = 0; i < imageUrls.length; i += 1) {
+    const target = imagePositions[i]
+    await appendBlocks(blocks.slice(textCursor, target))
     const createdImage = await feishuJson(
       `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ children: [{ block_type: 27, image: {} }], index: blocks.length + i }),
+        body: JSON.stringify({ children: [{ block_type: 27, image: {} }], index: documentIndex }),
       },
     )
     const imageBlockId = (createdImage.data as { children?: Array<{ block_id?: string }> } | undefined)?.children?.[0]?.block_id
     if (!imageBlockId) throw new Error('创建飞书文档图片块失败:未返回 block_id')
     await uploadFeishuDocImage(token, documentId, imageBlockId, imageUrls[i], i)
+    documentIndex += 1
+    textCursor = target
   }
+  await appendBlocks(blocks.slice(textCursor))
   return { url: `https://feishu.cn/docx/${documentId}`, documentId }
 }
 

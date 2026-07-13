@@ -417,6 +417,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   const [routineState, setRoutineState] = useState<{
     runningIds: string[]
     queuedIds: string[]
+    progress?: RoutineStepProgress[]
   }>({ runningIds: [], queuedIds: [] })
   const [channels, setChannels] = useState<Channel[]>([])
   const [form, setForm] = useState<FormState | null>(null)
@@ -430,9 +431,20 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
 
   async function refresh() {
     const data = await api.routines.list()
+    const state = await api.routines.state()
     setRoutines(data.routines)
     setRuns(data.runs)
-    setRoutineState(await api.routines.state())
+    setRoutineState(state)
+    setStepProgress(
+      (state.progress ?? []).reduce<Record<string, Record<string, RoutineStepProgress['status']>>>((acc, item) => {
+        acc[item.routineId] = { ...acc[item.routineId], [item.stepId]: item.status }
+        return acc
+      }, {}),
+    )
+    const activeId = [...state.runningIds, ...state.queuedIds][0]
+    if (activeId) {
+      setSelectedId((current) => (current && data.routines.some((routine) => routine.id === current) ? current : activeId))
+    }
   }
 
   useEffect(() => {
@@ -443,6 +455,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       setRoutineState((prev) => ({
         runningIds: prev.runningIds.filter((id) => id !== run.routineId),
         queuedIds: prev.queuedIds.filter((id) => id !== run.routineId),
+        progress: prev.progress?.filter((item) => item.routineId !== run.routineId),
       }))
       // 跑完后用 run 里的每步结果显示,清掉实时进度
       setStepProgress((prev) => {
@@ -457,6 +470,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ? prev.runningIds
           : [...prev.runningIds, p.routineId],
         queuedIds: prev.queuedIds.filter((id) => id !== p.routineId),
+        progress: [...(prev.progress ?? []).filter((item) => item.stepId !== p.stepId), p],
       }))
       setStepProgress((prev) => ({
         ...prev,
@@ -726,6 +740,11 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         <div className={styles.colTitle}>
           <CalendarClock size={16} />
           Workflows ({routines.length})
+          {activeIds.length > 0 && (
+            <Tag color="processing" style={{ marginLeft: 8 }}>
+              正在运行 {activeIds.length}
+            </Tag>
+          )}
           <div style={{ flex: 1 }} />
           <Button
             size="small"
@@ -889,7 +908,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       autoSize={{ minRows: 2, maxRows: 6 }}
                     />
                     <span className={styles.hint}>
-                      需要「飞书应用」渠道且应用开通 docx:document 权限;在飞书里建个文件夹分享给应用,把 folder_token 填到渠道设置,文档就会存到你能看到的地方。
+                      需要「飞书应用」渠道且应用开通 docx:document 权限;在飞书里建个文件夹分享给应用,把 folder_token 填到渠道设置,文档就会存到你能看到的地方。配图节点会按正文段落分布插入文档内部。
                     </span>
                   </>
                 )}

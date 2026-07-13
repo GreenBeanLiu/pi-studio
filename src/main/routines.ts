@@ -137,6 +137,9 @@ type PendingReview = {
 }
 
 const pendingReviews = new Map<string, PendingReview>()
+// 保留当前运行中工作流的最新节点状态。页面切换会卸载 RoutinesPage，
+// 回来时通过 routines:state 恢复这份快照，而不是等下一次事件广播。
+const liveStepProgress = new Map<string, Map<string, RoutineStepProgress>>()
 
 function cancelPendingReviews(routineId: string, reason: string): void {
   for (const [reviewId, pending] of pendingReviews) {
@@ -501,14 +504,19 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
     durationMs: 0,
   }))
 
-  const stepProgress = (stepIndex: number, s: RoutineStepProgress['status']): void =>
-    broadcast('routines:stepProgress', {
+  const stepProgress = (stepIndex: number, s: RoutineStepProgress['status']): void => {
+    const progress = {
       routineId: routine.id,
       stepId: routine.steps[stepIndex].id,
       stepIndex,
       totalSteps: routine.steps.length,
       status: s,
-    } satisfies RoutineStepProgress)
+    } satisfies RoutineStepProgress
+    const routineProgress = liveStepProgress.get(routine.id) ?? new Map<string, RoutineStepProgress>()
+    routineProgress.set(progress.stepId, progress)
+    liveStepProgress.set(routine.id, routineProgress)
+    broadcast('routines:stepProgress', progress)
+  }
 
   const session: AgentSession = { client: null }
   const channels = loadChannels()
@@ -616,6 +624,7 @@ async function executeRoutine(store: Store, routine: Routine): Promise<void> {
     steps: stepResults,
     error: errorMsg,
   }
+  liveStepProgress.delete(routine.id)
   store.runs = [run, ...store.runs].slice(0, MAX_RUNS_KEPT)
   saveStore(store)
 
@@ -751,7 +760,10 @@ export function registerRoutines(): void {
     return { ok: true }
   })
 
-  ipcMain.handle('routines:state', () => scheduler.getState())
+  ipcMain.handle('routines:state', () => ({
+    ...scheduler.getState(),
+    progress: [...liveStepProgress.values()].flatMap((steps) => [...steps.values()]),
+  }))
 
   ipcMain.handle(
     'routines:reviewRespond',

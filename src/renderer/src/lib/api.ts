@@ -171,7 +171,11 @@ declare global {
         delete: (id: string) => Promise<Routine[]>
         toggle: (id: string, enabled: boolean) => Promise<Routine[]>
         runNow: (id: string) => Promise<{ ok: true } | { error: string }>
-        state: () => Promise<{ runningIds: string[]; queuedIds: string[] }>
+        state: () => Promise<{
+          runningIds: string[]
+          queuedIds: string[]
+          progress?: RoutineStepProgress[]
+        }>
         onRunFinished: (cb: (run: RoutineRun) => void) => () => void
         onStepProgress: (cb: (progress: RoutineStepProgress) => void) => () => void
         reviewRespond: (reviewId: string, decision: 'approve' | 'reject', comment?: string) => Promise<{ ok: true } | { error: string }>
