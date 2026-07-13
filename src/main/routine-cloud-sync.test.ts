@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cloudStepId,
   pendingDeletesForCredential,
   routineRunPayload,
   routineWorkflowPayload,
@@ -27,6 +28,13 @@ const routine: Routine = {
 }
 
 describe('routine cloud payloads', () => {
+  it('maps legacy non-UUID step ids to stable UUIDs', () => {
+    const first = cloudStepId(routine.id, '1783900277067-8zwuc3jc9hc')
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(cloudStepId(routine.id, '1783900277067-8zwuc3jc9hc')).toBe(first)
+    expect(cloudStepId(routine.id, routine.steps[0].id)).toBe(routine.steps[0].id)
+  })
+
   it('maps the current routine shape without secrets', () => {
     expect(routineWorkflowPayload(routine)).toMatchObject({
       name: 'Article',

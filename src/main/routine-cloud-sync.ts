@@ -1,4 +1,5 @@
 import { app, safeStorage } from 'electron'
+import { createHash } from 'crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { appendAppLog, normalizeError } from './app-log'
@@ -15,9 +16,20 @@ function iso(timestamp: number | undefined): string | null {
   return timestamp ? new Date(timestamp).toISOString() : null
 }
 
-function stepPayload(step: RoutineStep): Record<string, unknown> {
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+export function cloudStepId(workflowId: string, stepId: string): string {
+  if (UUID_PATTERN.test(stepId)) return stepId.toLowerCase()
+  const bytes = createHash('sha256').update(`${workflowId}:${stepId}`, 'utf8').digest().subarray(0, 16)
+  bytes[6] = (bytes[6] & 0x0f) | 0x50
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function stepPayload(workflowId: string, step: RoutineStep): Record<string, unknown> {
   return {
-    id: step.id,
+    id: cloudStepId(workflowId, step.id),
     name: step.name,
     type: step.type,
     prompt: step.prompt ?? null,
@@ -43,7 +55,7 @@ export function routineWorkflowPayload(routine: Routine): Record<string, unknown
     last_run_at: iso(routine.lastRunAt),
     last_slot_key: routine.lastSlotKey ?? null,
     created_at: iso(routine.createdAt),
-    steps: routine.steps.map(stepPayload),
+    steps: routine.steps.map((step) => stepPayload(routine.id, step)),
   }
 }
 
@@ -53,7 +65,7 @@ function stepRunPayload(
 ): Record<string, unknown> {
   const definition = routine?.steps.find((candidate) => candidate.id === step.id)
   return {
-    workflow_step_id: definition?.id ?? null,
+    workflow_step_id: definition ? cloudStepId(routine!.id, definition.id) : null,
     name: step.name,
     type: definition?.type ?? 'agent',
     status: step.status,
