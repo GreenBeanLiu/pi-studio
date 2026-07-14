@@ -11,6 +11,7 @@ import {
   Maximize,
   Crosshair,
   SlidersHorizontal,
+  Download,
 } from 'lucide-react'
 import * as THREE from 'three'
 import { GLTFLoader, OrbitControls, RGBELoader, RoomEnvironment } from 'three-stdlib'
@@ -88,20 +89,24 @@ const useStyles = createStyles(({ css }) => ({
   `,
   stats: css`
     position: absolute;
-    top: 44px;
-    right: 10px;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 6px 10px;
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.45);
     backdrop-filter: blur(4px);
-    text-align: right;
     font-size: 11px;
-    line-height: 1.7;
-    color: rgba(255, 255, 255, 0.65);
+    line-height: 1.8;
+    color: rgba(255, 255, 255, 0.55);
     pointer-events: none;
     span {
       font-family: monospace;
-      color: rgba(255, 255, 255, 0.85);
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.88);
+      margin-left: 10px;
     }
   `,
   sideBar: css`
@@ -213,9 +218,60 @@ function relativeAssetUrl(path: string): string {
   return new URL(path, window.location.href).toString()
 }
 
-export default function ModelViewer({ url }: { url: string | null }) {
+/** 左上角的相机方位轴向仪:把三个单位轴经相机旋转投到 2D,近端画彩色标签圆。 */
+function drawAxisGizmo(canvas: HTMLCanvasElement, camera: THREE.Camera): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const s = canvas.width
+  const c = s / 2
+  const r = c - 9
+  ctx.clearRect(0, 0, s, s)
+  const rot = new THREE.Matrix4().extractRotation(camera.matrixWorldInverse)
+  const axes = [
+    { v: new THREE.Vector3(1, 0, 0), color: '#ef4444', label: 'X' },
+    { v: new THREE.Vector3(0, 1, 0), color: '#22c55e', label: 'Y' },
+    { v: new THREE.Vector3(0, 0, 1), color: '#3b82f6', label: 'Z' },
+  ].map((a) => {
+    const p = a.v.clone().applyMatrix4(rot)
+    return { ...a, x: c + p.x * r, y: c - p.y * r, nx: c - p.x * r, ny: c + p.y * r, z: p.z }
+  })
+  // 远的先画,近的盖在上面
+  axes.sort((a, b) => a.z - b.z)
+  for (const a of axes) {
+    // 负方向:暗色小点
+    ctx.beginPath()
+    ctx.arc(a.nx, a.ny, 2.5, 0, Math.PI * 2)
+    ctx.fillStyle = `${a.color}55`
+    ctx.fill()
+    // 正方向:轴线 + 标签圆
+    ctx.beginPath()
+    ctx.moveTo(c, c)
+    ctx.lineTo(a.x, a.y)
+    ctx.strokeStyle = a.color
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(a.x, a.y, 6.5, 0, Math.PI * 2)
+    ctx.fillStyle = a.color
+    ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.font = 'bold 8px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(a.label, a.x, a.y + 0.5)
+  }
+}
+
+export default function ModelViewer({
+  url,
+  downloadUrl,
+}: {
+  url: string | null
+  downloadUrl?: string | null
+}) {
   const { styles, cx } = useStyles()
   const mountRef = useRef<HTMLDivElement>(null)
+  const gizmoRef = useRef<HTMLCanvasElement>(null)
   const handlesRef = useRef<ViewerHandles | null>(null)
   const settingsRef = useRef<ViewerSettings>(DEFAULT_SETTINGS)
   const [settings, setSettings] = useState<ViewerSettings>(DEFAULT_SETTINGS)
@@ -373,6 +429,7 @@ export default function ModelViewer({ url }: { url: string | null }) {
       raf = requestAnimationFrame(animate)
       controls.update()
       renderer.render(scene, camera)
+      if (gizmoRef.current) drawAxisGizmo(gizmoRef.current, camera)
     }
     animate()
 
@@ -423,11 +480,17 @@ export default function ModelViewer({ url }: { url: string | null }) {
       {info && (
         <div className={styles.stats}>
           <div>
-            面 <span>{info.triangleCount.toLocaleString()}</span>
+            <div>
+              拓扑 <span>Triangle</span>
+            </div>
+            <div>
+              面 <span>{info.triangleCount.toLocaleString()}</span>
+            </div>
+            <div>
+              顶点 <span>{info.vertexCount.toLocaleString()}</span>
+            </div>
           </div>
-          <div>
-            顶点 <span>{info.vertexCount.toLocaleString()}</span>
-          </div>
+          <canvas ref={gizmoRef} width={64} height={64} style={{ width: 64, height: 64 }} />
         </div>
       )}
 
@@ -442,6 +505,17 @@ export default function ModelViewer({ url }: { url: string | null }) {
             <Crosshair size={15} />
           </button>
         </Tooltip>
+        {downloadUrl && (
+          <Tooltip title="下载 glb 模型" placement="left">
+            <button
+              type="button"
+              className={styles.toolBtn}
+              onClick={() => window.open(downloadUrl, '_blank')}
+            >
+              <Download size={15} />
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {panelOpen && (

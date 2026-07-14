@@ -14,7 +14,7 @@ import {
   Switch,
   Tooltip,
 } from 'antd'
-import { Box, Sparkles, Trash2, ImagePlus, X, Download } from 'lucide-react'
+import { Box, Sparkles, Trash2, ImagePlus, X } from 'lucide-react'
 import { api, type Model3DHistoryItem, type Model3DOptions } from '../lib/api'
 import { assessReferenceImage, normalizeReferenceImage } from '../lib/reference-check'
 import ModelViewer from './ModelViewer'
@@ -121,32 +121,6 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     align-items: center;
     justify-content: center;
-  `,
-  stageToolbar: css`
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 2;
-  `,
-  fidelityOverlay: css`
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    z-index: 2;
-    max-width: 260px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 10px;
-    border-radius: ${token.borderRadiusLG}px;
-    background: ${token.colorBgElevated}cc;
-    backdrop-filter: blur(4px);
-    border: 1px solid ${token.colorBorderSecondary};
-  `,
-  fidelityNote: css`
-    font-size: 12px;
-    color: ${token.colorTextSecondary};
-    line-height: 1.4;
   `,
   gallery: css`
     flex-shrink: 0;
@@ -463,31 +437,7 @@ function Model3DPageInner(): React.JSX.Element {
       <div className={styles.right}>
         <div className={styles.stage}>
           {selected ? (
-            <>
-              <ModelViewer url={selected.modelUrl} />
-              {selected.cloudModelUrl && (
-                <div className={styles.stageToolbar}>
-                  <Tooltip title="下载 glb 模型">
-                    <Button
-                      size="small"
-                      icon={<Download size={14} />}
-                      onClick={() => window.open(selected.cloudModelUrl, '_blank')}
-                    />
-                  </Tooltip>
-                </div>
-              )}
-              {selected.fidelity && (
-                <div className={styles.fidelityOverlay}>
-                  <span
-                    className={styles.scoreBadge}
-                    style={{ position: 'static', alignSelf: 'flex-start', background: scoreColor(selected.fidelity.score) }}
-                  >
-                    AI 还原度 {selected.fidelity.score}
-                  </span>
-                  <span className={styles.fidelityNote}>{selected.fidelity.notes}</span>
-                </div>
-              )}
-            </>
+            <ModelViewer url={selected.modelUrl} downloadUrl={selected.cloudModelUrl ?? null} />
           ) : (
             <Empty description="还没有 3D 模型" image={<Box size={48} strokeWidth={1} />} />
           )}
