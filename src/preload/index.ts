@@ -180,6 +180,8 @@ const api = {
       imageDataUrl?: string
       options?: Record<string, unknown>
     }) => ipcRenderer.invoke('model3d:generate', payload),
+    generateCode: (payload: { prompt: string }) =>
+      ipcRenderer.invoke('model3d:generateCode', payload),
     history: () => ipcRenderer.invoke('model3d:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
     onProgress: (

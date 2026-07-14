@@ -31,6 +31,8 @@ const STATUS_TEXT: Record<string, string> = {
   queued: '排队中…',
   running: '生成中…',
   downloading: '下载模型…',
+  building: 'agent 建模中…',
+  exporting: '导出模型…',
   done: '完成',
   error: '失败',
 }
@@ -231,7 +233,7 @@ function Model3DPageInner(): React.JSX.Element {
   const { message } = AntApp.useApp()
 
   const [configured, setConfigured] = useState(true)
-  const [mode, setMode] = useState<'text' | 'image'>('text')
+  const [mode, setMode] = useState<'text' | 'image' | 'code'>('text')
   const [prompt, setPrompt] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [refWarnings, setRefWarnings] = useState<string[]>([])
@@ -276,23 +278,27 @@ function Model3DPageInner(): React.JSX.Element {
   }
 
   const onGenerate = async (): Promise<void> => {
-    if (mode === 'text' && !prompt.trim()) return void message.warning('请输入提示词')
+    if ((mode === 'text' || mode === 'code') && !prompt.trim())
+      return void message.warning('请输入描述')
     if (mode === 'image' && !imageDataUrl) return void message.warning('请选择参考图片')
     setGenerating(true)
-    setProgress({ status: 'submitting', progress: 0 })
+    setProgress({ status: mode === 'code' ? 'building' : 'submitting', progress: 0 })
     try {
-      const res = await api.model3d.generate({
-        mode,
-        prompt,
-        ...(mode === 'image' && imageDataUrl ? { imageDataUrl } : {}),
-        options: opts,
-      })
+      const res =
+        mode === 'code'
+          ? await api.model3d.generateCode({ prompt })
+          : await api.model3d.generate({
+              mode,
+              prompt,
+              ...(mode === 'image' && imageDataUrl ? { imageDataUrl } : {}),
+              options: opts,
+            })
       if ('error' in res) {
         message.error(res.error)
       } else {
         setHistory((prev) => [res, ...prev])
         setSelected(res)
-        message.success('3D 模型已生成')
+        message.success(mode === 'code' ? '代码模型已生成' : '3D 模型已生成')
       }
     } finally {
       setGenerating(false)
@@ -325,20 +331,32 @@ function Model3DPageInner(): React.JSX.Element {
         <Segmented
           block
           value={mode}
-          onChange={(v) => setMode(v as 'text' | 'image')}
+          onChange={(v) => setMode(v as 'text' | 'image' | 'code')}
           options={[
             { label: '文生 3D', value: 'text' },
             { label: '图生 3D', value: 'image' },
+            { label: '代码建模', value: 'code' },
           ]}
         />
 
-        {mode === 'text' ? (
+        {mode === 'code' && (
+          <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
+            由内嵌 agent 用 three.js 程序化手搓「可动画/可拆解」的代码模型,导出为 glb。
+            比 Tripo 慢(数分钟),适合游戏道具、需要绑定交互的场景。
+          </div>
+        )}
+
+        {mode === 'text' || mode === 'code' ? (
           <div className={styles.field}>
-            <span className={styles.label}>提示词</span>
+            <span className={styles.label}>{mode === 'code' ? '模型描述' : '提示词'}</span>
             <Input.TextArea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="例如:a cute low-poly red mushroom"
+              placeholder={
+                mode === 'code'
+                  ? '例如:一个带铰链盖子和金属搭扣的木质宝箱'
+                  : '例如:a cute low-poly red mushroom'
+              }
               autoSize={{ minRows: 3, maxRows: 6 }}
             />
           </div>
@@ -397,34 +415,38 @@ function Model3DPageInner(): React.JSX.Element {
           </div>
         )}
 
-        <div className={styles.field}>
-          <span className={styles.label}>模型版本</span>
-          <Select
-            value={opts.modelVersion ?? ''}
-            onChange={(v) => setOpts((o) => ({ ...o, modelVersion: v || undefined }))}
-            options={MODEL_VERSIONS}
-          />
-        </div>
+        {mode !== 'code' && (
+          <>
+            <div className={styles.field}>
+              <span className={styles.label}>模型版本</span>
+              <Select
+                value={opts.modelVersion ?? ''}
+                onChange={(v) => setOpts((o) => ({ ...o, modelVersion: v || undefined }))}
+                options={MODEL_VERSIONS}
+              />
+            </div>
 
-        <div className={styles.row}>
-          <span className={styles.label}>贴图纹理</span>
-          <Switch checked={opts.texture ?? true} onChange={(v) => setOpts((o) => ({ ...o, texture: v }))} />
-        </div>
-        <div className={styles.row}>
-          <span className={styles.label}>PBR 材质</span>
-          <Switch checked={opts.pbr ?? false} onChange={(v) => setOpts((o) => ({ ...o, pbr: v }))} />
-        </div>
+            <div className={styles.row}>
+              <span className={styles.label}>贴图纹理</span>
+              <Switch checked={opts.texture ?? true} onChange={(v) => setOpts((o) => ({ ...o, texture: v }))} />
+            </div>
+            <div className={styles.row}>
+              <span className={styles.label}>PBR 材质</span>
+              <Switch checked={opts.pbr ?? false} onChange={(v) => setOpts((o) => ({ ...o, pbr: v }))} />
+            </div>
 
-        <div className={styles.field}>
-          <span className={styles.label}>面数上限(0 = 自动)：{opts.faceLimit ?? 0}</span>
-          <Slider
-            min={0}
-            max={50000}
-            step={1000}
-            value={opts.faceLimit ?? 0}
-            onChange={(v) => setOpts((o) => ({ ...o, faceLimit: v || undefined }))}
-          />
-        </div>
+            <div className={styles.field}>
+              <span className={styles.label}>面数上限(0 = 自动)：{opts.faceLimit ?? 0}</span>
+              <Slider
+                min={0}
+                max={50000}
+                step={1000}
+                value={opts.faceLimit ?? 0}
+                onChange={(v) => setOpts((o) => ({ ...o, faceLimit: v || undefined }))}
+              />
+            </div>
+          </>
+        )}
 
         <Button
           type="primary"

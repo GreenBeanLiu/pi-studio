@@ -212,6 +212,9 @@ declare global {
           imageDataUrl?: string
           options?: Model3DOptions
         }) => Promise<Model3DHistoryItem | { error: string }>
+        generateCode: (payload: {
+          prompt: string
+        }) => Promise<Model3DHistoryItem | { error: string }>
         history: () => Promise<Model3DHistoryItem[]>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
         onProgress: (
@@ -254,7 +257,7 @@ export type Model3DFidelity = { score: number; notes: string; model: string }
 export type Model3DHistoryItem = {
   id: string
   prompt: string
-  mode: 'text' | 'image'
+  mode: 'text' | 'image' | 'code'
   modelUrl: string
   cloudModelUrl?: string
   thumbnailUrl: string | null

@@ -14,7 +14,7 @@ import { reviewModelRender, type VisionReview } from './vision-review'
 
 const CLOUD_TIMEOUT_MS = 600_000
 
-function modelsDir(): string {
+export function modelsDir(): string {
   const d = join(app.getPath('userData'), 'models3d')
   mkdirSync(d, { recursive: true })
   return d
@@ -37,7 +37,7 @@ export type Model3DOptions = {
 export type Model3DHistoryItem = {
   id: string
   prompt: string
-  mode: 'text' | 'image'
+  mode: 'text' | 'image' | 'code'
   modelUrl: string
   /** R2 上的 glb 公网地址,用于下载/分享(用户自有 OSS) */
   cloudModelUrl?: string
@@ -50,7 +50,7 @@ export type Model3DHistoryItem = {
 
 export type Model3DResult = Model3DHistoryItem | { error: string }
 
-function loadHistory(): Model3DHistoryItem[] {
+export function loadHistory(): Model3DHistoryItem[] {
   try {
     if (!existsSync(indexPath())) return []
     const items = JSON.parse(readFileSync(indexPath(), 'utf-8')) as Model3DHistoryItem[]
@@ -61,16 +61,16 @@ function loadHistory(): Model3DHistoryItem[] {
   }
 }
 
-function saveHistory(items: Model3DHistoryItem[]): void {
+export function saveHistory(items: Model3DHistoryItem[]): void {
   writeFileSync(indexPath(), JSON.stringify(items.slice(0, 200), null, 2), 'utf-8')
 }
 
 /** 本地文件路径转成渲染进程可加载的 file:// URL。 */
-function localFileUrl(p: string): string {
+export function localFileUrl(p: string): string {
   return `file:///${p.replace(/\\/g, '/')}`
 }
 
-function broadcast(channel: string, payload: unknown): void {
+export function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
