@@ -189,6 +189,13 @@ const api = {
       ipcRenderer.on('model3d:progress', handler)
       return () => ipcRenderer.off('model3d:progress', handler)
     },
+    onScored: (
+      cb: (data: { id: string; fidelity: { score: number; notes: string; model: string } }) => void,
+    ) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
+      ipcRenderer.on('model3d:scored', handler)
+      return () => ipcRenderer.off('model3d:scored', handler)
+    },
   },
 
   update: {

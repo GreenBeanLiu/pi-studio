@@ -66,7 +66,8 @@
       "!**/*.map",
       "!node_modules/**/*.d.ts",
       "!node_modules/**/*.{md,markdown,txt}",
-      "!node_modules/**/{LICENSE,LICENSE.*,license,CHANGELOG.md,README.md}"
+      "!node_modules/**/{LICENSE,LICENSE.*,license,CHANGELOG.md,README.md}",
+      "resources/pi-skills/**"
     ],
     "win": {
       "target": "nsis",

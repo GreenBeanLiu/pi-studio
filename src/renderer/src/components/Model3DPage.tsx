@@ -163,7 +163,33 @@ const useStyles = createStyles(({ token, css }) => ({
     opacity: 0;
     transition: opacity 0.15s;
   `,
+  scoreBadge: css`
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    padding: 0 6px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    color: #fff;
+    pointer-events: none;
+  `,
+  fidelityRow: css`
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: ${token.colorTextSecondary};
+    padding: 0 2px;
+  `,
 }))
+
+/** 还原度配色:≥80 绿 / ≥60 橙 / 其余红 */
+function scoreColor(score: number): string {
+  return score >= 80 ? '#52c41a' : score >= 60 ? '#faad14' : '#ff4d4f'
+}
 
 function Model3DPageInner(): React.JSX.Element {
   const { styles, cx } = useStyles()
@@ -188,7 +214,14 @@ function Model3DPageInner(): React.JSX.Element {
       if (items[0]) setSelected(items[0])
     })
     const off = api.model3d.onProgress((data) => setProgress({ status: data.status, progress: data.progress }))
-    return off
+    const offScored = api.model3d.onScored(({ id, fidelity }) => {
+      setHistory((prev) => prev.map((it) => (it.id === id ? { ...it, fidelity } : it)))
+      setSelected((cur) => (cur?.id === id ? { ...cur, fidelity } : cur))
+    })
+    return () => {
+      off()
+      offScored()
+    }
   }, [])
 
   const pickFile = (file: File | null | undefined): void => {
@@ -196,10 +229,11 @@ function Model3DPageInner(): React.JSX.Element {
     const reader = new FileReader()
     reader.onload = () => {
       setRefWarnings([])
-      // 透明底先压平到白底(否则 Tripo 压成黑底重建出黑色面片),预览即所传
-      void normalizeReferenceImage(reader.result as string).then(async (dataUrl) => {
+      // 透明底先压平到白底(否则 Tripo 压成黑底重建出黑色面片),预览即所传;
+      // 压平过的图背景必然纯白,跳过背景类预检
+      void normalizeReferenceImage(reader.result as string).then(async ({ dataUrl, flattened }) => {
         setImageDataUrl(dataUrl)
-        const r = await assessReferenceImage(dataUrl)
+        const r = await assessReferenceImage(dataUrl, { skipBackground: flattened })
         setRefWarnings(r.warnings)
       })
     }
@@ -312,7 +346,7 @@ function Model3DPageInner(): React.JSX.Element {
               <Alert
                 type="warning"
                 showIcon
-                message={
+                title={
                   refWarnings.length === 1 ? (
                     refWarnings[0]
                   ) : (
@@ -384,6 +418,18 @@ function Model3DPageInner(): React.JSX.Element {
           )}
         </div>
 
+        {selected?.fidelity && (
+          <div className={styles.fidelityRow}>
+            <span
+              className={styles.scoreBadge}
+              style={{ position: 'static', background: scoreColor(selected.fidelity.score) }}
+            >
+              AI 还原度 {selected.fidelity.score}
+            </span>
+            <span>{selected.fidelity.notes}</span>
+          </div>
+        )}
+
         {history.length > 0 && (
           <div className={styles.gallery}>
             {history.map((it) => (
@@ -399,6 +445,14 @@ function Model3DPageInner(): React.JSX.Element {
                   <div className={styles.thumbFallback}>
                     <Box size={22} />
                   </div>
+                )}
+                {it.fidelity && (
+                  <span
+                    className={styles.scoreBadge}
+                    style={{ background: scoreColor(it.fidelity.score) }}
+                  >
+                    {it.fidelity.score}
+                  </span>
                 )}
                 <Popconfirm
                   title="删除这个模型?"

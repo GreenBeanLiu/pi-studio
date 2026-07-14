@@ -217,6 +217,7 @@ declare global {
         onProgress: (
           cb: (data: { id: string; status: string; progress: number }) => void,
         ) => () => void
+        onScored: (cb: (data: { id: string; fidelity: Model3DFidelity }) => void) => () => void
       }
       update: {
         onAvailable: (cb: (data: { version: string }) => void) => () => void
@@ -242,6 +243,8 @@ export type Model3DOptions = {
   style?: string
 }
 
+export type Model3DFidelity = { score: number; notes: string; model: string }
+
 export type Model3DHistoryItem = {
   id: string
   prompt: string
@@ -250,6 +253,7 @@ export type Model3DHistoryItem = {
   thumbnailUrl: string | null
   createdAt: number
   options?: Model3DOptions
+  fidelity?: Model3DFidelity
 }
 
 /** 云端 gpt-image-2 尺寸:方形 / 横版(1536×1024)/ 竖版(1024×1536) */

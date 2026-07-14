@@ -12,6 +12,7 @@ import {
   PRODUCTION_CONTENT_SECURITY_POLICY,
 } from './network-policy'
 import { cleanupStaleRunChangeTempDirs } from './run-change-set'
+import { syncBundledSkills } from './sculptor-skill'
 
 // 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
 if (process.env.PI_REMOTE_DEBUG_PORT)
@@ -234,6 +235,7 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
+  syncBundledSkills()
   piClientManager.warmup()
   if (!is.dev) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

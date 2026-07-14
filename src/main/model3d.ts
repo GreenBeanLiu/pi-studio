@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { getCloud } from './image-gen'
 import { appendAppLog, normalizeError } from './app-log'
+import { reviewModelRender, type VisionReview } from './vision-review'
 
 /**
  * 3D 生成:Tripo3D 调用已抽离到服务端(trigger.dev `gen-model-3d` 任务),客户端
@@ -41,6 +42,8 @@ export type Model3DHistoryItem = {
   thumbnailUrl: string | null
   createdAt: number
   options?: Model3DOptions
+  /** AI 视觉还原度评审(异步补写,可能缺失) */
+  fidelity?: VisionReview
 }
 
 export type Model3DResult = Model3DHistoryItem | { error: string }
@@ -207,11 +210,33 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
     }
     saveHistory([item, ...loadHistory()])
     broadcast('model3d:progress', { id, status: 'done', progress: 100 })
+    if (thumbPath) void scoreFidelity(item, payload, thumbPath)
     return item
   } catch (err) {
     appendAppLog('error', 'model3d.generate', '3D 生成失败', normalizeError(err))
     broadcast('model3d:progress', { id, status: 'error', progress: 0 })
     return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** 生成完成后异步评分:不阻塞返回,失败静默(记日志),成功补写历史并广播。 */
+async function scoreFidelity(
+  item: Model3DHistoryItem,
+  payload: GeneratePayload,
+  thumbPath: string,
+): Promise<void> {
+  try {
+    const renderDataUrl = `data:image/png;base64,${readFileSync(thumbPath).toString('base64')}`
+    const fidelity = await reviewModelRender({
+      mode: payload.mode,
+      prompt: payload.prompt,
+      ...(payload.imageDataUrl ? { referenceDataUrl: payload.imageDataUrl } : {}),
+      renderDataUrl,
+    })
+    saveHistory(loadHistory().map((it) => (it.id === item.id ? { ...it, fidelity } : it)))
+    broadcast('model3d:scored', { id: item.id, fidelity })
+  } catch (err) {
+    appendAppLog('warn', 'model3d.score', 'AI 还原度评分失败', normalizeError(err))
   }
 }
 
