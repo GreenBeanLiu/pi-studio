@@ -183,7 +183,13 @@ const api = {
     history: () => ipcRenderer.invoke('model3d:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
     onProgress: (
-      cb: (data: { id: string; status: string; progress: number }) => void,
+      cb: (data: {
+        id: string
+        status: string
+        progress: number
+        prompt?: string
+        mode?: 'text' | 'image'
+      }) => void,
     ) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
       ipcRenderer.on('model3d:progress', handler)

@@ -64,6 +64,17 @@ export default function ModelViewer({ url, background }: Props) {
         const scale = 2.4 / maxDim
         model.scale.setScalar(scale)
         scene.add(model)
+
+        // 缩放后模型底部 y,用于把地面网格贴到脚下
+        const floorY = -(size.y * scale) / 2
+        const grid = new THREE.GridHelper(6, 24, 0x888888, 0x555555)
+        grid.position.y = floorY
+        ;(grid.material as THREE.Material).transparent = true
+        ;(grid.material as THREE.Material).opacity = 0.5
+        scene.add(grid)
+        scene.add(new THREE.AxesHelper(1.5)) // 坐标轴 R=X 绿=Y 蓝=Z
+        scene.add(new THREE.BoxHelper(model, 0x3b82f6)) // 蓝色包围盒边界
+
         camera.position.set(0, 0.6, 4)
         controls.update()
       },

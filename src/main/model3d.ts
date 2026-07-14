@@ -39,6 +39,8 @@ export type Model3DHistoryItem = {
   prompt: string
   mode: 'text' | 'image'
   modelUrl: string
+  /** R2 上的 glb 公网地址,用于下载/分享(用户自有 OSS) */
+  cloudModelUrl?: string
   thumbnailUrl: string | null
   createdAt: number
   options?: Model3DOptions
@@ -124,14 +126,23 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
   if (payload.mode === 'image' && !payload.imageDataUrl) return { error: '请提供参考图片' }
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  // 进度事件带上 prompt/mode,渲染进程据此在历史画廊里渲染"生成中"占位卡
+  const progress = (status: string, pct: number): void =>
+    broadcast('model3d:progress', {
+      id,
+      status,
+      progress: pct,
+      prompt: payload.prompt,
+      mode: payload.mode,
+    })
   try {
     let imageUrl: string | undefined
     if (payload.mode === 'image' && payload.imageDataUrl) {
-      broadcast('model3d:progress', { id, status: 'uploading', progress: 0 })
+      progress('uploading', 0)
       imageUrl = await uploadReference(payload.imageDataUrl)
     }
 
-    broadcast('model3d:progress', { id, status: 'submitting', progress: 0 })
+    progress('submitting', 0)
     const resp = await cloudFetch(
       '/model3d',
       {
@@ -170,11 +181,7 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
         if (event === 'status') {
           const stage = String(data.stage ?? '')
           const pm = /running:(\d+)/.exec(stage)
-          broadcast('model3d:progress', {
-            id,
-            status: pm ? 'running' : stage || 'running',
-            progress: pm ? Number(pm[1]) : 0,
-          })
+          progress(pm ? 'running' : stage || 'running', pm ? Number(pm[1]) : 0)
         }
         if (event === 'result') {
           modelUrl = data.modelUrl
@@ -185,7 +192,7 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
     }
     if (!modelUrl) throw new Error('云端任务完成但没有返回模型 URL')
 
-    broadcast('model3d:progress', { id, status: 'downloading', progress: 100 })
+    progress('downloading', 100)
     const glbPath = join(modelsDir(), `${id}.glb`)
     await download(modelUrl, glbPath)
     let thumbPath: string | null = null
@@ -204,17 +211,18 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
       prompt: payload.mode === 'image' ? payload.prompt || '(图生 3D)' : payload.prompt,
       mode: payload.mode,
       modelUrl: localFileUrl(glbPath),
+      cloudModelUrl: modelUrl,
       thumbnailUrl: thumbPath ? localFileUrl(thumbPath) : null,
       createdAt: Date.now(),
       ...(payload.options ? { options: payload.options } : {}),
     }
     saveHistory([item, ...loadHistory()])
-    broadcast('model3d:progress', { id, status: 'done', progress: 100 })
+    progress('done', 100)
     if (thumbPath) void scoreFidelity(item, payload, thumbPath)
     return item
   } catch (err) {
     appendAppLog('error', 'model3d.generate', '3D 生成失败', normalizeError(err))
-    broadcast('model3d:progress', { id, status: 'error', progress: 0 })
+    progress('error', 0)
     return { error: err instanceof Error ? err.message : String(err) }
   }
 }

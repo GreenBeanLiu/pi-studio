@@ -215,7 +215,13 @@ declare global {
         history: () => Promise<Model3DHistoryItem[]>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
         onProgress: (
-          cb: (data: { id: string; status: string; progress: number }) => void,
+          cb: (data: {
+            id: string
+            status: string
+            progress: number
+            prompt?: string
+            mode?: 'text' | 'image'
+          }) => void,
         ) => () => void
         onScored: (cb: (data: { id: string; fidelity: Model3DFidelity }) => void) => () => void
       }
@@ -250,6 +256,7 @@ export type Model3DHistoryItem = {
   prompt: string
   mode: 'text' | 'image'
   modelUrl: string
+  cloudModelUrl?: string
   thumbnailUrl: string | null
   createdAt: number
   options?: Model3DOptions
