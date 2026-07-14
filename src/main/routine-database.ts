@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, readFileSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { createRequire } from 'module'
 import type { Routine, RoutineRun, RoutineStep, RoutineStepResult } from './routines'
 import type { WorkflowDeleteIntent } from './workflow-delete-outbox'
 
@@ -50,7 +51,9 @@ function openDatabase(path: string): DatabaseSyncInstance {
   // can still load the routines module and fall back to JSON storage.
   let DatabaseSync: new (databasePath: string) => DatabaseSyncInstance
   try {
-    ;({ DatabaseSync } = require('node:sqlite') as {
+    // ESM 下没有裸 require;createRequire 保持同步加载(此处不能 await import)
+    const cjsRequire = createRequire(import.meta.url)
+    ;({ DatabaseSync } = cjsRequire('node:sqlite') as {
       DatabaseSync: new (databasePath: string) => DatabaseSyncInstance
     })
   } catch (error) {

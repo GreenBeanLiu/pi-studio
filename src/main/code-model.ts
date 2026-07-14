@@ -19,7 +19,7 @@ import { appendAppLog, normalizeError } from './app-log'
 /**
  * 第三种 3D 引擎「代码建模」:不走 Tripo,由内嵌的 pi agent 程序化手搓
  * three.js 几何,导出成 glb(与 Tripo 产物同格式,复用 viewer/历史/下载)。
- * agent 在一个预置了 build-model.mjs 骨架的工作目录里编辑 buildModel() 函数;
+ * agent 在一个预置了 build-model.js 骨架的工作目录里编辑 buildModel() 函数;
  * three + GLTFExporter 由 resources/model-export 的预打包 bundle 提供(避免把
  * three 塞进 dependencies)。最终导出由 pi-studio 用 embedded node 权威执行,
  * 不依赖目标机的系统 node。产物是"可动画/可拆解"的代码资产(Group 层级 + userData)。
@@ -30,7 +30,7 @@ const AGENT_TIMEOUT_MS = 12 * 60_000
 /** 预打包的 three + GLTFExporter bundle 的 file:// URL(骨架 import 它)。 */
 function bundleUrl(): string {
   return pathToFileURL(
-    join(app.getAppPath(), 'resources', 'model-export', 'three-gltf-bundle.mjs'),
+    join(app.getAppPath(), 'resources', 'model-export', 'three-gltf-bundle.js'),
   ).href
 }
 
@@ -40,10 +40,10 @@ function workDir(id: string): string {
   return d
 }
 
-/** build-model.mjs 骨架:agent 只改 buildModel 函数体,顶部 polyfill/import 与底部导出勿动。 */
+/** build-model.js 骨架:agent 只改 buildModel 函数体,顶部 polyfill/import 与底部导出勿动。 */
 function skeleton(): string {
   return `// 3D 代码建模骨架 —— 只编辑 buildModel() 函数体。
-// 运行(自测): node build-model.mjs test.glb  → 应打印 "MODEL_OK ..."
+// 运行(自测): node build-model.js test.glb  → 应打印 "MODEL_OK ..."
 // GLTFExporter 的 binary 模式在浏览器用 FileReader,node 无此 API,下面补一个最小 polyfill。
 globalThis.FileReader = class {
   #done(result) {
@@ -98,17 +98,17 @@ new GLTFExporter().parse(
 }
 
 function agentPrompt(prompt: string): string {
-  return `你在一个已经准备好的工作目录里,里面有 build-model.mjs。请用纯代码(three.js)程序化地构建下面描述的 3D 模型:
+  return `你在一个已经准备好的工作目录里,里面有 build-model.js。请用纯代码(three.js)程序化地构建下面描述的 3D 模型:
 
 "${prompt}"
 
 要求:
-- 只修改 build-model.mjs 里的 buildModel(THREE) 函数体;不要改动文件顶部的 polyfill/import 和底部的导出逻辑。
+- 只修改 build-model.js 里的 buildModel(THREE) 函数体;不要改动文件顶部的 polyfill/import 和底部的导出逻辑。
 - 参考 object-to-threejs-procedural skill 的方法:先搭整体轮廓与比例,再加部件,再补细节,分步推进。
 - 做成"可动画/可拆解":每个能独立运动的部件放各自的 THREE.Group(pivot 节点),mesh 作为其 child,并在 group.userData 里标注 pivot/axis 等语义。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败);用纯色、顶点色或 MeshStandardMaterial 的参数表达材质。
-- 每改一版就运行 \`node build-model.mjs test.glb\` 自测,确保打印 MODEL_OK 且无报错,反复修正直到稳定成功。
-- 完成后清理掉 test.glb 等临时产物,只保留改好的 build-model.mjs。`
+- 每改一版就运行 \`node build-model.js test.glb\` 自测,确保打印 MODEL_OK 且无报错,反复修正直到稳定成功。
+- 完成后清理掉 test.glb 等临时产物,只保留改好的 build-model.js。`
 }
 
 /** 用 embedded node(不依赖系统 node)权威执行骨架,产出最终 glb。 */
@@ -135,12 +135,14 @@ async function generateCodeModel(payload: { prompt: string }): Promise<Model3DRe
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const dir = workDir(id)
-  const scriptPath = join(dir, 'build-model.mjs')
+  const scriptPath = join(dir, 'build-model.js')
   const glbOut = join(modelsDir(), `${id}.glb`)
   const pr = (status: string): void =>
     broadcast('model3d:progress', { id, status, progress: 0, prompt, mode: 'code' })
 
   try {
+    // 工作目录不在任何 package.json 作用域内,不声明 module 的话 .js 会被当 CJS,ESM 骨架无法运行
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module' }, null, 2), 'utf-8')
     writeFileSync(scriptPath, skeleton(), 'utf-8')
     pr('building')
 

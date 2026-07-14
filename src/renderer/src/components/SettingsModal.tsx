@@ -1016,7 +1016,7 @@ export default function SettingsModal({
                   <Input.TextArea
                     value={rulesToLines(securityPolicy.writeBlocklist)}
                     onChange={(e) => patchPolicy({ writeBlocklist: linesToRules(e.target.value) })}
-                    placeholder={'.github/workflows/\npackage-lock.json\nscripts/release-local.mjs'}
+                    placeholder={'.github/workflows/\npackage-lock.json\nscripts/release-local.js'}
                     autoSize={{ minRows: 5, maxRows: 8 }}
                   />
                 </div>

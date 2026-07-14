@@ -21,8 +21,8 @@ Useful commands:
 
 ```powershell
 pnpm.cmd run release:dry
-node scripts/release-local.mjs --install
-node scripts/release-local.mjs --skip-build
+node scripts/release-local.js --install
+node scripts/release-local.js --skip-build
 ```
 
 `--skip-build` reuses existing release artifacts but still runs `pnpm run check`; it never bypasses the encoding, typecheck, test, or lint gates.

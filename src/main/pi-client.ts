@@ -1,5 +1,6 @@
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { createRequire } from 'module'
 import type {
   AgentSessionEvent,
   RpcClient as RpcClientType,
@@ -50,7 +51,9 @@ export async function loadRpcClient(): Promise<typeof RpcClientType> {
 // walk the plain node_modules search paths instead — that mechanism doesn't
 // consult the package's "exports" map at all.
 export function resolvePiCliPath(): string {
-  const searchPaths = require.resolve.paths('@earendil-works/pi-coding-agent') ?? []
+  // ESM 下没有全局 require;createRequire 的 resolve.paths 走同样的 node_modules 搜索路径
+  const cjsRequire = createRequire(import.meta.url)
+  const searchPaths = cjsRequire.resolve.paths('@earendil-works/pi-coding-agent') ?? []
   for (const base of searchPaths) {
     const candidate = join(base, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
     if (existsSync(candidate)) return candidate

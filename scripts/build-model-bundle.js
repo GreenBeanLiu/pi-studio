@@ -1,7 +1,7 @@
 // 预打包 three + GLTFExporter 成单文件,供「代码建模」引擎的 build-model.mjs 导入。
 // three 是 devDependency(渲染层 vite 打包),不进 electron-builder 的 dependencies;
 // 代码建模在独立 node 子进程里需要它,所以在这里 bundle 一份放进 resources。
-// three 升级后重跑: node scripts/build-model-bundle.mjs
+// three 升级后重跑: node scripts/build-model-bundle.js
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -24,6 +24,6 @@ await esbuild.build({
   bundle: true,
   format: 'esm',
   platform: 'node',
-  outfile: join(root, 'resources/model-export/three-gltf-bundle.mjs'),
+  outfile: join(root, 'resources/model-export/three-gltf-bundle.js'),
 })
 console.log('model-export bundle rebuilt')

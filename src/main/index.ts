@@ -1,7 +1,9 @@
 import { app, shell, BrowserWindow, ipcMain, session, Menu, Tray, nativeImage } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { autoUpdater } from 'electron-updater'
+// electron-updater 是 CJS 包,ESM 下不能具名导入,走默认导入再解构
+import electronUpdater from 'electron-updater'
+const { autoUpdater } = electronUpdater
 import { registerIpcHandlers } from './ipc'
 import { clearAllGitRunChanges } from './git-diff'
 import { piClientManager } from './pi-client'
@@ -168,7 +170,8 @@ function createWindow(): void {
     titleBarStyle: 'hidden',
     backgroundColor: '#000000',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      // ESM 构建下 electron-vite 的 preload 产物是 index.mjs
+      preload: join(import.meta.dirname, '../preload/index.mjs'),
       sandbox: false,
       contextIsolation: true,
     },
@@ -215,7 +218,7 @@ function createWindow(): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
 }
 

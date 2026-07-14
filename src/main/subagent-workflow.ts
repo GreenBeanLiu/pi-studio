@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { createRequire } from 'module'
 import { agentConfigDir } from './settings'
 
 const DEFAULT_AGENTS: Record<string, string> = {
@@ -141,7 +142,9 @@ function writeFiles(dir: string, files: Record<string, string>): void {
 }
 
 function resolvePiSubagentExampleDir(): string {
-  const searchPaths = require.resolve.paths('@earendil-works/pi-coding-agent') ?? []
+  // ESM 下没有裸 require
+  const searchPaths =
+    createRequire(import.meta.url).resolve.paths('@earendil-works/pi-coding-agent') ?? []
 
   for (const basePath of searchPaths) {
     const candidate = join(

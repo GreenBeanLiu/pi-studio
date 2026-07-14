@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "check:text": "node scripts/check-text-encoding.mjs",
+    "check:text": "node scripts/check-text-encoding.js",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "lint": "eslint --ext .ts,.tsx src tests",
@@ -14,8 +14,8 @@
     "verify": "pnpm run check && pnpm run build",
     "preview": "electron-vite preview",
     "package": "pnpm run verify && electron-builder --win --publish always",
-    "release:local": "node scripts/release-local.mjs",
-    "release:dry": "node scripts/release-local.mjs --dry-run --skip-build"
+    "release:local": "node scripts/release-local.js",
+    "release:dry": "node scripts/release-local.js --dry-run --skip-build"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6",
@@ -89,5 +89,6 @@
     "electronDownload": {
       "mirror": "https://github.com/electron/electron/releases/download/"
     }
-  }
+  },
+  "type": "module"
 }
