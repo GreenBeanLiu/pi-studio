@@ -37,7 +37,7 @@ const comfyRuntime = new ComfyRuntime(
 )
 
 /** 云端中继配置:每次读设置(便于用户改后即时生效,无需重启)。 */
-const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
+export const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
   const s = loadSettings()
   return resolveCloudImageConfig(
     {

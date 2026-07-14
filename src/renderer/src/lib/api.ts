@@ -204,6 +204,20 @@ declare global {
         >
         comfyStop: () => Promise<{ ok: boolean; external: boolean }>
       }
+      model3d: {
+        health: () => Promise<Model3DHealth>
+        generate: (payload: {
+          mode: 'text' | 'image'
+          prompt: string
+          imageDataUrl?: string
+          options?: Model3DOptions
+        }) => Promise<Model3DHistoryItem | { error: string }>
+        history: () => Promise<Model3DHistoryItem[]>
+        historyDelete: (id: string) => Promise<{ ok: boolean }>
+        onProgress: (
+          cb: (data: { id: string; status: string; progress: number }) => void,
+        ) => () => void
+      }
       update: {
         onAvailable: (cb: (data: { version: string }) => void) => () => void
         onDownloaded: (cb: (data: { version: string }) => void) => () => void
@@ -217,6 +231,26 @@ declare global {
 export type PiProvider = 'anthropic' | 'openai'
 
 export type ImageGenEngine = 'openai' | 'comfy'
+
+export type Model3DHealth = { configured: boolean }
+
+export type Model3DOptions = {
+  modelVersion?: string
+  faceLimit?: number
+  texture?: boolean
+  pbr?: boolean
+  style?: string
+}
+
+export type Model3DHistoryItem = {
+  id: string
+  prompt: string
+  mode: 'text' | 'image'
+  modelUrl: string
+  thumbnailUrl: string | null
+  createdAt: number
+  options?: Model3DOptions
+}
 
 /** 云端 gpt-image-2 尺寸:方形 / 横版(1536×1024)/ 竖版(1024×1536) */
 export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'

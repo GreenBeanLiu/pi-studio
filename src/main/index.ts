@@ -13,6 +13,10 @@ import {
 } from './network-policy'
 import { cleanupStaleRunChangeTempDirs } from './run-change-set'
 
+// 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
+if (process.env.PI_REMOTE_DEBUG_PORT)
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.PI_REMOTE_DEBUG_PORT)
+
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 const UPDATE_RETRY_DELAY_MS = 30 * 1000
 const UPDATE_MAX_RETRIES = 3

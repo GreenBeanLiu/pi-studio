@@ -1,7 +1,7 @@
 import { createStyles } from 'antd-style'
 import { ActionIcon } from '@lobehub/ui'
 import { Tooltip } from 'antd'
-import { FolderOpen, MessageSquare, Settings, Sun, Moon, CalendarClock, Image } from 'lucide-react'
+import { FolderOpen, MessageSquare, Settings, Sun, Moon, CalendarClock, Image, Box } from 'lucide-react'
 import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -78,12 +78,13 @@ const useStyles = createStyles(({ token, css }) => ({
 
 type Props = {
   workspace: Workspace | null
-  activeView: 'chat' | 'routines' | 'imagegen'
+  activeView: 'chat' | 'routines' | 'imagegen' | 'model3d'
   appearance: 'dark' | 'light'
   onSwitchWorkspace: () => void
   onChat: () => void
   onRoutines: () => void
   onImageGen: () => void
+  onModel3D: () => void
   onSettings: () => void
   onToggleTheme: () => void
 }
@@ -96,6 +97,7 @@ export default function NavRail({
   onChat,
   onRoutines,
   onImageGen,
+  onModel3D,
   onSettings,
   onToggleTheme,
 }: Props) {
@@ -135,6 +137,14 @@ export default function NavRail({
         icon={<Image size={15} />}
         title="图像生成"
         onClick={onImageGen}
+        size={{ blockSize: 36, borderRadius: 8 }}
+      />
+
+      <ActionIcon
+        className={cx(styles.iconBtn, activeView === 'model3d' && styles.iconBtnActive)}
+        icon={<Box size={15} />}
+        title="3D 生成"
+        onClick={onModel3D}
         size={{ blockSize: 36, borderRadius: 8 }}
       />
 

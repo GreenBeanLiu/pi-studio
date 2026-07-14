@@ -172,6 +172,25 @@ const api = {
     comfyStop: () => ipcRenderer.invoke('imageGen:comfyStop'),
   },
 
+  model3d: {
+    health: () => ipcRenderer.invoke('model3d:health'),
+    generate: (payload: {
+      mode: 'text' | 'image'
+      prompt: string
+      imageDataUrl?: string
+      options?: Record<string, unknown>
+    }) => ipcRenderer.invoke('model3d:generate', payload),
+    history: () => ipcRenderer.invoke('model3d:history'),
+    historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
+    onProgress: (
+      cb: (data: { id: string; status: string; progress: number }) => void,
+    ) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
+      ipcRenderer.on('model3d:progress', handler)
+      return () => ipcRenderer.off('model3d:progress', handler)
+    },
+  },
+
   update: {
     onAvailable: (cb: (data: { version: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)

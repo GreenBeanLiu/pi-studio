@@ -52,7 +52,7 @@ type SettingsData = {
   comfyCheckpoint: string
   /** 云端图像中继地址覆盖;空=用构建时烧入的默认 https 地址 */
   cloudImageRelay: string
-  /** 云端图像 Key;空=未配置（开发环境可用 PI_CLOUD_IMAGE_KEY） */
+  /** 云端图像 Key;空=未配置（开发环境可用 PI_CLOUD_IMAGE_KEY）。3D 生成也复用此 relay+key */
   cloudImageKey: string
   recentWorkspaces: Workspace[]
 }

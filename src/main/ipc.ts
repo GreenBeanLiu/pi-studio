@@ -50,12 +50,14 @@ import { registerImageGenHandlers } from './image-gen'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
+import { registerModel3d } from './model3d'
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
   registerRoutines()
   registerChannels()
   registerSandbox()
+  registerModel3d()
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return

@@ -914,6 +914,7 @@ export default function SettingsModal({
                 />
                 <span className={styles.labelHint}>
                   中继地址必须是 HTTPS（本机回环 http 仅开发用）。改后立即生效，不需重开工作区。
+                  「3D 生成」也复用这套云端中继 + Key。
                 </span>
               </div>
             </div>
