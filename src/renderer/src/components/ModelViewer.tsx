@@ -56,7 +56,8 @@ const DEFAULT_SETTINGS: ViewerSettings = {
   autoRotate: true,
   autoRotateSpeed: 1.2,
   showGrid: true,
-  showAxes: true,
+  // 场景轴线默认关(会贯穿模型,方位看左上角轴向仪就够);工具栏可手动开
+  showAxes: false,
   showBounds: false,
   exposure: 1.2,
   background: '#141414',
@@ -397,15 +398,15 @@ export default function ModelViewer({
         const box = new THREE.Box3().setFromObject(model)
         const size = box.getSize(new THREE.Vector3())
         const center = box.getCenter(new THREE.Vector3())
-        model.position.sub(center)
         const maxDim = Math.max(size.x, size.y, size.z) || 1
-        model.scale.setScalar(2.4 / maxDim)
+        const s = 2.4 / maxDim
+        model.scale.setScalar(s)
+        // 站在原点地面上:XZ 居中、底面贴 y=0(注意 group 平移不随 scale,偏移要乘 s)
+        model.position.set(-center.x * s, -box.min.y * s, -center.z * s)
         scene.add(model)
         handles.model = model
 
-        const floorY = -(size.y * (2.4 / maxDim)) / 2
         const grid = new THREE.GridHelper(6, 24, 0x888888, 0x555555)
-        grid.position.y = floorY
         ;(grid.material as THREE.Material).transparent = true
         ;(grid.material as THREE.Material).opacity = 0.5
         scene.add(grid)
@@ -416,6 +417,18 @@ export default function ModelViewer({
         const bounds = new THREE.BoxHelper(model, 0x3b82f6)
         scene.add(bounds)
         handles.bounds = bounds
+
+        // 初始取景:看向模型中心,包围球算距离留 15% 余量,略高略偏的三分视角
+        const height = size.y * s
+        const radius = (size.length() * s) / 2
+        const target = new THREE.Vector3(0, height / 2, 0)
+        const dist = (radius / Math.tan((camera.fov * Math.PI) / 360)) * 1.15
+        camera.position.copy(
+          target.clone().add(new THREE.Vector3(0.5, 0.4, 1).normalize().multiplyScalar(dist)),
+        )
+        controls.target.copy(target)
+        controls.update()
+        handles.initialCamera = { position: camera.position.clone(), target: target.clone() }
 
         setInfo(collectModelInfo(model, 'glb'))
         applySettings(handles, settingsRef.current)

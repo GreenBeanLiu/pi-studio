@@ -11,7 +11,8 @@ import {
   Brush,
   Eraser,
   Redo2,
-  Upload,
+  Sparkles,
+  ChevronDown,
   Trash2,
   Undo2,
   X,
@@ -26,35 +27,57 @@ import {
   type ImageGenHistoryItem,
 } from '../lib/api'
 
-/** 与 icon-studio 一致的风格预设(拼接到 prompt 后,英文更稳)。 */
+/** 与 icon-studio 一致的风格预设(拼接到 prompt 后,英文更稳);color 是 podgen 式的风格圆点。 */
 const STYLE_PRESETS = [
-  { id: 'none', label: '自由', suffix: '' },
+  { id: 'none', label: '自由风格', suffix: '', color: '#ff6b35' },
   {
     id: 'flat',
     label: '扁平',
     suffix:
       'flat design, simple bold shapes, minimal, vibrant solid colors, centered composition',
+    color: '#1677ff',
   },
   {
     id: 'gradient',
     label: '渐变',
     suffix: 'smooth vibrant gradient, glossy, soft shadows, modern, centered composition',
+    color: '#a855f7',
   },
   {
     id: 'line',
     label: '线性',
     suffix: 'minimal line-art, thin clean strokes, monochrome, lots of negative space',
+    color: '#64748b',
   },
   {
     id: '3d',
     label: '3D',
     suffix: '3D rendered, soft studio lighting, glossy material, subtle reflections, depth',
+    color: '#06b6d4',
   },
   {
     id: 'illust',
     label: '插画',
     suffix: 'digital illustration, rich colors, detailed, artstation trending',
+    color: '#f472b6',
   },
+]
+
+const PROMPT_MAX = 500
+
+/** 示例 Prompt(podgen 式折叠列表,点了直接填入)。 */
+const EXAMPLE_PROMPTS = [
+  '一座雪山下的湖泊,清晨薄雾,电影感光线',
+  '可爱的橘猫宇航员,厚涂插画,星空背景',
+  'a cozy coffee shop interior, warm light, watercolor style',
+  '中国山水画风格的竹林,留白构图,水墨',
+  'cyberpunk city street at night, neon signs, rain reflections',
+]
+
+const SIZE_OPTIONS: { id: ImageGenSize; label: string; icon: string }[] = [
+  { id: 'square_hd', label: '1:1', icon: '⬜' },
+  { id: 'landscape_4_3', label: '3:2', icon: '▭' },
+  { id: 'portrait_4_3', label: '2:3', icon: '▯' },
 ]
 
 /** 进行中的生成任务,在历史区占一个转圈的格子。 */
@@ -96,6 +119,161 @@ const useStyles = createStyles(({ token, css }) => ({
     border-radius: ${token.borderRadiusLG}px;
     padding: 16px;
     overflow-y: auto;
+  `,
+  sectionLabel: css`
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: ${token.colorTextTertiary};
+  `,
+  dropzone: css`
+    border: 1px dashed ${token.colorBorder};
+    border-radius: ${token.borderRadiusLG}px;
+    padding: 22px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    color: ${token.colorTextTertiary};
+    font-size: 13px;
+    transition: border-color 0.15s;
+    text-align: center;
+    &:hover {
+      border-color: ${token.colorPrimary};
+      color: ${token.colorTextSecondary};
+    }
+    .hint {
+      font-size: 11px;
+      color: ${token.colorTextQuaternary};
+    }
+  `,
+  orDivider: css`
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: ${token.colorTextQuaternary};
+    font-size: 11px;
+    &::before,
+    &::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: ${token.colorBorderSecondary};
+    }
+  `,
+  labelRow: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    .count {
+      font-size: 11px;
+      font-family: monospace;
+      color: ${token.colorTextQuaternary};
+    }
+    .count.near {
+      color: ${token.colorError};
+    }
+  `,
+  exampleToggle: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 2px 0;
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    cursor: pointer;
+    &:hover {
+      color: ${token.colorTextSecondary};
+    }
+    svg {
+      transition: transform 0.15s;
+    }
+    svg.open {
+      transform: rotate(180deg);
+    }
+  `,
+  exampleItem: css`
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 4px 8px;
+    border-radius: ${token.borderRadius}px;
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    &:hover {
+      background: ${token.colorFillQuaternary};
+      color: ${token.colorTextSecondary};
+    }
+  `,
+  styleChip: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid ${token.colorBorderSecondary};
+    background: ${token.colorFillQuaternary};
+    font-size: 12px;
+    color: ${token.colorTextSecondary};
+    cursor: pointer;
+    transition: all 0.15s;
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      flex-shrink: 0;
+    }
+    &:hover {
+      color: ${token.colorText};
+      border-color: ${token.colorBorder};
+    }
+  `,
+  optionGrid: css`
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  `,
+  optionBtn: css`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 4px;
+    border-radius: ${token.borderRadius}px;
+    border: 1px solid ${token.colorBorderSecondary};
+    background: ${token.colorFillQuaternary};
+    font-size: 12px;
+    font-weight: 500;
+    color: ${token.colorTextSecondary};
+    cursor: pointer;
+    transition: all 0.15s;
+    .icon {
+      font-size: 14px;
+      line-height: 1;
+    }
+    &:hover:not(:disabled) {
+      color: ${token.colorText};
+    }
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+  `,
+  optionBtnActive: css`
+    border-color: ${token.colorPrimary} !important;
+    background: ${token.colorPrimaryBg} !important;
+    color: ${token.colorPrimary} !important;
   `,
   label: css`
     font-size: 13px;
@@ -314,7 +492,7 @@ export default function ImageGenPage() {
 }
 
 function ImageGenInner() {
-  const { styles } = useStyles()
+  const { styles, cx } = useStyles()
   const { message } = AntApp.useApp()
 
   const [health, setHealth] = useState<ImageGenHealth | null>(null)
@@ -322,6 +500,8 @@ function ImageGenInner() {
   const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [size, setSize] = useState<ImageGenSize>('square_hd')
+  const [count, setCount] = useState(1)
+  const [examplesOpen, setExamplesOpen] = useState(false)
   const [comfyBusy, setComfyBusy] = useState(false)
   const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
   const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
@@ -432,15 +612,21 @@ function ImageGenInner() {
 
   async function generate() {
     const text = prompt.trim()
-    if (!text || pending.length >= 3) return
+    if (!text || pending.length >= 4) return
+    const isEdit = !!baseImage
+    // 出图数量:改图固定 1 张;并发总量封顶 4
+    const n = isEdit ? 1 : Math.min(count, 4 - pending.length)
+    for (let i = 0; i < n; i++) void generateOne(text, isEdit)
+  }
+
+  async function generateOne(text: string, isEdit: boolean) {
     const preset = STYLE_PRESETS.find((p) => p.id === presetId)
     const full = preset?.suffix
       ? `${text}, ${preset.suffix}. High quality, sharp, no watermark, no text.`
       : `${text}. High quality, sharp, no watermark, no text.`
-    const isEdit = !!baseImage
     const refUrls = baseImage ? [baseImage] : undefined
 
-    // 任务进历史区转圈,按钮立即释放,可连续下多个任务(上限 3 并发)
+    // 任务进历史区转圈,按钮立即释放,可连续下多个任务
     const key = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const engineTag =
       engine === 'comfy' ? (isEdit ? 'comfy-edit' : 'comfy') : isEdit ? 'cloud-edit' : 'cloud'
@@ -577,9 +763,20 @@ function ImageGenInner() {
             e.target.value = ''
           }}
         />
-        <Button block icon={<Upload size={13} />} onClick={() => fileInputRef.current?.click()}>
-          {baseImage ? '更换修改底图' : '上传图片作为修改底图'}
-        </Button>
+        <span className={styles.sectionLabel}>上传图片(改图)</span>
+        <div
+          className={styles.dropzone}
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            handleReferenceUpload(e.dataTransfer.files?.[0])
+          }}
+        >
+          <ImageIcon size={22} strokeWidth={1.5} />
+          <div>{baseImage ? '更换修改底图' : '拖拽或点击上传图片作为修改底图'}</div>
+          <div className="hint">支持 PNG / JPG / WebP</div>
+        </div>
 
         {baseImage && (
           <div className={styles.basePreview}>
@@ -612,57 +809,114 @@ function ImageGenInner() {
           </div>
         )}
 
-        <span className={styles.label}>
-          {baseImage ? '描述怎么修改这张图' : '描述你想要的图'}
-        </span>
+        {!baseImage && <div className={styles.orDivider}>or</div>}
+
+        <div className={styles.labelRow}>
+          <span className={styles.sectionLabel}>
+            {baseImage ? '描述怎么修改这张图' : 'Prompt 描述'}
+          </span>
+          <span className={`count${prompt.length > PROMPT_MAX - 100 ? ' near' : ''}`}>
+            {prompt.length} / {PROMPT_MAX}
+          </span>
+        </div>
         <Input.TextArea
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={(e) => setPrompt(e.target.value.slice(0, PROMPT_MAX))}
           placeholder={
             baseImage
               ? '例如:改成夜晚场景 / 把背景换成雪山 / make it watercolor style'
-              : '例如:一座雪山下的湖泊,晨雾 / a cyberpunk city street at night'
+              : '描述你想要的图案,支持中英文…'
           }
-          autoSize={{ minRows: 4, maxRows: 8 }}
+          autoSize={{ minRows: 5, maxRows: 10 }}
         />
-
-        <span className={styles.label}>风格</span>
-        <div className={styles.chips}>
-          {STYLE_PRESETS.map((p) => (
-            <Button
-              key={p.id}
-              size="small"
-              type={presetId === p.id ? 'primary' : 'default'}
-              onClick={() => setPresetId(p.id)}
-            >
-              {p.label}
-            </Button>
-          ))}
+        <div>
+          <button
+            type="button"
+            className={styles.exampleToggle}
+            onClick={() => setExamplesOpen((v) => !v)}
+          >
+            <span>示例 Prompt</span>
+            <ChevronDown size={13} className={examplesOpen ? 'open' : ''} />
+          </button>
+          {examplesOpen &&
+            EXAMPLE_PROMPTS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={styles.exampleItem}
+                onClick={() => {
+                  setPrompt(p)
+                  setExamplesOpen(false)
+                }}
+              >
+                <Sparkles size={11} style={{ marginRight: 4, verticalAlign: -1 }} />
+                {p}
+              </button>
+            ))}
         </div>
 
-        <span className={styles.label}>
+        <span className={styles.sectionLabel}>风格</span>
+        <div className={styles.chips}>
+          {STYLE_PRESETS.map((p) => {
+            const active = presetId === p.id
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className={styles.styleChip}
+                style={
+                  active
+                    ? { background: p.color, borderColor: p.color, color: '#fff' }
+                    : undefined
+                }
+                onClick={() => setPresetId(p.id)}
+              >
+                <span
+                  className="dot"
+                  style={{ background: active ? 'rgba(255,255,255,0.75)' : p.color }}
+                />
+                {p.label}
+              </button>
+            )
+          })}
+        </div>
+
+        <span className={styles.sectionLabel}>
           尺寸
           {engine === 'comfy' && (
-            <span style={{ opacity: 0.6 }}> · 本地引擎固定 1024×1024，此项仅云端生效</span>
+            <span style={{ opacity: 0.6, textTransform: 'none' }}> · 仅云端生效</span>
           )}
         </span>
-        <div className={styles.chips}>
-          {(
-            [
-              { id: 'square_hd', label: '方形 1:1' },
-              { id: 'landscape_4_3', label: '横版 3:2' },
-              { id: 'portrait_4_3', label: '竖版 2:3' },
-            ] as { id: ImageGenSize; label: string }[]
-          ).map((s) => (
-            <Button
+        <div className={styles.optionGrid}>
+          {SIZE_OPTIONS.map((s) => (
+            <button
               key={s.id}
-              size="small"
-              type={size === s.id ? 'primary' : 'default'}
+              type="button"
+              className={cx(styles.optionBtn, size === s.id && styles.optionBtnActive)}
               disabled={engine === 'comfy'}
               onClick={() => setSize(s.id)}
             >
+              <span className="icon">{s.icon}</span>
               {s.label}
-            </Button>
+            </button>
+          ))}
+        </div>
+
+        <span className={styles.sectionLabel}>
+          出图数量
+          {baseImage && <span style={{ opacity: 0.6, textTransform: 'none' }}> · 改图固定 1 张</span>}
+        </span>
+        <div className={styles.optionGrid}>
+          {[1, 2, 3, 4].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={cx(styles.optionBtn, count === n && styles.optionBtnActive)}
+              disabled={!!baseImage}
+              onClick={() => setCount(n)}
+            >
+              {n}
+            </button>
           ))}
         </div>
 
@@ -738,8 +992,14 @@ function ImageGenInner() {
           <div className={styles.offline}>没有可用引擎——打开上面的 ComfyUI 开关即可。</div>
         )}
 
-        <Button type="primary" disabled={!canGenerate} onClick={generate}>
-          {baseImage ? '修改这张图' : '生成'}
+        <Button
+          type="primary"
+          size="large"
+          icon={<Sparkles size={15} />}
+          disabled={!canGenerate}
+          onClick={generate}
+        >
+          {baseImage ? '修改这张图' : `生成图片${count > 1 ? ` ×${count}` : ''}`}
           {pending.length > 0 ? `(${pending.length} 个进行中)` : ''}
         </Button>
       </section>
