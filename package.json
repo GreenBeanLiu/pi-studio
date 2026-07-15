@@ -68,7 +68,9 @@
       "!node_modules/**/*.{md,markdown,txt}",
       "!node_modules/**/{LICENSE,LICENSE.*,license,CHANGELOG.md,README.md}",
       "resources/pi-skills/**",
-      "resources/model-export/**"
+      "resources/model-export/**",
+      "resources/pi-subagent/**",
+      "node_modules/@earendil-works/pi-coding-agent/examples/extensions/subagent/**"
     ],
     "win": {
       "target": "nsis",

@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { createRequire } from 'module'
@@ -146,21 +147,21 @@ function resolvePiSubagentExampleDir(): string {
   const searchPaths =
     createRequire(import.meta.url).resolve.paths('@earendil-works/pi-coding-agent') ?? []
 
-  for (const basePath of searchPaths) {
-    const candidate = join(
-      basePath,
-      '@earendil-works',
-      'pi-coding-agent',
-      'examples',
-      'extensions',
-      'subagent',
-    )
+  const candidates = searchPaths.map((basePath) =>
+    join(basePath, '@earendil-works', 'pi-coding-agent', 'examples', 'extensions', 'subagent'),
+  )
+  // electron-builder 默认剔除 node_modules 里的 examples 目录,打包版曾因此从未生效
+  // (装机版每次开工作区报 "Could not locate pi subagent extension example")。
+  // 兜底:构建期快照在 resources/pi-subagent(pi 引擎升版后记得刷新快照)。
+  candidates.push(join(app.getAppPath(), 'resources', 'pi-subagent'))
+
+  for (const candidate of candidates) {
     if (existsSync(join(candidate, 'index.ts')) && existsSync(join(candidate, 'agents.ts'))) {
       return candidate
     }
   }
 
-  throw new Error('Could not locate pi subagent extension example in node_modules')
+  throw new Error('Could not locate pi subagent extension example (node_modules or resources)')
 }
 
 export function syncSubagentWorkflow(enabled: boolean): void {
