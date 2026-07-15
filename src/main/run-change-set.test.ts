@@ -34,9 +34,15 @@ afterEach(() => {
   // On Windows a git snapshot subprocess can briefly keep a handle to the temp
   // repo (e.g. the "cannot be sealed" case deletes .git mid-run), so an
   // immediate recursive delete races the handle release and throws EPERM.
-  // Retry to let the handle drain before failing teardown.
+  // Retry to let the handle drain; if it still fails, leave the temp dir for
+  // the OS — leftover temp files are not what these tests assert on, and the
+  // EPERM was intermittently failing otherwise-green suites (and releases).
   for (const cwd of repos.splice(0)) {
-    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+    try {
+      rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+    } catch {
+      /* leaked temp dir on Windows; harmless */
+    }
   }
 })
 
