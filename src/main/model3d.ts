@@ -248,10 +248,30 @@ async function scoreFidelity(
   }
 }
 
+/** 渲染进程回传的模型截图 → 存缩略图并补 AI 评分(代码建模/Blender 模型没有 Tripo 缩略图)。 */
+async function saveThumbnail(id: string, dataUrl: string): Promise<Model3DResult> {
+  const item = loadHistory().find((it) => it.id === id)
+  if (!item) return { error: '模型不存在' }
+  if (item.thumbnailUrl) return item
+  const m = /^data:image\/png;base64,(.+)$/s.exec(dataUrl)
+  if (!m) return { error: '截图数据无法解析' }
+  const thumbPath = join(modelsDir(), `${id}.png`)
+  writeFileSync(thumbPath, Buffer.from(m[1], 'base64'))
+  const updated: Model3DHistoryItem = { ...item, thumbnailUrl: localFileUrl(thumbPath) }
+  saveHistory(loadHistory().map((it) => (it.id === id ? updated : it)))
+  if (!item.fidelity && item.prompt) {
+    void scoreFidelity(updated, { mode: 'text', prompt: item.prompt }, thumbPath)
+  }
+  return updated
+}
+
 export function registerModel3d(): void {
   ipcMain.handle('model3d:health', (): Model3DHealth => ({ configured: getCloud().available }))
   ipcMain.handle('model3d:generate', (_e, payload: GeneratePayload) => generate(payload))
   ipcMain.handle('model3d:history', (): Model3DHistoryItem[] => loadHistory())
+  ipcMain.handle('model3d:saveThumbnail', (_e, payload: { id: string; dataUrl: string }) =>
+    saveThumbnail(payload.id, payload.dataUrl),
+  )
   ipcMain.handle('model3d:historyDelete', (_e, id: string) => {
     saveHistory(loadHistory().filter((it) => it.id !== id))
     for (const ext of ['glb', 'png']) {

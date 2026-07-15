@@ -457,7 +457,21 @@ function Model3DPageInner(): React.JSX.Element {
       <div className={styles.right}>
         <div className={styles.stage}>
           {selected ? (
-            <ModelViewer url={selected.modelUrl} downloadUrl={selected.cloudModelUrl ?? null} />
+            <ModelViewer
+              url={selected.modelUrl}
+              downloadUrl={selected.cloudModelUrl ?? null}
+              onSnapshot={
+                !selected.thumbnailUrl && (selected.mode === 'code' || selected.mode === 'blender')
+                  ? async (dataUrl) => {
+                      const r = await api.model3d.saveThumbnail({ id: selected.id, dataUrl })
+                      if (!('error' in r)) {
+                        setHistory((prev) => prev.map((it) => (it.id === r.id ? r : it)))
+                        setSelected((cur) => (cur?.id === r.id ? r : cur))
+                      }
+                    }
+                  : undefined
+              }
+            />
           ) : (
             <Empty description="还没有 3D 模型" image={<Box size={48} strokeWidth={1} />} />
           )}

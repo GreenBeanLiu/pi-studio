@@ -219,6 +219,10 @@ declare global {
         }) => Promise<Model3DHistoryItem | { error: string }>
         history: () => Promise<Model3DHistoryItem[]>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
+        saveThumbnail: (payload: {
+          id: string
+          dataUrl: string
+        }) => Promise<Model3DHistoryItem | { error: string }>
         onProgress: (
           cb: (data: {
             id: string

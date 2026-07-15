@@ -187,6 +187,8 @@ const api = {
     blenderHealth: () => ipcRenderer.invoke('model3d:blenderHealth'),
     history: () => ipcRenderer.invoke('model3d:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
+    saveThumbnail: (payload: { id: string; dataUrl: string }) =>
+      ipcRenderer.invoke('model3d:saveThumbnail', payload),
     onProgress: (
       cb: (data: {
         id: string

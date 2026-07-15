@@ -266,13 +266,19 @@ function drawAxisGizmo(canvas: HTMLCanvasElement, camera: THREE.Camera): void {
 export default function ModelViewer({
   url,
   downloadUrl,
+  onSnapshot,
 }: {
   url: string | null
   downloadUrl?: string | null
+  /** 模型稳定渲染后回传一帧干净截图(隐藏辅助线),用于生成缩略图;每个 url 只回调一次 */
+  onSnapshot?: (dataUrl: string) => void
 }) {
   const { styles, cx } = useStyles()
   const mountRef = useRef<HTMLDivElement>(null)
   const gizmoRef = useRef<HTMLCanvasElement>(null)
+  const snapshotDoneRef = useRef<string | null>(null)
+  const onSnapshotRef = useRef(onSnapshot)
+  onSnapshotRef.current = onSnapshot
   const handlesRef = useRef<ViewerHandles | null>(null)
   const settingsRef = useRef<ViewerSettings>(DEFAULT_SETTINGS)
   const [settings, setSettings] = useState<ViewerSettings>(DEFAULT_SETTINGS)
@@ -432,6 +438,28 @@ export default function ModelViewer({
 
         setInfo(collectModelInfo(model, 'glb'))
         applySettings(handles, settingsRef.current)
+
+        // 稳定渲染后截一帧干净画面(隐辅助线,等 HDR/贴图落定)回传做缩略图
+        if (onSnapshotRef.current && snapshotDoneRef.current !== url) {
+          setTimeout(() => {
+            if (disposed || !onSnapshotRef.current || snapshotDoneRef.current === url) return
+            snapshotDoneRef.current = url
+            const vis = [grid.visible, axes.visible, bounds.visible]
+            grid.visible = axes.visible = bounds.visible = false
+            renderer.render(scene, camera)
+            const shot = document.createElement('canvas')
+            const side = 512
+            shot.width = side
+            shot.height = side
+            const src = renderer.domElement
+            const s = Math.min(src.width, src.height)
+            shot
+              .getContext('2d')!
+              .drawImage(src, (src.width - s) / 2, (src.height - s) / 2, s, s, 0, 0, side, side)
+            ;[grid.visible, axes.visible, bounds.visible] = vis
+            onSnapshotRef.current(shot.toDataURL('image/png'))
+          }, 1500)
+        }
       },
       undefined,
       (err) => console.error('[ModelViewer] load failed', err),
