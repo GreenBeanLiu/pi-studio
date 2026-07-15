@@ -1,6 +1,10 @@
 # 沙箱模式（Docker）实现说明
 
-> 状态：已实现第一版执行链路（v0.3.39 后续开发中）。设置页可探测 Docker、构建版本绑定的镜像；开启后工作区通过 RPC shim 在容器内运行。
+> **状态(2026-07-15 更新):Docker 路线封存,沙箱开关默认保持关闭。** 实测发现开启沙箱后
+> 聊天完全不可用(容器出网到 LLM 网关不通,每轮 "Connection error" 自动重试耗尽),
+> 该链路从未通过 E2E。结论与替代方向见文末「2026-07-15 复盘与决策」。
+>
+> 原状态:已实现第一版执行链路(v0.3.39 后续开发中)。设置页可探测 Docker、构建版本绑定的镜像;开启后工作区通过 RPC shim 在容器内运行。
 
 ## 现状
 
@@ -102,3 +106,40 @@ Windows Sandbox 底层都是 Hyper-V 虚机。Linux 那种内核级、便宜的 
 3. **已完成**：容器返回的 `/agent/...` 会映射回 Windows 主机路径，历史会话列表、切换和导出仍可用；停止工作区时 shim 会把 SIGTERM/SIGINT 转发给 `docker run`，避免后台容器残留；镜像构建请求互斥，重复点击会复用同一次构建。
 4. **待验证**：在真实 agent 工作区执行一次 prompt→bash→文件写入，并确认写入范围只落在挂载的工作区；同时补充 Docker Desktop 未运行、镜像构建失败、停止超时的 UI 回归测试。
 5. **后续增强**：沙箱模式切换后可选择自动重启当前工作区；增加容器 CPU/内存/网络策略配置，并在会话列表中标注当前会话运行于沙箱。
+
+## 2026-07-15 复盘与决策
+
+### 实测结论:Docker 链路从未真正工作
+
+开启 `sandboxEnabled` 后,聊天的每一轮 LLM 调用都以 "Connection error" 失败
+(pi 自动重试 4 次全灭)。根因:pi 跑在容器里之后,**出站流量要穿
+Docker NAT + 主机 Clash TUN 两层**,到 LLM 网关(3a-api)的链路不通;
+而主机侧直连/走代理都正常。3D 代码建模、Blender、Routines 等自 spawn 的
+agent 会话不走沙箱,所以一直没暴露。排查记录:先做了网关探活(401/200)、
+Clash 代理对比、node 与 electron-as-node 双运行时手跑 pi CLI(全通),
+最后才从 "Launching pi inside Docker sandbox" 日志定位——**教训:先读日志再做网络二分**。
+
+结构性问题(不是配置能救的):
+
+1. 容器网络在国内环境(Clash TUN)天然脆弱,而 agent 的命根子就是连网关;
+2. Docker Desktop 是重依赖(Hyper-V/WSL2 虚机 + 常驻 daemon),分发场景劝退;
+3. 中继 shim 架构本身没问题,但都是在给错误的地基打补丁。
+
+### 决策
+
+1. **沙箱开关保持默认关闭,Docker 执行链路封存**(代码保留,不再投入)。
+2. **重启条件**:当 Routines 无人值守工作流成为核心用法、或 pi-studio 开始对外分发时,
+   沙箱才值得再投入——届时**不修 Docker,直接换 srt 思路**。
+3. **srt 路线**(Claude Code 同源,[anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime)):
+   - 原理:低权限账户(srt-sandbox)跑进程 + **WFP(Windows Filtering Platform)
+     ALE_AUTH_CONNECT 内核过滤器**阻断该账户全部出站、只放行到本地白名单代理端口段。
+   - 优点:无容器/无虚机;网络走本地代理白名单(恰好根治本次断网——放行网关域名即可);
+     仍是本机进程,连中继 shim 都不需要;Anthropic 生产验证过的原语。
+   - 暂不动手的原因:包处于 experimental、API 可能变;装 WFP 过滤器/建账户需要管理员权限
+     (安装器要做脏活);文件系统隔离靠 Windows ACL,弱于 Linux namespace。
+     等它毕业或 Claude Code 原生 Windows 沙箱落地
+     ([feature request #46740](https://github.com/anthropics/claude-code/issues/46740))再上车。
+4. **轻量级过渡(可选,20% 成本 80% 收益)**:给 Routines 的 agent 会话注入
+   `HTTP_PROXY/HTTPS_PROXY` 指向 pi-studio 内置的白名单代理(只放行 LLM 网关等认可域名)。
+   非强制隔离(恶意代码可绕),但对"agent 犯傻乱连"够用,与 securityPolicy 设置天然衔接;
+   将来切 srt 时这个代理直接升级为 WFP 背后的代理,投资不浪费。
