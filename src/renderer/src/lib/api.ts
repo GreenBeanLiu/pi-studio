@@ -410,6 +410,8 @@ export type ProviderModelListResult =
 
 export type SandboxDetect = {
   docker: { cliFound: boolean; daemonRunning: boolean; version: string }
+  /** 首选执行路径:pi-studio-sandbox WSL 发行版是否就绪 */
+  wslSandboxReady: boolean
   wsl: { available: boolean; distros: string[] }
 }
 

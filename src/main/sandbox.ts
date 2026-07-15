@@ -18,6 +18,8 @@ import { detectWslSandboxDistro, prepareWslSandboxLaunch } from './sandbox-wsl'
 
 export type SandboxDetect = {
   docker: { cliFound: boolean; daemonRunning: boolean; version: string }
+  /** 首选执行路径:pi-studio-sandbox WSL 发行版是否就绪(存在即自动启用) */
+  wslSandboxReady: boolean
   wsl: { available: boolean; distros: string[] }
 }
 
@@ -294,8 +296,12 @@ export async function prepareSandboxLaunch(
 
 export function registerSandbox(): void {
   ipcMain.handle('sandbox:detect', async (): Promise<SandboxDetect> => {
-    const [docker, wsl] = await Promise.all([detectDocker(), detectWsl()])
-    return { docker, wsl }
+    const [docker, wsl, wslSandboxReady] = await Promise.all([
+      detectDocker(),
+      detectWsl(),
+      detectWslSandboxDistro(),
+    ])
+    return { docker, wslSandboxReady, wsl }
   })
 
   ipcMain.handle('sandbox:imageStatus', async (): Promise<SandboxImageStatus> => {

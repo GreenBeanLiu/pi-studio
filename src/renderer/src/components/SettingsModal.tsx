@@ -767,11 +767,13 @@ export default function SettingsModal({
 
               <div className={styles.section}>
                 <span className={styles.label}>
-                  沙箱模式（Docker）
+                  沙箱模式（WSL2 + bubblewrap）
                   <Tag color="orange" style={{ marginLeft: 8 }}>
                     实验性
                   </Tag>
-                  <span className={styles.labelHint}>在 Docker 容器里隔离运行 agent，避免它直接碰主机</span>
+                  <span className={styles.labelHint}>
+                    agent 跑在隔离的 WSL 发行版里:文件只写工作区,出站经主机白名单代理
+                  </span>
                 </span>
                 <div className={styles.actionRow}>
                   <Switch
@@ -786,8 +788,8 @@ export default function SettingsModal({
                 <Alert
                   type="info"
                   showIcon
-                  message="开启后需 Docker 运行 + 镜像已构建，重新打开工作区才隔离生效。"
-                  description="工作区被挂载到容器 /workspace，agent 的 bash/读写都困在容器内；未就绪时打开工作区会明确报错。方案详见 docs/sandbox-mode-plan.md。"
+                  message="pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。重新打开工作区生效。"
+                  description="bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。"
                 />
                 <div className={styles.actionRow}>
                   <span className={styles.label}>环境</span>
@@ -796,23 +798,36 @@ export default function SettingsModal({
                   </Button>
                 </div>
                 <div className={styles.actionRow}>
+                  <Tag color={sandboxDetect?.wslSandboxReady ? 'green' : 'default'}>
+                    {sandboxDetect
+                      ? sandboxDetect.wslSandboxReady
+                        ? 'WSL 沙箱发行版就绪(pi-studio-sandbox)'
+                        : 'WSL 沙箱发行版未准备'
+                      : 'WSL 检测中…'}
+                  </Tag>
                   <Tag color={sandboxDetect?.docker.daemonRunning ? 'green' : 'default'}>
                     {sandboxDetect
                       ? sandboxDetect.docker.daemonRunning
-                        ? `Docker 就绪 v${sandboxDetect.docker.version}`
+                        ? `Docker 回退可用 v${sandboxDetect.docker.version}`
                         : sandboxDetect.docker.cliFound
-                          ? 'Docker 已装但未运行'
-                          : '未检测到 Docker'
+                          ? 'Docker(回退)未运行'
+                          : '无 Docker(回退)'
                       : 'Docker 检测中…'}
                   </Tag>
                   <Tag color={sandboxImage?.exists ? 'green' : 'default'}>
                     {sandboxImage
                       ? sandboxImage.exists
-                        ? `镜像已就绪（${sandboxImage.tag}）`
-                        : '镜像未构建'
+                        ? `回退镜像已就绪`
+                        : '回退镜像未构建'
                       : '镜像检测中…'}
                   </Tag>
                 </div>
+                {sandboxDetect && !sandboxDetect.wslSandboxReady && (
+                  <span className={styles.labelHint}>
+                    准备发行版(一次性,约 1 分钟):详见 docs/sandbox-mode-plan.md 或
+                    src/main/sandbox-wsl.ts 头注释里的三条命令。
+                  </span>
+                )}
                 {sandboxDetect?.docker.daemonRunning && !sandboxImage?.exists && (
                   <div className={styles.actionRow}>
                     <Button size="small" type="primary" loading={sandboxBuilding} onClick={buildSandboxImage}>
