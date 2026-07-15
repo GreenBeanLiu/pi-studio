@@ -1,5 +1,5 @@
 import { app, ipcMain } from 'electron'
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { connect } from 'net'
 import { loadRpcClient, resolvePiCliPath, embeddedNodeEnv } from './pi-client'
@@ -123,6 +123,17 @@ function workDir(id: string): string {
   return d
 }
 
+function refinePrompt(instruction: string): string {
+  return `工作目录里的 model.py 是一个已经完成的 Blender bpy 建模脚本。请按以下修改要求调整它:
+
+"${instruction}"
+
+要求:
+- 遵守文件头部注释里的全部约定(不导出、不动其他场景、节点按类型找)。
+- 保持既有结构与命名,只做必要的增量修改;不要推翻重写。
+- 你不需要也无法自己运行它——保存后宿主会送进 Blender 执行;报错原文会发回给你继续修。`
+}
+
 function agentPrompt(prompt: string): string {
   return `你在一个工作目录里,里面有 model.py(Blender bpy 建模脚本)。请编辑它,用 Blender 的建模能力(修改器/布尔/倒角/细分等都可以用)程序化构建下面描述的 3D 模型:
 
@@ -135,7 +146,11 @@ function agentPrompt(prompt: string): string {
 - 材质用 Principled BSDF 的纯色/金属度/粗糙度表达,不要依赖图片纹理。`
 }
 
-async function generateBlenderModel(payload: { prompt: string }): Promise<Model3DResult> {
+async function generateBlenderModel(payload: {
+  prompt: string
+  /** 迭代修改:以该历史模型的脚本为起点(拷贝到新工作目录,原模型保留) */
+  sourceId?: string
+}): Promise<Model3DResult> {
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return { error: '请输入模型描述' }
   const settings = loadSettings()
@@ -143,15 +158,26 @@ async function generateBlenderModel(payload: { prompt: string }): Promise<Model3
   if (!(await blenderAvailable()))
     return { error: '连不上 Blender(localhost:9876)——确认 Blender 已启动且 blender-mcp 已连接' }
 
+  let sourceScript: string | null = null
+  let displayPrompt = prompt
+  if (payload.sourceId) {
+    const src = join(app.getPath('userData'), 'blender-models', payload.sourceId, 'model.py')
+    if (!existsSync(src)) return { error: '该模型没有可修改的源码(可能不是本机生成的)' }
+    sourceScript = src
+    const source = loadHistory().find((it) => it.id === payload.sourceId)
+    if (source) displayPrompt = `${source.prompt} → ${prompt}`
+  }
+
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const dir = workDir(id)
   const scriptPath = join(dir, 'model.py')
   const glbOut = join(modelsDir(), `${id}.glb`)
   const pr = (status: string): void =>
-    broadcast('model3d:progress', { id, status, progress: 0, prompt, mode: 'blender' })
+    broadcast('model3d:progress', { id, status, progress: 0, prompt: displayPrompt, mode: 'blender' })
 
   try {
-    writeFileSync(scriptPath, SKELETON, 'utf-8')
+    if (sourceScript) copyFileSync(sourceScript, scriptPath)
+    else writeFileSync(scriptPath, SKELETON, 'utf-8')
     pr('building')
 
     writeModelsOverride(
@@ -194,7 +220,7 @@ async function generateBlenderModel(payload: { prompt: string }): Promise<Model3
       })
 
     try {
-      await runAgentTurn(agentPrompt(prompt))
+      await runAgentTurn(sourceScript ? refinePrompt(prompt) : agentPrompt(prompt))
 
       // 宿主执行↔回喂修复循环
       let lastError = ''
@@ -225,25 +251,25 @@ async function generateBlenderModel(payload: { prompt: string }): Promise<Model3
 
     const item: Model3DHistoryItem = {
       id,
-      prompt,
+      prompt: displayPrompt,
       mode: 'blender',
       modelUrl: localFileUrl(glbOut),
       thumbnailUrl: null,
       createdAt: Date.now(),
     }
     saveHistory([item, ...loadHistory()])
-    broadcast('model3d:progress', { id, status: 'done', progress: 100, prompt, mode: 'blender' })
+    broadcast('model3d:progress', { id, status: 'done', progress: 100, prompt: displayPrompt, mode: 'blender' })
     return item
   } catch (err) {
     appendAppLog('error', 'blenderModel.generate', 'Blender 建模失败', normalizeError(err))
-    broadcast('model3d:progress', { id, status: 'error', progress: 0, prompt, mode: 'blender' })
+    broadcast('model3d:progress', { id, status: 'error', progress: 0, prompt: displayPrompt, mode: 'blender' })
     return { error: err instanceof Error ? err.message : String(err) }
   }
 }
 
 export function registerBlenderModel(): void {
   ipcMain.handle('model3d:blenderHealth', () => blenderAvailable())
-  ipcMain.handle('model3d:generateBlender', (_e, payload: { prompt: string }) =>
+  ipcMain.handle('model3d:generateBlender', (_e, payload: { prompt: string; sourceId?: string }) =>
     generateBlenderModel(payload),
   )
 }

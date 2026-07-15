@@ -1,5 +1,5 @@
 import { app, ipcMain } from 'electron'
-import { mkdirSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { spawn } from 'child_process'
@@ -97,6 +97,19 @@ new GLTFExporter().parse(
 `
 }
 
+function refinePrompt(instruction: string): string {
+  return `工作目录里的 build-model.js 是一个已经完成的 three.js 程序化模型实现。请按以下修改要求调整它:
+
+"${instruction}"
+
+要求:
+- 只修改 buildModel(THREE) 函数体;不要改动文件顶部的 polyfill/import 和底部的导出逻辑。
+- 保持既有结构与命名,只做必要的增量修改;不要推翻重写。
+- 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败)。
+- 每改一版就运行 \`node build-model.js test.glb\` 自测,确保打印 MODEL_OK,反复修正直到稳定成功。
+- 完成后清理掉 test.glb 等临时产物。`
+}
+
 function agentPrompt(prompt: string): string {
   return `你在一个已经准备好的工作目录里,里面有 build-model.js。请用纯代码(three.js)程序化地构建下面描述的 3D 模型:
 
@@ -127,23 +140,38 @@ function runExport(scriptPath: string, glbOut: string): Promise<void> {
   })
 }
 
-async function generateCodeModel(payload: { prompt: string }): Promise<Model3DResult> {
+async function generateCodeModel(payload: {
+  prompt: string
+  /** 迭代修改:以该历史模型的脚本为起点(工作目录整体拷贝,原模型保留) */
+  sourceId?: string
+}): Promise<Model3DResult> {
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return { error: '请输入模型描述' }
   const settings = loadSettings()
   if (!settings.apiKey) return { error: '代码建模需要在「设置 → 模型」里配置 API Key' }
+
+  let sourceScript: string | null = null
+  let displayPrompt = prompt
+  if (payload.sourceId) {
+    const src = join(app.getPath('userData'), 'code-models', payload.sourceId, 'build-model.js')
+    if (!existsSync(src)) return { error: '该模型没有可修改的源码(可能不是本机生成的)' }
+    sourceScript = src
+    const source = loadHistory().find((it) => it.id === payload.sourceId)
+    if (source) displayPrompt = `${source.prompt} → ${prompt}`
+  }
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const dir = workDir(id)
   const scriptPath = join(dir, 'build-model.js')
   const glbOut = join(modelsDir(), `${id}.glb`)
   const pr = (status: string): void =>
-    broadcast('model3d:progress', { id, status, progress: 0, prompt, mode: 'code' })
+    broadcast('model3d:progress', { id, status, progress: 0, prompt: displayPrompt, mode: 'code' })
 
   try {
     // 工作目录不在任何 package.json 作用域内,不声明 module 的话 .js 会被当 CJS,ESM 骨架无法运行
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module' }, null, 2), 'utf-8')
-    writeFileSync(scriptPath, skeleton(), 'utf-8')
+    if (sourceScript) copyFileSync(sourceScript, scriptPath)
+    else writeFileSync(scriptPath, skeleton(), 'utf-8')
     pr('building')
 
     writeModelsOverride(
@@ -178,7 +206,7 @@ async function generateCodeModel(payload: { prompt: string }): Promise<Model3DRe
             resolve()
           }
         })
-        client.prompt(agentPrompt(prompt)).catch((err: unknown) => {
+        client.prompt(sourceScript ? refinePrompt(prompt) : agentPrompt(prompt)).catch((err: unknown) => {
           clearTimeout(timer)
           off()
           reject(err instanceof Error ? err : new Error(String(err)))
@@ -193,24 +221,24 @@ async function generateCodeModel(payload: { prompt: string }): Promise<Model3DRe
 
     const item: Model3DHistoryItem = {
       id,
-      prompt,
+      prompt: displayPrompt,
       mode: 'code',
       modelUrl: localFileUrl(glbOut),
       thumbnailUrl: null,
       createdAt: Date.now(),
     }
     saveHistory([item, ...loadHistory()])
-    broadcast('model3d:progress', { id, status: 'done', progress: 100, prompt, mode: 'code' })
+    broadcast('model3d:progress', { id, status: 'done', progress: 100, prompt: displayPrompt, mode: 'code' })
     return item
   } catch (err) {
     appendAppLog('error', 'codeModel.generate', '代码建模失败', normalizeError(err))
-    broadcast('model3d:progress', { id, status: 'error', progress: 0, prompt, mode: 'code' })
+    broadcast('model3d:progress', { id, status: 'error', progress: 0, prompt: displayPrompt, mode: 'code' })
     return { error: err instanceof Error ? err.message : String(err) }
   }
 }
 
 export function registerCodeModel(): void {
-  ipcMain.handle('model3d:generateCode', (_e, payload: { prompt: string }) =>
+  ipcMain.handle('model3d:generateCode', (_e, payload: { prompt: string; sourceId?: string }) =>
     generateCodeModel(payload),
   )
 }

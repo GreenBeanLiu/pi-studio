@@ -212,10 +212,14 @@ declare global {
           imageDataUrl?: string
           options?: Model3DOptions
         }) => Promise<Model3DHistoryItem | { error: string }>
-        generateBlender: (payload: { prompt: string }) => Promise<Model3DHistoryItem | { error: string }>
+        generateBlender: (payload: {
+          prompt: string
+          sourceId?: string
+        }) => Promise<Model3DHistoryItem | { error: string }>
         blenderHealth: () => Promise<boolean>
         generateCode: (payload: {
           prompt: string
+          sourceId?: string
         }) => Promise<Model3DHistoryItem | { error: string }>
         history: () => Promise<Model3DHistoryItem[]>
         historyDelete: (id: string) => Promise<{ ok: boolean }>

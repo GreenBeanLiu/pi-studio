@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
 import {
   Alert,
+  Divider,
   App as AntApp,
   Button,
   Empty,
@@ -14,7 +15,7 @@ import {
   Switch,
   Tooltip,
 } from 'antd'
-import { Box, Sparkles, Trash2, ImagePlus, X } from 'lucide-react'
+import { Box, Sparkles, Trash2, ImagePlus, X, Wrench } from 'lucide-react'
 import { api, type Model3DHistoryItem, type Model3DOptions } from '../lib/api'
 import { assessReferenceImage, normalizeReferenceImage } from '../lib/reference-check'
 import ModelViewer from './ModelViewer'
@@ -213,6 +214,7 @@ function Model3DPageInner(): React.JSX.Element {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [refWarnings, setRefWarnings] = useState<string[]>([])
   const [blenderUp, setBlenderUp] = useState<boolean | null>(null)
+  const [refineText, setRefineText] = useState('')
   const [opts, setOpts] = useState<Model3DOptions>({ texture: true, pbr: false })
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState<{ status: string; progress: number } | null>(null)
@@ -281,6 +283,32 @@ function Model3DPageInner(): React.JSX.Element {
         setHistory((prev) => [res, ...prev])
         setSelected(res)
         message.success(mode === 'code' || mode === 'blender' ? '模型已生成' : '3D 模型已生成')
+      }
+    } finally {
+      setGenerating(false)
+      setProgress(null)
+    }
+  }
+
+  /** 迭代修改选中的代码建模/Blender 模型:以其脚本为起点生成新版本(原模型保留)。 */
+  const onRefine = async (): Promise<void> => {
+    if (!selected || !refineText.trim()) return void message.warning('请输入修改要求')
+    const source = selected
+    setGenerating(true)
+    setProgress({ status: 'building', progress: 0 })
+    try {
+      const payload = { prompt: refineText.trim(), sourceId: source.id }
+      const res =
+        source.mode === 'blender'
+          ? await api.model3d.generateBlender(payload)
+          : await api.model3d.generateCode(payload)
+      if ('error' in res) {
+        message.error(res.error)
+      } else {
+        setHistory((prev) => [res, ...prev])
+        setSelected(res)
+        setRefineText('')
+        message.success('修改版已生成(原模型保留在历史里)')
       }
     } finally {
       setGenerating(false)
@@ -452,6 +480,51 @@ function Model3DPageInner(): React.JSX.Element {
         >
           生成 3D 模型
         </Button>
+
+        {selected && (selected.mode === 'code' || selected.mode === 'blender') && (
+          <>
+            <Divider style={{ margin: '4px 0' }} />
+            <div className={styles.field}>
+              <span className={styles.label}>修改选中的模型</span>
+              <span
+                style={{ fontSize: 11, opacity: 0.55, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                title={selected.prompt}
+              >
+                {selected.prompt}
+              </span>
+              <Input.TextArea
+                value={refineText}
+                onChange={(e) => setRefineText(e.target.value)}
+                placeholder="例如:盖子再大一点,正面加一把锁"
+                autoSize={{ minRows: 2, maxRows: 4 }}
+              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                {selected.fidelity?.notes && (
+                  <Tooltip title={selected.fidelity.notes}>
+                    <Button
+                      size="small"
+                      onClick={() => setRefineText(`按以下点评改进:${selected.fidelity!.notes}`)}
+                    >
+                      按 AI 点评修改
+                    </Button>
+                  </Tooltip>
+                )}
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  icon={<Wrench size={13} />}
+                  loading={generating}
+                  disabled={generating || !refineText.trim()}
+                  onClick={onRefine}
+                  style={{ marginLeft: 'auto' }}
+                >
+                  生成修改版
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={styles.right}>

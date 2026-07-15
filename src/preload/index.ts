@@ -180,9 +180,9 @@ const api = {
       imageDataUrl?: string
       options?: Record<string, unknown>
     }) => ipcRenderer.invoke('model3d:generate', payload),
-    generateCode: (payload: { prompt: string }) =>
+    generateCode: (payload: { prompt: string; sourceId?: string }) =>
       ipcRenderer.invoke('model3d:generateCode', payload),
-    generateBlender: (payload: { prompt: string }) =>
+    generateBlender: (payload: { prompt: string; sourceId?: string }) =>
       ipcRenderer.invoke('model3d:generateBlender', payload),
     blenderHealth: () => ipcRenderer.invoke('model3d:blenderHealth'),
     history: () => ipcRenderer.invoke('model3d:history'),
