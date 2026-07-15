@@ -129,17 +129,26 @@ Clash 代理对比、node 与 electron-as-node 双运行时手跑 pi CLI(全通)
 
 1. **沙箱开关保持默认关闭,Docker 执行链路封存**(代码保留,不再投入)。
 2. **重启条件**:当 Routines 无人值守工作流成为核心用法、或 pi-studio 开始对外分发时,
-   沙箱才值得再投入——届时**不修 Docker,直接换 srt 思路**。
-3. **srt 路线**(Claude Code 同源,[anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime)):
-   - 原理:低权限账户(srt-sandbox)跑进程 + **WFP(Windows Filtering Platform)
-     ALE_AUTH_CONNECT 内核过滤器**阻断该账户全部出站、只放行到本地白名单代理端口段。
-   - 优点:无容器/无虚机;网络走本地代理白名单(恰好根治本次断网——放行网关域名即可);
-     仍是本机进程,连中继 shim 都不需要;Anthropic 生产验证过的原语。
-   - 暂不动手的原因:包处于 experimental、API 可能变;装 WFP 过滤器/建账户需要管理员权限
-     (安装器要做脏活);文件系统隔离靠 Windows ACL,弱于 Linux namespace。
-     等它毕业或 Claude Code 原生 Windows 沙箱落地
-     ([feature request #46740](https://github.com/anthropics/claude-code/issues/46740))再上车。
-4. **轻量级过渡(可选,20% 成本 80% 收益)**:给 Routines 的 agent 会话注入
+   沙箱才值得再投入——届时**不修 Docker,按下面优先级重做**。
+3. **首选:WSL2 + bubblewrap(官方 Linux 路线,今天就成熟)**——本地有 WSL2 时的正解:
+   - 架构:中继 shim 原封不动,`docker run` 换成
+     `wsl.exe -d <distro> -- bwrap <mount/net 限制> pi --mode rpc …`;
+   - 文件隔离:**保留 automount,靠 bwrap 的 mount namespace 只暴露工作区**
+     (比"关 automount 藏主机"干净,补上 Windows 最弱的文件隔离);
+   - 网络:pi 出网强制走**主机侧白名单代理**(mirrored networking 下 localhost 直通主机)——
+     LLM 流量实际从 Windows 主机进程出网,彻底绕开"虚拟网络 × Clash TUN"的脆弱路径,
+     根治本次断网一类的问题;
+   - 依赖:只要 WSL2 + 发行版 + 里面装 node/pi/bwrap(无 Docker Desktop、无镜像构建);
+     `sandbox:detect` 已有 WSL 探测;
+   - 坑:mirrored networking 要 Win11 22H2+(NAT 模式下主机代理要走网关 IP,需探测适配);
+     发行版内 pi 版本要与 app 对齐;session 目录按 cwd 分叉(已知可接受)。
+4. **将来更好的形态:srt Windows 原生**(Claude Code 同源,
+   [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime)):
+   低权限账户 + WFP ALE_AUTH_CONNECT 内核过滤 + 本地白名单代理,无虚机、免 WSL2 依赖。
+   暂不动手:experimental、装 WFP/建账户要管理员权限、文件隔离靠 ACL 偏弱。
+   等它毕业或 Claude Code 原生 Windows 沙箱落地
+   ([feature request #46740](https://github.com/anthropics/claude-code/issues/46740))再评估替换。
+5. **轻量级过渡(可选,20% 成本 80% 收益)**:给 Routines 的 agent 会话注入
    `HTTP_PROXY/HTTPS_PROXY` 指向 pi-studio 内置的白名单代理(只放行 LLM 网关等认可域名)。
    非强制隔离(恶意代码可绕),但对"agent 犯傻乱连"够用,与 securityPolicy 设置天然衔接;
    将来切 srt 时这个代理直接升级为 WFP 背后的代理,投资不浪费。
