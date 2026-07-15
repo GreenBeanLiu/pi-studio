@@ -37,7 +37,7 @@ export type Model3DOptions = {
 export type Model3DHistoryItem = {
   id: string
   prompt: string
-  mode: 'text' | 'image' | 'code'
+  mode: 'text' | 'image' | 'code' | 'blender'
   modelUrl: string
   /** R2 上的 glb 公网地址,用于下载/分享(用户自有 OSS) */
   cloudModelUrl?: string

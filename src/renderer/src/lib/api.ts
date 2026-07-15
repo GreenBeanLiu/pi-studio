@@ -207,11 +207,13 @@ declare global {
       model3d: {
         health: () => Promise<Model3DHealth>
         generate: (payload: {
-          mode: 'text' | 'image'
+          mode: 'text' | 'image' | 'code' | 'blender'
           prompt: string
           imageDataUrl?: string
           options?: Model3DOptions
         }) => Promise<Model3DHistoryItem | { error: string }>
+        generateBlender: (payload: { prompt: string }) => Promise<Model3DHistoryItem | { error: string }>
+        blenderHealth: () => Promise<boolean>
         generateCode: (payload: {
           prompt: string
         }) => Promise<Model3DHistoryItem | { error: string }>
@@ -257,7 +259,7 @@ export type Model3DFidelity = { score: number; notes: string; model: string }
 export type Model3DHistoryItem = {
   id: string
   prompt: string
-  mode: 'text' | 'image' | 'code'
+  mode: 'text' | 'image' | 'code' | 'blender'
   modelUrl: string
   cloudModelUrl?: string
   thumbnailUrl: string | null

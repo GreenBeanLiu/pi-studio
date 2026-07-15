@@ -52,6 +52,7 @@ import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
 import { registerModel3d } from './model3d'
 import { registerCodeModel } from './code-model'
+import { registerBlenderModel } from './blender-model'
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
@@ -60,6 +61,7 @@ export function registerIpcHandlers(): void {
   registerSandbox()
   registerModel3d()
   registerCodeModel()
+  registerBlenderModel()
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return

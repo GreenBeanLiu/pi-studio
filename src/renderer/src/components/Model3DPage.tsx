@@ -32,6 +32,7 @@ const STATUS_TEXT: Record<string, string> = {
   running: '生成中…',
   downloading: '下载模型…',
   building: 'agent 建模中…',
+  repairing: '报错修复中…',
   exporting: '导出模型…',
   done: '完成',
   error: '失败',
@@ -207,10 +208,11 @@ function Model3DPageInner(): React.JSX.Element {
   const { message } = AntApp.useApp()
 
   const [configured, setConfigured] = useState(true)
-  const [mode, setMode] = useState<'text' | 'image' | 'code'>('text')
+  const [mode, setMode] = useState<'text' | 'image' | 'code' | 'blender'>('text')
   const [prompt, setPrompt] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [refWarnings, setRefWarnings] = useState<string[]>([])
+  const [blenderUp, setBlenderUp] = useState<boolean | null>(null)
   const [opts, setOpts] = useState<Model3DOptions>({ texture: true, pbr: false })
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState<{ status: string; progress: number } | null>(null)
@@ -235,6 +237,10 @@ function Model3DPageInner(): React.JSX.Element {
     }
   }, [])
 
+  useEffect(() => {
+    if (mode === 'blender') void api.model3d.blenderHealth().then(setBlenderUp)
+  }, [mode])
+
   const pickFile = (file: File | null | undefined): void => {
     if (!file) return
     const reader = new FileReader()
@@ -252,14 +258,16 @@ function Model3DPageInner(): React.JSX.Element {
   }
 
   const onGenerate = async (): Promise<void> => {
-    if ((mode === 'text' || mode === 'code') && !prompt.trim())
+    if (mode !== 'image' && !prompt.trim())
       return void message.warning('请输入描述')
     if (mode === 'image' && !imageDataUrl) return void message.warning('请选择参考图片')
     setGenerating(true)
-    setProgress({ status: mode === 'code' ? 'building' : 'submitting', progress: 0 })
+    setProgress({ status: mode === 'code' || mode === 'blender' ? 'building' : 'submitting', progress: 0 })
     try {
       const res =
-        mode === 'code'
+        mode === 'blender'
+          ? await api.model3d.generateBlender({ prompt })
+          : mode === 'code'
           ? await api.model3d.generateCode({ prompt })
           : await api.model3d.generate({
               mode,
@@ -272,7 +280,7 @@ function Model3DPageInner(): React.JSX.Element {
       } else {
         setHistory((prev) => [res, ...prev])
         setSelected(res)
-        message.success(mode === 'code' ? '代码模型已生成' : '3D 模型已生成')
+        message.success(mode === 'code' || mode === 'blender' ? '模型已生成' : '3D 模型已生成')
       }
     } finally {
       setGenerating(false)
@@ -305,13 +313,25 @@ function Model3DPageInner(): React.JSX.Element {
         <Segmented
           block
           value={mode}
-          onChange={(v) => setMode(v as 'text' | 'image' | 'code')}
+          onChange={(v) => setMode(v as 'text' | 'image' | 'code' | 'blender')}
           options={[
             { label: '文生 3D', value: 'text' },
             { label: '图生 3D', value: 'image' },
             { label: '代码建模', value: 'code' },
+            { label: 'Blender', value: 'blender' },
           ]}
         />
+
+        {mode === 'blender' && (
+          <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
+            由内嵌 agent 驱动本机 Blender(blender-mcp)建模并导出 glb,可用修改器/布尔/倒角等真建模工具。
+            {blenderUp === false && (
+              <div style={{ color: '#faad14', marginTop: 4 }}>
+                连不上 Blender(localhost:9876)——先启动 Blender 并连接 blender-mcp addon。
+              </div>
+            )}
+          </div>
+        )}
 
         {mode === 'code' && (
           <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
@@ -320,14 +340,14 @@ function Model3DPageInner(): React.JSX.Element {
           </div>
         )}
 
-        {mode === 'text' || mode === 'code' ? (
+        {mode !== 'image' ? (
           <div className={styles.field}>
-            <span className={styles.label}>{mode === 'code' ? '模型描述' : '提示词'}</span>
+            <span className={styles.label}>{mode === 'text' ? '提示词' : '模型描述'}</span>
             <Input.TextArea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder={
-                mode === 'code'
+                mode === 'code' || mode === 'blender'
                   ? '例如:一个带铰链盖子和金属搭扣的木质宝箱'
                   : '例如:a cute low-poly red mushroom'
               }
