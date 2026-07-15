@@ -1,5 +1,5 @@
 import { app, ipcMain } from 'electron'
-import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { spawn } from 'child_process'
@@ -153,8 +153,12 @@ async function generateCodeModel(payload: {
   let sourceScript: string | null = null
   let displayPrompt = prompt
   if (payload.sourceId) {
-    const src = join(app.getPath('userData'), 'code-models', payload.sourceId, 'build-model.js')
-    if (!existsSync(src)) return { error: '该模型没有可修改的源码(可能不是本机生成的)' }
+    const srcDir = join(app.getPath('userData'), 'code-models', payload.sourceId)
+    // 0.3.58 及以前的脚本叫 build-model.mjs(ESM 迁移前),兼容
+    const src = ['build-model.js', 'build-model.mjs']
+      .map((n) => join(srcDir, n))
+      .find((p) => existsSync(p))
+    if (!src) return { error: '该模型没有可修改的源码(可能不是本机生成的)' }
     sourceScript = src
     const source = loadHistory().find((it) => it.id === payload.sourceId)
     if (source) displayPrompt = `${source.prompt} → ${prompt}`
@@ -170,8 +174,15 @@ async function generateCodeModel(payload: {
   try {
     // 工作目录不在任何 package.json 作用域内,不声明 module 的话 .js 会被当 CJS,ESM 骨架无法运行
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module' }, null, 2), 'utf-8')
-    if (sourceScript) copyFileSync(sourceScript, scriptPath)
-    else writeFileSync(scriptPath, skeleton(), 'utf-8')
+    if (sourceScript) {
+      // bundle 的 file:// 绝对路径会随版本/安装路径漂移(0.3.59 起 .mjs 改名 .js),
+      // 拷贝时统一重写为当前 bundle 地址
+      const code = readFileSync(sourceScript, 'utf-8').replace(
+        /"file:\/\/\/[^"]*three-gltf-bundle\.m?js"/g,
+        JSON.stringify(bundleUrl()),
+      )
+      writeFileSync(scriptPath, code, 'utf-8')
+    } else writeFileSync(scriptPath, skeleton(), 'utf-8')
     pr('building')
 
     writeModelsOverride(
