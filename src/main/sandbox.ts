@@ -5,6 +5,7 @@ import { join, dirname, relative, resolve, sep } from 'path'
 import { resolvePiCliPath } from './pi-client'
 import { agentConfigDir } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
+import { detectWslSandboxDistro, prepareWslSandboxLaunch } from './sandbox-wsl'
 
 /**
  * 沙箱模式:在 Docker 容器里隔离运行 pi(见 docs/sandbox-mode-plan.md)。
@@ -247,9 +248,18 @@ export async function prepareSandboxLaunch(
   cwd: string,
   env: Record<string, string>,
 ): Promise<{ cliPath: string; env: Record<string, string> }> {
+  // 首选 WSL2 + bubblewrap(docs/sandbox-mode-plan.md「2026-07-15 复盘与决策」):
+  // 文件隔离靠 mount namespace,出站经主机侧白名单代理——根治 Docker 容器出网不通。
+  if (await detectWslSandboxDistro()) {
+    return prepareWslSandboxLaunch(cwd, env)
+  }
+
   const docker = await detectDocker()
   if (!docker.daemonRunning) {
-    throw new Error('沙箱模式已开启,但 Docker 未运行 —— 请先启动 Docker Desktop')
+    throw new Error(
+      '沙箱模式已开启,但未找到 pi-studio-sandbox WSL 发行版,Docker 也未运行 —— ' +
+        '推荐按 docs/sandbox-mode-plan.md 准备 WSL 沙箱发行版(约 1 分钟)',
+    )
   }
   const tag = sandboxImageTag()
   if (!(await imageExists(tag))) {
