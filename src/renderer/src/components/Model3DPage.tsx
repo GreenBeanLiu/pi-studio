@@ -437,7 +437,8 @@ function Model3DPageInner(): React.JSX.Element {
           </div>
         )}
 
-        {mode !== 'code' && (
+        {/* Tripo 专属参数,仅云端文生/图生模式显示(代码建模/Blender 用不上) */}
+        {(mode === 'text' || mode === 'image') && (
           <>
             <div className={styles.field}>
               <span className={styles.label}>模型版本</span>
