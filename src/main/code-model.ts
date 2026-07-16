@@ -106,6 +106,7 @@ function refinePrompt(instruction: string): string {
 - 只修改 buildModel(THREE) 函数体;不要改动文件顶部的 polyfill/import 和底部的导出逻辑。
 - 保持既有结构与命名,只做必要的增量修改;不要推翻重写。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败)。
+- 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入 ≥0.01 或留 ≥0.005 间隙。
 - 每改一版就运行 \`node build-model.js test.glb\` 自测,确保打印 MODEL_OK,反复修正直到稳定成功。
 - 完成后清理掉 test.glb 等临时产物。`
 }
@@ -120,6 +121,7 @@ function agentPrompt(prompt: string): string {
 - 参考 object-to-threejs-procedural skill 的方法:先搭整体轮廓与比例,再加部件,再补细节,分步推进。
 - 做成"可动画/可拆解":每个能独立运动的部件放各自的 THREE.Group(pivot 节点),mesh 作为其 child,并在 group.userData 里标注 pivot/axis 等语义。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败);用纯色、顶点色或 MeshStandardMaterial 的参数表达材质。
+- 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入 ≥0.01 或留 ≥0.005 间隙。
 - 每改一版就运行 \`node build-model.js test.glb\` 自测,确保打印 MODEL_OK 且无报错,反复修正直到稳定成功。
 - 完成后清理掉 test.glb 等临时产物,只保留改好的 build-model.js。`
 }

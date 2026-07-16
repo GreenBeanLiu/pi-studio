@@ -111,6 +111,7 @@ const SKELETON = `# Blender 建模脚本 —— 由 pi-studio 送进 Blender 的
 #     bsdf = next(n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
 # - 中文界面下新建物体名是「柱体/球体/立方体」,不要按英文默认名查找,建完立即重命名并存变量。
 # - 每个可独立运动的部件命名清楚(userData 语义写在自定义属性 obj['pivot'] 等)。
+# - 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入或留 ≥0.005 间隙。
 import bpy, math
 
 # TODO: 在这里建模
@@ -143,7 +144,8 @@ function agentPrompt(prompt: string): string {
 - 只编辑 model.py;遵守文件头部注释里的全部约定(不导出、不动其他场景、节点按类型找)。
 - 参考 object-to-threejs-procedural skill 的分阶段方法:先轮廓比例,再部件,再细节。
 - 你不需要也无法自己运行它——保存后宿主会送进 Blender 执行;如果报错,错误原文会发回给你继续修。
-- 材质用 Principled BSDF 的纯色/金属度/粗糙度表达,不要依赖图片纹理。`
+- 材质用 Principled BSDF 的纯色/金属度/粗糙度表达,不要依赖图片纹理。
+- 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入或留 ≥0.005 间隙。`
 }
 
 async function generateBlenderModel(payload: {

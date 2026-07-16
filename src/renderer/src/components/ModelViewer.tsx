@@ -413,6 +413,8 @@ export default function ModelViewer({
         handles.model = model
 
         const grid = new THREE.GridHelper(6, 24, 0x888888, 0x555555)
+        // 略微下沉,避免与贴地模型底面共面导致 z-fighting 闪烁(sd-studio 同款细节)
+        grid.position.y = -0.002
         ;(grid.material as THREE.Material).transparent = true
         ;(grid.material as THREE.Material).opacity = 0.5
         scene.add(grid)
