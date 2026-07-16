@@ -11,7 +11,9 @@ type Props = {
 
 const useStyles = createStyles(({ token, css }) => ({
   sidebar: css`
-    width: 232px;
+    /* 与 Routines/生图/3D 页的比例布局对齐:随窗口缩放,但会话列表不需要 35% 那么宽。
+       1480 默认窗口下 20% ≈ 296px,聊天区剩 1120px = ChatPane 内容 max-width,正好占满。 */
+    width: clamp(232px, 20%, 340px);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
