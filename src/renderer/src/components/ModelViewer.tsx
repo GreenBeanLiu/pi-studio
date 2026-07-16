@@ -79,6 +79,65 @@ type ViewerHandles = {
   axes?: THREE.AxesHelper
   bounds?: THREE.BoxHelper
   initialCamera: { position: THREE.Vector3; target: THREE.Vector3 }
+  /** 正在摆动的可动部件(uuid → 动画状态),rAF 循环里推进 */
+  partAnims: Map<string, PartAnim>
+}
+
+/**
+ * 代码建模/Blender 建模的产物里,可动部件的 Group 带 userData 语义
+ * (glb extras 原样恢复):axis=局部转轴、pivot=铰位描述、animationRole 等。
+ * Tripo 网格没有这些语义,部件面板自动隐藏。
+ */
+type MovablePart = {
+  id: string
+  /** 展示名:节点名去掉 _pivot/_hinge 之类的后缀 */
+  label: string
+  role?: string
+}
+
+type PartAnim = {
+  obj: THREE.Object3D
+  axis: THREE.Vector3
+  baseQuat: THREE.Quaternion
+  startedAt: number
+}
+
+/** ±35° 正弦摆动,周期 2.4s —— 方向未知(axis 正负语义由模型自定),对称摆最稳。 */
+const PART_SWING_RAD = (35 * Math.PI) / 180
+const PART_SWING_PERIOD_MS = 2400
+
+function parsePartAxis(userData: Record<string, unknown>): THREE.Vector3 | null {
+  const raw = userData.axis
+  if (Array.isArray(raw) && raw.length === 3 && raw.every((n) => typeof n === 'number')) {
+    const v = new THREE.Vector3(raw[0], raw[1], raw[2])
+    return v.lengthSq() > 0 ? v.normalize() : null
+  }
+  if (raw === 'x' || raw === 'X') return new THREE.Vector3(1, 0, 0)
+  if (raw === 'y' || raw === 'Y') return new THREE.Vector3(0, 1, 0)
+  if (raw === 'z' || raw === 'Z') return new THREE.Vector3(0, 0, 1)
+  return null
+}
+
+/** 收集带 axis 语义的可动部件(嵌套时只取最外层,避免父子同时摆打架)。 */
+function collectMovableParts(model: THREE.Object3D): { part: MovablePart; obj: THREE.Object3D }[] {
+  const found: { part: MovablePart; obj: THREE.Object3D }[] = []
+  const walk = (obj: THREE.Object3D): void => {
+    const axis = parsePartAxis(obj.userData ?? {})
+    if (axis) {
+      found.push({
+        obj,
+        part: {
+          id: obj.uuid,
+          label: (obj.name || '部件').replace(/[_-]?(pivot|hinge|group)$/i, '').replace(/_/g, ' '),
+          role: typeof obj.userData.animationRole === 'string' ? obj.userData.animationRole : undefined,
+        },
+      })
+      return // 不往下钻:子部件跟随父级摆动即可
+    }
+    for (const child of obj.children) walk(child)
+  }
+  walk(model)
+  return found
 }
 
 const useStyles = createStyles(({ css }) => ({
@@ -213,6 +272,48 @@ const useStyles = createStyles(({ css }) => ({
     align-items: center;
     justify-content: space-between;
   `,
+  partsPanel: css`
+    position: absolute;
+    left: 10px;
+    bottom: 14px;
+    max-width: 240px;
+    max-height: 42%;
+    overflow-y: auto;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+  `,
+  partsTitle: css`
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
+    letter-spacing: 0.04em;
+  `,
+  partChip: css`
+    border: none;
+    border-radius: 8px;
+    padding: 5px 10px;
+    text-align: left;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.75);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.4;
+    transition: all 0.15s;
+    &:hover {
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+    }
+  `,
+  partChipActive: css`
+    background: rgba(22, 119, 255, 0.55) !important;
+    color: #fff !important;
+  `,
 }))
 
 function relativeAssetUrl(path: string): string {
@@ -284,9 +385,35 @@ export default function ModelViewer({
   const [settings, setSettings] = useState<ViewerSettings>(DEFAULT_SETTINGS)
   const [info, setInfo] = useState<ModelInfo | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
+  // 可动部件(带 userData.axis 语义的 Group);Tripo 模型没有 → 面板不渲染
+  const [parts, setParts] = useState<MovablePart[]>([])
+  const [activeParts, setActiveParts] = useState<Set<string>>(new Set())
+  const partObjectsRef = useRef<Map<string, THREE.Object3D>>(new Map())
   settingsRef.current = settings
 
   const patch = (p: Partial<ViewerSettings>): void => setSettings((s) => ({ ...s, ...p }))
+
+  /** 点击部件 chip:开始/停止绕 userData.axis 的对称摆动(停止时恢复原姿态)。 */
+  const togglePart = (id: string): void => {
+    const h = handlesRef.current
+    const obj = partObjectsRef.current.get(id)
+    if (!h || !obj) return
+    const running = h.partAnims.get(id)
+    if (running) {
+      obj.quaternion.copy(running.baseQuat)
+      h.partAnims.delete(id)
+    } else {
+      const axis = parsePartAxis(obj.userData ?? {})
+      if (!axis) return
+      h.partAnims.set(id, {
+        obj,
+        axis,
+        baseQuat: obj.quaternion.clone(),
+        startedAt: performance.now(),
+      })
+    }
+    setActiveParts(new Set(h.partAnims.keys()))
+  }
 
   /** 依据当前 settings 就地更新 three 对象(灯光/曝光/背景/辅助线/渲染模式)。 */
   const applySettings = (h: ViewerHandles, s: ViewerSettings): void => {
@@ -389,6 +516,7 @@ export default function ModelViewer({
       pmrem,
       envCache: new Map(),
       initialCamera: { position: camera.position.clone(), target: controls.target.clone() },
+      partAnims: new Map(),
     }
     handlesRef.current = handles
     applySettings(handles, settingsRef.current)
@@ -441,6 +569,12 @@ export default function ModelViewer({
         setInfo(collectModelInfo(model, 'glb'))
         applySettings(handles, settingsRef.current)
 
+        // 可动部件面板:收集带 axis 语义的节点(代码/Blender 模型才有)
+        const movable = collectMovableParts(model)
+        partObjectsRef.current = new Map(movable.map((m) => [m.part.id, m.obj]))
+        setParts(movable.map((m) => m.part))
+        setActiveParts(new Set())
+
         // 稳定渲染后截一帧干净画面(隐辅助线,等 HDR/贴图落定)回传做缩略图
         if (onSnapshotRef.current && snapshotDoneRef.current !== url) {
           setTimeout(() => {
@@ -468,9 +602,19 @@ export default function ModelViewer({
     )
 
     let raf = 0
+    const swingQuat = new THREE.Quaternion()
     const animate = (): void => {
       raf = requestAnimationFrame(animate)
       controls.update()
+      // 部件摆动:base 姿态 × 绕局部轴的正弦摆(±35°,2.4s 周期)
+      if (handles.partAnims.size) {
+        const now = performance.now()
+        for (const anim of handles.partAnims.values()) {
+          const phase = ((now - anim.startedAt) / PART_SWING_PERIOD_MS) * Math.PI * 2
+          swingQuat.setFromAxisAngle(anim.axis, Math.sin(phase) * PART_SWING_RAD)
+          anim.obj.quaternion.copy(anim.baseQuat).multiply(swingQuat)
+        }
+      }
       renderer.render(scene, camera)
       if (gizmoRef.current) drawAxisGizmo(gizmoRef.current, camera)
     }
@@ -502,7 +646,10 @@ export default function ModelViewer({
       })
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement)
       handlesRef.current = null
+      partObjectsRef.current = new Map()
       setInfo(null)
+      setParts([])
+      setActiveParts(new Set())
     }
   }, [url])
 
@@ -560,6 +707,23 @@ export default function ModelViewer({
           </Tooltip>
         )}
       </div>
+
+      {parts.length > 0 && (
+        <div className={styles.partsPanel}>
+          <span className={styles.partsTitle}>可动部件 · 点击摆动预览</span>
+          {parts.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={cx(styles.partChip, activeParts.has(p.id) && styles.partChipActive)}
+              title={p.role ? `animationRole: ${p.role}` : undefined}
+              onClick={() => togglePart(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {panelOpen && (
         <div className={styles.panel}>

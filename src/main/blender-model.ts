@@ -96,7 +96,7 @@ assert _scene is not None, 'build scene missing'
 bpy.context.window.scene = _scene
 for o in _scene.objects:
     o.select_set(o.type == 'MESH')
-bpy.ops.export_scene.gltf(filepath=r'${outPath.replace(/\\/g, '/')}', export_format='GLB', use_selection=True)
+bpy.ops.export_scene.gltf(filepath=r'${outPath.replace(/\\/g, '/')}', export_format='GLB', use_selection=True, export_extras=True)
 bpy.context.window.scene = _prev
 bpy.data.scenes.remove(_scene)
 print('EXPORT_OK')
@@ -110,7 +110,9 @@ const SKELETON = `# Blender 建模脚本 —— 由 pi-studio 送进 Blender 的
 # - Blender 5.1 注意:材质节点要按类型找,不能按名字:
 #     bsdf = next(n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
 # - 中文界面下新建物体名是「柱体/球体/立方体」,不要按英文默认名查找,建完立即重命名并存变量。
-# - 每个可独立运动的部件命名清楚(userData 语义写在自定义属性 obj['pivot'] 等)。
+# - 每个可独立运动的部件命名清楚,并写自定义属性标注语义(会随 glb extras 导出,
+#   预览器用它做部件动画):obj['axis'] = [1.0, 0.0, 0.0](转轴,局部坐标)、
+#   obj['pivot'] = 'back_hinge_line' 等;部件的原点(origin)要放在转轴上。
 # - 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入或留 ≥0.005 间隙。
 import bpy, math
 
