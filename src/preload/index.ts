@@ -168,6 +168,7 @@ const api = {
       ipcRenderer.invoke('imageGen:generate', payload),
     history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),
     historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
+    uploadReference: (dataUrl: string) => ipcRenderer.invoke('imageGen:uploadReference', dataUrl),
     comfyStart: () => ipcRenderer.invoke('imageGen:comfyStart'),
     comfyStop: () => ipcRenderer.invoke('imageGen:comfyStop'),
   },

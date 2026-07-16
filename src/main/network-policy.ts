@@ -1,6 +1,13 @@
 export const PRODUCTION_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self'",
+  // 'unsafe-inline' 是给 @lobehub/ui 的 HTML 预览开的:它用 srcdoc iframe 渲染
+  // agent 生成的 HTML,iframe 里注入三段内联 shim(storage/自动高度/morph)。
+  // srcdoc 文档按规范继承父页 CSP,而 shim 内容含 React useId(每实例不同),
+  // hash 白名单不可行 —— 只有 'self' 时预览自发布起在装机版一直是坏的
+  // (日志 460 次违规)。风险评估:不可信 HTML 只进 sandbox iframe;父页 markdown
+  // 经 react-markdown 转义、无 dangerouslySetInnerHTML;script-src 仍无 https:,
+  // 远程脚本载入依旧被拦。
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",

@@ -499,6 +499,22 @@ export function registerImageGenHandlers(): void {
     ): Promise<ImageGenResult> => generateImage(payload),
   )
 
+  // 改图底图选定后立刻传 R2:预览用公网 URL、生成时免每次重传 base64
+  ipcMain.handle(
+    'imageGen:uploadReference',
+    async (_e, dataUrl: string): Promise<{ ok: true; url: string } | { error: string }> => {
+      try {
+        const url = await cloudUploadReference(dataUrl)
+        return { ok: true, url }
+      } catch (err) {
+        appendAppLog('warn', 'imageGen.reference', 'Reference upload failed', {
+          message: err instanceof Error ? err.message : String(err),
+        })
+        return { error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
   ipcMain.handle(
     'imageGen:history',
     async (_e, limit?: number): Promise<ImageGenHistoryItem[] | { error: string }> => {

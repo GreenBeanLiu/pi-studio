@@ -637,6 +637,9 @@ export default function ModelViewer({
       for (const tex of handles.envCache.values()) tex.dispose()
       pmrem.dispose()
       renderer.dispose()
+      // dispose() 不释放 WebGL 上下文本身;画廊里连续切模型会攒上下文,
+      // 攒满浏览器上限后最老的被强制丢弃(日志曾出现 "Too many active WebGL contexts")
+      renderer.forceContextLoss()
       scene.traverse((obj) => {
         const mesh = obj as THREE.Mesh
         if (mesh.geometry) mesh.geometry.dispose()

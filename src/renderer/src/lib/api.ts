@@ -198,6 +198,7 @@ declare global {
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
+        uploadReference: (dataUrl: string) => Promise<{ ok: true; url: string } | { error: string }>
         comfyStart: () => Promise<
           | { ok: true; health: ImageGenHealth }
           | { error: string; health: ImageGenHealth }

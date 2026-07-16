@@ -290,6 +290,8 @@ const useStyles = createStyles(({ token, css }) => ({
     position: relative;
     width: 100%;
     aspect-ratio: 1;
+    /* 关键:panel 是 flex column + overflow,不禁 shrink 的话内容一多预览会被压成一条细线 */
+    flex-shrink: 0;
     border-radius: ${token.borderRadiusLG}px;
     overflow: hidden;
     border: 1px solid ${token.colorBorderSecondary};
@@ -300,7 +302,22 @@ const useStyles = createStyles(({ token, css }) => ({
       height: 100%;
       object-fit: contain;
       display: block;
+      cursor: zoom-in;
     }
+  `,
+  basePreviewTopLeft: css`
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(4px);
   `,
   basePreviewTopRight: css`
     position: absolute;
@@ -507,6 +524,11 @@ function ImageGenInner() {
   const [sessionResults, setSessionResults] = useState<SessionResult[]>([])
   const [pending, setPending] = useState<PendingGen[]>([])
   const [baseImage, setBaseImage] = useState<string | null>(null) // 改图底图 URL
+  // 底图选定后立刻后台传 R2:预览可打开公网原图,生成时免每次重传 base64
+  const [refUpload, setRefUpload] = useState<
+    { status: 'idle' } | { status: 'uploading' } | { status: 'done'; url: string } | { status: 'error'; error: string }
+  >({ status: 'idle' })
+  const refUploadForRef = useRef<string | null>(null) // 当前上传属于哪张底图(防替换竞态)
   const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
   const [maskEditorOpen, setMaskEditorOpen] = useState(false)
   const [pinnedSrc, setPinnedSrc] = useState<string | null>(null)
@@ -624,7 +646,10 @@ function ImageGenInner() {
     const full = preset?.suffix
       ? `${text}, ${preset.suffix}. High quality, sharp, no watermark, no text.`
       : `${text}. High quality, sharp, no watermark, no text.`
-    const refUrls = baseImage ? [baseImage] : undefined
+    // 云端引擎优先用已传好的 R2 地址(免每次生成重传 base64);本地 ComfyUI 仍要 dataURL
+    const refSource =
+      engine === 'openai' && refUpload.status === 'done' ? refUpload.url : baseImage
+    const refUrls = baseImage && refSource ? [refSource] : undefined
 
     // 任务进历史区转圈,按钮立即释放,可连续下多个任务
     const key = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
@@ -688,13 +713,16 @@ function ImageGenInner() {
       return
     }
     setHistory((h) => h.filter((x) => x.id !== item.id))
-    if (baseImage === item.url) setBaseImage(null)
+    if (baseImage === item.url) clearBaseImage()
   }
 
   function useAsBase(url: string) {
     setBaseImage(url)
     setMaskDataUrl(null)
     setPrompt('')
+    // 历史图本身就是 R2 公网地址,无需再传
+    refUploadForRef.current = url
+    setRefUpload({ status: 'done', url })
     message.info('已设为底图,输入修改要求后点"修改这张图"')
   }
 
@@ -723,13 +751,38 @@ function ImageGenInner() {
     const reader = new FileReader()
     reader.onload = () => {
       if (typeof reader.result !== 'string') return
-      setBaseImage(reader.result)
+      const dataUrl = reader.result
+      setBaseImage(dataUrl)
       setMaskDataUrl(null)
       setPrompt('')
-      message.success('图片已载入，可以输入修改要求')
+      // 后台传 R2(需云端中继已配置);失败不阻塞——生成时走原有的 base64 兜底上传
+      refUploadForRef.current = dataUrl
+      if (health?.keyConfigured) {
+        setRefUpload({ status: 'uploading' })
+        void api.imageGen
+          .uploadReference(dataUrl)
+          .then((r) => {
+            if (refUploadForRef.current !== dataUrl) return // 已换图,丢弃过期结果
+            setRefUpload('error' in r ? { status: 'error', error: r.error } : { status: 'done', url: r.url })
+          })
+          .catch((err: unknown) => {
+            // IPC 本身失败(如 handler 缺失)也不能让徽标卡在"上传中"
+            if (refUploadForRef.current !== dataUrl) return
+            setRefUpload({ status: 'error', error: err instanceof Error ? err.message : String(err) })
+          })
+      } else {
+        setRefUpload({ status: 'idle' })
+      }
     }
     reader.onerror = () => message.error('读取图片失败')
     reader.readAsDataURL(file)
+  }
+
+  function clearBaseImage() {
+    setBaseImage(null)
+    setMaskDataUrl(null)
+    setRefUpload({ status: 'idle' })
+    refUploadForRef.current = null
   }
 
   const engineLabel = (e: string) =>
@@ -780,16 +833,34 @@ function ImageGenInner() {
 
         {baseImage && (
           <div className={styles.basePreview}>
-            <img src={baseImage} alt="base" />
+            <img src={baseImage} alt="base" onClick={() => openLightbox(baseImage)} />
+            {refUpload.status === 'uploading' && (
+              <div className={styles.basePreviewTopLeft}>
+                <Spin size="small" />
+                上传 R2 中…
+              </div>
+            )}
+            {refUpload.status === 'done' && (
+              <Tooltip title="已存入 R2,点击打开公网原图">
+                <div
+                  className={styles.basePreviewTopLeft}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => window.open(refUpload.url, '_blank')}
+                >
+                  <Link2 size={11} />
+                  R2 ✓
+                </div>
+              </Tooltip>
+            )}
+            {refUpload.status === 'error' && (
+              <Tooltip title={`R2 上传失败:${refUpload.error};不影响生成,会在生成时重试`}>
+                <div className={styles.basePreviewTopLeft} style={{ color: '#ffb020' }}>
+                  上传失败
+                </div>
+              </Tooltip>
+            )}
             <div className={styles.basePreviewTopRight}>
-              <Button
-                size="small"
-                icon={<X size={13} />}
-                onClick={() => {
-                  setBaseImage(null)
-                  setMaskDataUrl(null)
-                }}
-              />
+              <Button size="small" icon={<X size={13} />} onClick={clearBaseImage} />
             </div>
             <div className={styles.basePreviewBottomLeft}>
               <Button
