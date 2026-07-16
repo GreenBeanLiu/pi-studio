@@ -18,12 +18,12 @@
     "release:dry": "node scripts/release-local.js --dry-run --skip-build"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.6",
+    "@earendil-works/pi-coding-agent": "^0.80.7",
     "electron-updater": "^6.8.3"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.6",
-    "@earendil-works/pi-ai": "^0.80.6",
+    "@earendil-works/pi-agent-core": "^0.80.7",
+    "@earendil-works/pi-ai": "^0.80.7",
     "@electron-toolkit/eslint-config-prettier": "^2.0.0",
     "@electron-toolkit/eslint-config-ts": "^2.0.0",
     "@electron-toolkit/preload": "^3.0.1",
