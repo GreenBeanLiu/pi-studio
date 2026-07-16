@@ -172,12 +172,19 @@ export function registerIpcHandlers(): void {
         cloudImageKey: string
       },
     ) => {
+      const sandboxWas = loadSettings().sandboxEnabled
       saveSettings(settings)
       // 通知所有窗口设置已变,让聊天页模型切换器等即时同步(无需重开工作区)
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send('settings:changed')
       }
-      return { ok: true }
+      // 沙箱开关变化时旧 agent 子进程还跑在旧模式里——告知渲染进程触发工作区重启
+      const sandboxChanged = sandboxWas !== settings.sandboxEnabled
+      return {
+        ok: true,
+        sandboxChanged,
+        workspaceOpen: sandboxChanged && !!piClientManager.getWorkspacePath(),
+      }
     },
   )
   // 模型切换列表里 registry 缺失的自定义 id:持久化并立刻写进 models.json,

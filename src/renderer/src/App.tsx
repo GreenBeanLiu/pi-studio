@@ -56,6 +56,8 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [agentIssue, setAgentIssue] = useState<AgentIssue | null>(null)
   const [diagnosticsExporter, setDiagnosticsExporter] = useState<(() => void) | null>(null)
   const [activeView, setActiveView] = useState<ActiveView>('chat')
+  // 当前工作区 agent 的沙箱运行模式(null=直跑主机);来自 agent:status started 事件
+  const [sandboxMode, setSandboxMode] = useState<'wsl' | 'docker' | null>(null)
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)
 
@@ -94,6 +96,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       if (event.status === 'started') {
         setAgentIssue(null)
         setRestartingAgent(false)
+        setSandboxMode(event.sandbox ?? null)
         return
       }
       if (event.status === 'exited' && event.expected) return
@@ -120,6 +123,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       // startWorkspace stops the old subprocess before failing, so no
       // workspace is actually open now — reflect that honestly.
       setWorkspace(null)
+      setSandboxMode(null)
       setWorkspaceError(result.error)
       if (result.error.includes('API Key')) {
         setShowWorkspacePicker(false)
@@ -161,6 +165,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     <div className={styles.shell}>
       <TitleBar
         workspace={workspace}
+        sandboxMode={sandboxMode}
         update={update}
         onInstall={() => api.update.install()}
         onDismissUpdate={() => setUpdate({ status: 'idle' })}
@@ -219,6 +224,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           onClose={closeSettings}
           onExportDiagnostics={diagnosticsExporter ?? undefined}
           diagnosticsDisabled={!workspace}
+          onSandboxToggled={() => void restartAgent()}
         />
       )}
       {showWorkspacePicker && !showSettings && (

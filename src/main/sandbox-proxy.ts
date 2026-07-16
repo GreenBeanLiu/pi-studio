@@ -12,6 +12,7 @@ import { appendAppLog } from './app-log'
 
 let server: Server | null = null
 let listeningPort: number | null = null
+let listeningHost: string | null = null
 
 function allowedHosts(): string[] {
   const hosts = new Set<string>([
@@ -37,8 +38,20 @@ function hostAllowed(host: string): boolean {
   return allowedHosts().some((a) => h === a || h.endsWith(`.${a}`))
 }
 
-export async function startSandboxProxy(): Promise<number> {
-  if (server && listeningPort) return listeningPort
+/**
+ * @param bindHost 监听地址。mirrored networking 下沙箱经 127.0.0.1 直达主机;
+ * NAT 模式下主机对沙箱可见的地址是 WSL vEthernet 网关 IP,须绑到该 IP 上
+ * (绑 0.0.0.0 会把白名单代理暴露给局域网,不做)。
+ */
+export async function startSandboxProxy(bindHost = '127.0.0.1'): Promise<number> {
+  if (server && listeningPort) {
+    if (listeningHost === bindHost) return listeningPort
+    // 网络模式变了(如用户切了 .wslconfig):换绑定地址重启
+    await new Promise<void>((resolve) => server!.close(() => resolve()))
+    server = null
+    listeningPort = null
+    listeningHost = null
+  }
 
   server = createServer((_req, res) => {
     // 沙箱内应当只发 HTTPS(CONNECT);裸 HTTP 一律拒绝,避免明文外传
@@ -66,12 +79,14 @@ export async function startSandboxProxy(): Promise<number> {
 
   await new Promise<void>((resolve, reject) => {
     server!.once('error', reject)
-    server!.listen(0, '127.0.0.1', () => resolve())
+    server!.listen(0, bindHost, () => resolve())
   })
   const addr = server.address()
   listeningPort = typeof addr === 'object' && addr ? addr.port : null
   if (!listeningPort) throw new Error('沙箱代理启动失败')
+  listeningHost = bindHost
   appendAppLog('info', 'sandbox.proxy', '沙箱白名单代理已启动', {
+    host: bindHost,
     port: listeningPort,
     allow: allowedHosts(),
   })

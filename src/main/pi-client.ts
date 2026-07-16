@@ -16,7 +16,14 @@ import {
 
 export type PiEventListener = (event: AgentSessionEvent) => void
 export type AgentStatusEvent =
-  | { status: 'started'; cwd: string; restoredSession: boolean; sessionFile?: string }
+  | {
+      status: 'started'
+      cwd: string
+      restoredSession: boolean
+      sessionFile?: string
+      /** 本工作区的 agent 是否跑在沙箱里(WSL bubblewrap / Docker 回退) */
+      sandbox?: 'wsl' | 'docker'
+    }
   | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
   | { status: 'error'; cwd: string; message: string }
 export type AgentStatusListener = (event: AgentStatusEvent) => void
@@ -82,6 +89,7 @@ class PiClientManager {
   private unsubscribe: (() => void) | null = null
   private lastSessionFile: string | null = null
   private sandboxSessionPaths = false
+  private sandboxMode: 'wsl' | 'docker' | null = null
   private activeRunId = 0
   private expectedStopRunIds = new Set<number>()
 
@@ -113,9 +121,10 @@ class PiClientManager {
     const sandboxEnabled = loadSettings().sandboxEnabled
     const launch = sandboxEnabled
       ? await prepareSandboxLaunch(cwd, env)
-      : { cliPath: resolvePiCliPath(), env }
+      : { cliPath: resolvePiCliPath(), env, mode: null }
     const runtimeEnv = embeddedNodeEnv(launch.env)
     this.sandboxSessionPaths = sandboxEnabled
+    this.sandboxMode = launch.mode
     const client = new RpcClient({
       cwd,
       env: runtimeEnv,
@@ -166,6 +175,7 @@ class PiClientManager {
       cwd,
       restoredSession,
       sessionFile: this.lastSessionFile ?? undefined,
+      sandbox: this.sandboxMode ?? undefined,
     })
   }
 
@@ -182,6 +192,7 @@ class PiClientManager {
     this.client = null
     this.workspacePath = null
     this.sandboxSessionPaths = false
+    this.sandboxMode = null
   }
 
   getWorkspacePath(): string | null {

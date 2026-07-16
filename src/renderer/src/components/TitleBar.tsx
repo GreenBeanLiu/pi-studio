@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
 import { Tooltip } from 'antd'
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen, ShieldCheck } from 'lucide-react'
 import { api, type Workspace } from '../lib/api'
 import appIcon from '../assets/app-icon.png'
 
@@ -13,6 +13,8 @@ type UpdateState =
 
 type Props = {
   workspace: Workspace | null
+  /** 当前工作区 agent 的沙箱运行模式;null = 直跑主机 */
+  sandboxMode: 'wsl' | 'docker' | null
   update: UpdateState
   onInstall: () => void
   onDismissUpdate: () => void
@@ -154,9 +156,24 @@ const useStyles = createStyles(({ token, css }) => ({
       color: #ffffff;
     }
   `,
+
+  sandboxBadge: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: ${token.borderRadiusSM}px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: ${token.colorSuccess};
+    background: ${token.colorSuccessBg};
+    border: 1px solid ${token.colorSuccessBorder};
+    -webkit-app-region: no-drag;
+    flex-shrink: 0;
+  `,
 }))
 
-export default function TitleBar({ workspace, update, onInstall, onDismissUpdate, onSwitchWorkspace }: Props) {
+export default function TitleBar({ workspace, sandboxMode, update, onInstall, onDismissUpdate, onSwitchWorkspace }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [version, setVersion] = useState('')
 
@@ -178,6 +195,21 @@ export default function TitleBar({ workspace, update, onInstall, onDismissUpdate
             <FolderOpen size={14} color={token.colorTextSecondary} />
             <span className={styles.workspaceName}>{workspace.name}</span>
           </div>
+        </Tooltip>
+      )}
+      {workspace && sandboxMode && (
+        <Tooltip
+          title={
+            sandboxMode === 'wsl'
+              ? 'agent 运行在 WSL2 + bubblewrap 沙箱里:整盘只读、仅工作区可写,出站经主机白名单代理'
+              : 'agent 运行在 Docker 沙箱里(回退方案)'
+          }
+          placement="bottom"
+        >
+          <span className={styles.sandboxBadge}>
+            <ShieldCheck size={12} />
+            沙箱
+          </span>
         </Tooltip>
       )}
 

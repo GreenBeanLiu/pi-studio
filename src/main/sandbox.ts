@@ -249,11 +249,11 @@ export function buildSandboxDockerArgs(opts: {
 export async function prepareSandboxLaunch(
   cwd: string,
   env: Record<string, string>,
-): Promise<{ cliPath: string; env: Record<string, string> }> {
+): Promise<{ cliPath: string; env: Record<string, string>; mode: 'wsl' | 'docker' }> {
   // 首选 WSL2 + bubblewrap(docs/sandbox-mode-plan.md「2026-07-15 复盘与决策」):
   // 文件隔离靠 mount namespace,出站经主机侧白名单代理——根治 Docker 容器出网不通。
   if (await detectWslSandboxDistro()) {
-    return prepareWslSandboxLaunch(cwd, env)
+    return { ...(await prepareWslSandboxLaunch(cwd, env)), mode: 'wsl' }
   }
 
   const docker = await detectDocker()
@@ -289,7 +289,11 @@ export async function prepareSandboxLaunch(
     ],
   })
   appendAppLog('info', 'sandbox.launch', 'Launching pi inside Docker sandbox', { cwd, tag })
-  return { cliPath: ensureShim(), env: { ...env, PISTUDIO_DOCKER_ARGS: JSON.stringify(dockerArgs) } }
+  return {
+    cliPath: ensureShim(),
+    env: { ...env, PISTUDIO_DOCKER_ARGS: JSON.stringify(dockerArgs) },
+    mode: 'docker',
+  }
 }
 
 // ── 注册 ─────────────────────────────────────────────────────────

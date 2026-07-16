@@ -107,8 +107,12 @@ Windows Sandbox 底层都是 Hyper-V 虚机。Linux 那种内核级、便宜的 
 1. **已完成**：设置开关、Docker/WSL 探测、版本绑定的镜像 tag、镜像构建进度，以及 Docker RPC shim。
 2. **已完成**：工作区 `/workspace`、agent 配置 `/agent` 的挂载和 API key/TAVILY/Helicone/代理环境变量透传；Docker 未就绪或镜像缺失时会在打开工作区阶段明确报错。
 3. **已完成**：容器返回的 `/agent/...` 会映射回 Windows 主机路径，历史会话列表、切换和导出仍可用；停止工作区时 shim 会把 SIGTERM/SIGINT 转发给 `docker run`，避免后台容器残留；镜像构建请求互斥，重复点击会复用同一次构建。
-4. **待验证**：在真实 agent 工作区执行一次 prompt→bash→文件写入，并确认写入范围只落在挂载的工作区；同时补充 Docker Desktop 未运行、镜像构建失败、停止超时的 UI 回归测试。
-5. **后续增强**：沙箱模式切换后可选择自动重启当前工作区；增加容器 CPU/内存/网络策略配置，并在会话列表中标注当前会话运行于沙箱。
+4. **待验证**：在真实 agent 工作区执行一次 prompt→bash→文件写入，并确认写入范围只落在挂载的工作区；同时补充 Docker Desktop 未运行、镜像构建失败、停止超时的 UI 回归测试。（Docker 路线已封存，该项随之搁置；WSL 路线的等价验证已在 v0.3.68 完成）
+5. **后续增强（2026-07-16 已完成三项，E2E 验证）**：
+   - ✅ 沙箱开关切换后自动重启当前工作区（`settings:save` 返回 `sandboxChanged`，SettingsModal 触发 App 的 restartAgent）；
+   - ✅ 标题栏「沙箱」徽标标注 agent 运行于沙箱（`agent:status` started 事件带 `sandbox: 'wsl' | 'docker'`）；
+   - ✅ WSL NAT 网络模式适配（`wslinfo --networking-mode` 探测；非 mirrored 时取默认网关 IP 作为代理地址并把白名单代理绑到该 IP 上，不暴露局域网）。
+   - 未做：容器/沙箱 CPU、内存资源策略配置。
 
 ## 2026-07-15 复盘与决策
 

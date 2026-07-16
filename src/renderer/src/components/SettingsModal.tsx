@@ -192,10 +192,13 @@ export default function SettingsModal({
   onClose,
   onExportDiagnostics,
   diagnosticsDisabled,
+  onSandboxToggled,
 }: {
   onClose: () => void
   onExportDiagnostics?: () => void
   diagnosticsDisabled?: boolean
+  /** 沙箱开关变化且有工作区在开时调用 —— 旧 agent 还跑在旧模式里,需要重启工作区 */
+  onSandboxToggled?: () => void
 }) {
   const { styles } = useStyles()
 
@@ -296,7 +299,7 @@ export default function SettingsModal({
   async function handleSave() {
     setSaving(true)
     try {
-      await api.settings.save(settings)
+      const saveResult = await api.settings.save(settings)
       const result = await api.securityPolicy.save(securityPolicy)
       if ('error' in result) {
         setPolicyError(result.error)
@@ -305,6 +308,8 @@ export default function SettingsModal({
       setPolicyScope(result.scope)
       setPolicyWorkspacePath(result.workspacePath ?? '')
       onClose()
+      // 沙箱开关变了且有工作区在开:旧 agent 还跑在旧模式,自动重启工作区切换生效
+      if (saveResult.sandboxChanged && saveResult.workspaceOpen) onSandboxToggled?.()
     } finally {
       setSaving(false)
     }
@@ -788,8 +793,8 @@ export default function SettingsModal({
                 <Alert
                   type="info"
                   showIcon
-                  message="pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。重新打开工作区生效。"
-                  description="bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。"
+                  message="pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。"
+                  description="bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理(mirrored 或 NAT 网络模式均自动适配)。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。"
                 />
                 <div className={styles.actionRow}>
                   <span className={styles.label}>环境</span>

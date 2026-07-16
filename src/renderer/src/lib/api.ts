@@ -80,7 +80,7 @@ declare global {
           comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
-        }) => Promise<{ ok: boolean }>
+        }) => Promise<{ ok: boolean; sandboxChanged?: boolean; workspaceOpen?: boolean }>
         testConnection: (s: {
           provider: PiProvider
           apiKey: string
@@ -535,7 +535,13 @@ export type ExtensionUiResponse =
 export type PiRuntimeEvent = AgentSessionEvent | ExtensionUiRequest
 
 export type AgentStatusEvent =
-  | { status: 'started'; cwd: string; restoredSession: boolean; sessionFile?: string }
+  | {
+      status: 'started'
+      cwd: string
+      restoredSession: boolean
+      sessionFile?: string
+      sandbox?: 'wsl' | 'docker'
+    }
   | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
   | { status: 'error'; cwd: string; message: string }
 
