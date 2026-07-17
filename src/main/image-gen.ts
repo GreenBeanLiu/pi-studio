@@ -376,11 +376,11 @@ async function cloudGenerate(
 }
 
 /** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
-export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
+export type ImageGenSize = '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
 
 export type ImageGenOptions = {
   n?: number
-  quality?: 'low' | 'medium' | 'high'
+  quality?: 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
   background?: 'auto' | 'transparent' | 'opaque'
   outputFormat?: 'png' | 'jpeg' | 'webp'
   outputCompression?: number

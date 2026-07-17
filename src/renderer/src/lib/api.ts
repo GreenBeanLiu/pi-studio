@@ -298,10 +298,18 @@ export type Model3DHistoryItem = {
   fidelity?: Model3DFidelity
 }
 
-/** 云端 gpt-image-2 尺寸:方形 / 横版(1536×1024)/ 竖版(1024×1536) */
-export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
+/** TikHub/OpenAI-compatible images API documented size values. */
+export type ImageGenSize =
+  | '256x256'
+  | '512x512'
+  | '1024x1024'
+  | '1024x1536'
+  | '1536x1024'
+  | '1024x1792'
+  | '1792x1024'
+  | 'auto'
 
-export type ImageGenQuality = 'low' | 'medium' | 'high'
+export type ImageGenQuality = 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
 export type ImageGenBackground = 'auto' | 'transparent' | 'opaque'
 export type ImageGenOutputFormat = 'png' | 'jpeg' | 'webp'
 export type ImageGenModeration = 'auto' | 'low'

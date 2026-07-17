@@ -81,10 +81,17 @@ const EXAMPLE_PROMPTS = [
 ]
 
 const SIZE_OPTIONS: { id: ImageGenSize; label: string; icon: string }[] = [
-  { id: 'square_hd', label: '1:1', icon: '⬜' },
-  { id: 'landscape_4_3', label: '3:2', icon: '▭' },
-  { id: 'portrait_4_3', label: '2:3', icon: '▯' },
+  { id: '256x256', label: '256×256', icon: '□' },
+  { id: '512x512', label: '512×512', icon: '□' },
+  { id: '1024x1024', label: '1024×1024', icon: '□' },
+  { id: '1024x1536', label: '1024×1536', icon: '▯' },
+  { id: '1536x1024', label: '1536×1024', icon: '▭' },
+  { id: '1024x1792', label: '1024×1792', icon: '▯' },
+  { id: '1792x1024', label: '1792×1024', icon: '▭' },
+  { id: 'auto', label: 'auto', icon: '↔' },
 ]
+
+const QUALITY_OPTIONS: ImageGenQuality[] = ['low', 'medium', 'high', 'auto', 'standard', 'hd']
 
 /** 进行中的生成任务,在历史区占一个转圈的格子。 */
 type PendingGen = { key: string; prompt: string; engine: string }
@@ -282,7 +289,7 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorPrimary} !important;
   `,
   sizeOptionGrid: css`
-    grid-template-columns: repeat(3, 76px);
+    grid-template-columns: repeat(4, 76px);
     justify-content: start;
     gap: 8px;
   `,
@@ -578,9 +585,9 @@ function ImageGenInner() {
   const [prompt, setPrompt] = useState('')
   const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
-  const [size, setSize] = useState<ImageGenSize>('square_hd')
+  const [size, setSize] = useState<ImageGenSize>('1024x1024')
   const [count, setCount] = useState(1)
-  const [quality, setQuality] = useState<ImageGenQuality>('medium')
+  const [quality, setQuality] = useState<ImageGenQuality>('auto')
   const [background, setBackground] = useState<ImageGenBackground>('auto')
   const [outputFormat, setOutputFormat] = useState<ImageGenOutputFormat>('png')
   const [outputCompression, setOutputCompression] = useState(90)
@@ -741,9 +748,9 @@ function ImageGenInner() {
           ? {
               size,
               n,
+              quality,
               ...(advancedOpen
                 ? {
-                    quality,
                     background,
                     outputFormat,
                     ...(outputFormat !== 'png' ? { outputCompression } : {}),
@@ -1072,6 +1079,28 @@ function ImageGenInner() {
         </div>
 
         {engine === 'openai' && (
+          <>
+            <span className={styles.sectionLabel}>质量</span>
+            <div className={styles.chips}>
+              {QUALITY_OPTIONS.map((option) => {
+                const active = quality === option
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    className={styles.styleChip}
+                    style={active ? { background: '#1677ff', borderColor: '#1677ff', color: '#fff' } : undefined}
+                    onClick={() => setQuality(option)}
+                  >
+                    {option}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        {engine === 'openai' && (
           <div>
             <button
               type="button"
@@ -1083,14 +1112,6 @@ function ImageGenInner() {
             </button>
             {advancedOpen && (
               <div className={styles.advancedGrid} style={{ marginTop: 8 }}>
-                <label className={styles.advancedField}>
-                  质量
-                  <select value={quality} onChange={(e) => setQuality(e.target.value as ImageGenQuality)}>
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high">high</option>
-                  </select>
-                </label>
                 <label className={styles.advancedField}>
                   背景
                   <select value={background} onChange={(e) => setBackground(e.target.value as ImageGenBackground)}>

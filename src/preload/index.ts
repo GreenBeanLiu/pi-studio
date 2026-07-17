@@ -163,9 +163,9 @@ const api = {
       engine: 'openai' | 'comfy'
       referenceUrls?: string[]
       maskDataUrl?: string
-      size?: 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
+      size?: '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
       n?: number
-      quality?: 'low' | 'medium' | 'high'
+      quality?: 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
       background?: 'auto' | 'transparent' | 'opaque'
       outputFormat?: 'png' | 'jpeg' | 'webp'
       outputCompression?: number
