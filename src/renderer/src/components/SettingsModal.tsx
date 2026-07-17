@@ -30,7 +30,7 @@ type Settings = {
   feishuAppId: string
   feishuAppSecret: string
   feishuChatId: string
-  imageEngine: '' | 'comfy' | 'openai'
+  imageEngine: '' | 'comfy' | 'openai' | 'gemini'
   comfyDir: string
   comfyPythonPath: string
   comfyLaunchArgs: string
@@ -859,11 +859,12 @@ export default function SettingsModal({
                 </span>
                 <Select
                   value={settings.imageEngine || 'auto'}
-                  onChange={(v) => patch({ imageEngine: v === 'auto' ? '' : (v as 'comfy' | 'openai') })}
+                  onChange={(v) => patch({ imageEngine: v === 'auto' ? '' : (v as 'comfy' | 'openai' | 'gemini') })}
                   style={{ width: 220 }}
                   options={[
                     { value: 'auto', label: '自动' },
                     { value: 'openai', label: '云端 gpt-image-2' },
+                    { value: 'gemini', label: '云端 Gemini Image' },
                     { value: 'comfy', label: '本地 ComfyUI' },
                   ]}
                 />

@@ -317,6 +317,7 @@ async function cloudGenerate(
   size?: ImageGenSize,
   options?: ImageGenOptions,
   downloadResult = true,
+  model?: CloudImageModel,
 ): Promise<ImageGenResult> {
   const cloud = getCloud()
   if (!cloud.available) {
@@ -328,6 +329,7 @@ async function cloudGenerate(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
+      ...(model ? { model } : {}),
       ...(size ? { size } : {}),
       ...(options ?? {}),
       ...(referenceUrls?.length ? { referenceUrls } : {}),
@@ -377,6 +379,7 @@ async function cloudGenerate(
 
 /** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
 export type ImageGenSize = '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
+export type CloudImageModel = 'gpt-image-2' | 'gemini-3-pro-image-preview'
 
 export type ImageGenOptions = {
   n?: number
@@ -393,7 +396,8 @@ export type ImageGenOptions = {
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
 export async function generateImage(payload: {
   prompt: string
-  engine: 'openai' | 'comfy'
+  engine: 'openai' | 'comfy' | 'gemini'
+  model?: CloudImageModel
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
@@ -461,6 +465,7 @@ export async function generateImage(payload: {
         user: payload.user,
       },
       payload.downloadResult !== false,
+      payload.model,
     )
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -529,7 +534,8 @@ export function registerImageGenHandlers(): void {
       _e,
       payload: {
         prompt: string
-        engine: 'openai' | 'comfy'
+        engine: 'openai' | 'comfy' | 'gemini'
+        model?: CloudImageModel
         referenceUrls?: string[]
         maskDataUrl?: string
         size?: ImageGenSize

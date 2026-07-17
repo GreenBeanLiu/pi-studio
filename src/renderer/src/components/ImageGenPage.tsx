@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Button, Input, Modal, Popconfirm, Slider, Spin, Switch, Tooltip, App as AntApp } from 'antd'
+import { Button, Input, Modal, Popconfirm, Slider, Spin, Switch, Tabs, Tooltip, App as AntApp } from 'antd'
 import {
   Image as ImageIcon,
-  Cloud,
-  Monitor,
   Download,
   Link2,
   RefreshCw,
@@ -18,6 +16,7 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Copy,
 } from 'lucide-react'
 import {
   api,
@@ -28,46 +27,9 @@ import {
   type ImageGenOutputFormat,
   type ImageGenModeration,
   type ImageGenResponseFormat,
-  type ImageGenProviderStyle,
   type ImageGenHealth,
   type ImageGenHistoryItem,
 } from '../lib/api'
-
-/** 与 icon-studio 一致的风格预设(拼接到 prompt 后,英文更稳);color 是 podgen 式的风格圆点。 */
-const STYLE_PRESETS = [
-  { id: 'none', label: '自由风格', suffix: '', color: '#ff6b35' },
-  {
-    id: 'flat',
-    label: '扁平',
-    suffix:
-      'flat design, simple bold shapes, minimal, vibrant solid colors, centered composition',
-    color: '#1677ff',
-  },
-  {
-    id: 'gradient',
-    label: '渐变',
-    suffix: 'smooth vibrant gradient, glossy, soft shadows, modern, centered composition',
-    color: '#a855f7',
-  },
-  {
-    id: 'line',
-    label: '线性',
-    suffix: 'minimal line-art, thin clean strokes, monochrome, lots of negative space',
-    color: '#64748b',
-  },
-  {
-    id: '3d',
-    label: '3D',
-    suffix: '3D rendered, soft studio lighting, glossy material, subtle reflections, depth',
-    color: '#06b6d4',
-  },
-  {
-    id: 'illust',
-    label: '插画',
-    suffix: 'digital illustration, rich colors, detailed, artstation trending',
-    color: '#f472b6',
-  },
-]
 
 const PROMPT_MAX = 500
 
@@ -289,14 +251,14 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorPrimary} !important;
   `,
   sizeOptionGrid: css`
-    grid-template-columns: repeat(4, 76px);
-    justify-content: start;
+    grid-template-columns: repeat(3, minmax(104px, 1fr));
     gap: 8px;
   `,
   sizeOption: css`
     aspect-ratio: 1;
     justify-content: center;
-    padding: 6px;
+    min-height: 92px;
+    padding: 10px 6px;
     transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
     &:hover:not(:disabled) {
       transform: scale(1.12);
@@ -484,6 +446,7 @@ const useStyles = createStyles(({ token, css }) => ({
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    cursor: copy;
     min-height: 36px;
     word-break: break-word;
   `,
@@ -583,7 +546,6 @@ function ImageGenInner() {
 
   const [health, setHealth] = useState<ImageGenHealth | null>(null)
   const [prompt, setPrompt] = useState('')
-  const [presetId, setPresetId] = useState('none')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [size, setSize] = useState<ImageGenSize>('1024x1024')
   const [count, setCount] = useState(1)
@@ -593,7 +555,6 @@ function ImageGenInner() {
   const [outputCompression, setOutputCompression] = useState(90)
   const [moderation, setModeration] = useState<ImageGenModeration>('auto')
   const [responseFormat, setResponseFormat] = useState<ImageGenResponseFormat>('b64_json')
-  const [providerStyle, setProviderStyle] = useState<ImageGenProviderStyle>('vivid')
   const [requestUser, setRequestUser] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [examplesOpen, setExamplesOpen] = useState(false)
@@ -627,7 +588,7 @@ function ImageGenInner() {
     setHealth(h)
     setEngine((prev) => {
       if (prev === 'comfy' && !h.comfy && h.keyConfigured) return 'openai'
-      if (prev === 'openai' && !h.keyConfigured && h.comfy) return 'comfy'
+      if ((prev === 'openai' || prev === 'gemini') && !h.keyConfigured && h.comfy) return 'comfy'
       return prev
     })
   }
@@ -656,7 +617,7 @@ function ImageGenInner() {
     api.settings
       .load()
       .then((s) => {
-        if (s.imageEngine === 'comfy' || s.imageEngine === 'openai') setEngine(s.imageEngine)
+        if (s.imageEngine === 'comfy' || s.imageEngine === 'openai' || s.imageEngine === 'gemini') setEngine(s.imageEngine)
       })
       .catch(() => {})
     refreshHealth()
@@ -716,7 +677,7 @@ function ImageGenInner() {
     const isEdit = !!baseImage
     // 出图数量:改图固定 1 张;并发总量封顶 4
     const n = isEdit ? 1 : Math.min(count, 4 - pending.length)
-    if (engine === 'openai') {
+    if (engine === 'openai' || engine === 'gemini') {
       void generateOne(text, isEdit, n)
       return
     }
@@ -724,19 +685,20 @@ function ImageGenInner() {
   }
 
   async function generateOne(text: string, isEdit: boolean, n = 1) {
-    const preset = STYLE_PRESETS.find((p) => p.id === presetId)
-    const full = preset?.suffix
-      ? `${text}, ${preset.suffix}. High quality, sharp, no watermark, no text.`
-      : `${text}. High quality, sharp, no watermark, no text.`
+    const full = text
     // 云端引擎优先用已传好的 R2 地址(免每次生成重传 base64);本地 ComfyUI 仍要 dataURL
     const refSource =
-      engine === 'openai' && refUpload.status === 'done' ? refUpload.url : baseImage
+      engine !== 'comfy' && refUpload.status === 'done' ? refUpload.url : baseImage
     const refUrls = baseImage && refSource ? [refSource] : undefined
 
     // 任务进历史区转圈,按钮立即释放,可连续下多个任务
     const key = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const engineTag =
-      engine === 'comfy' ? (isEdit ? 'comfy-edit' : 'comfy') : isEdit ? 'cloud-edit' : 'cloud'
+      engine === 'comfy'
+        ? (isEdit ? 'comfy-edit' : 'comfy')
+        : engine === 'gemini'
+          ? (isEdit ? 'gemini-edit' : 'gemini')
+          : (isEdit ? 'cloud-edit' : 'cloud')
     setPending((p) => [{ key, prompt: text, engine: engineTag }, ...p])
 
     try {
@@ -756,11 +718,12 @@ function ImageGenInner() {
                     ...(outputFormat !== 'png' ? { outputCompression } : {}),
                     moderation,
                     responseFormat,
-                    providerStyle,
                     ...(requestUser.trim() ? { user: requestUser.trim() } : {}),
                   }
                 : {}),
             }
+          : engine === 'gemini'
+            ? { model: 'gemini-3-pro-image-preview', n }
           : {}),
         ...(refUrls ? { referenceUrls: refUrls } : {}),
         ...(maskDataUrl ? { maskDataUrl } : {}),
@@ -891,7 +854,7 @@ function ImageGenInner() {
   }
 
   const engineLabel = (e: string) =>
-    e.startsWith('cloud') ? '云' : e.startsWith('comfy') ? '本' : e
+    e.startsWith('gemini') ? 'Gemini' : e.startsWith('cloud') ? 'GPT' : e.startsWith('comfy') ? 'SDXL' : e
   const timeLabel = (ts: number) =>
     new Date(ts > 1e12 ? ts : ts * 1000).toLocaleString(undefined, {
       month: 'numeric',
@@ -903,6 +866,15 @@ function ImageGenInner() {
     pending.length < 3 &&
     !!prompt.trim() &&
     (engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
+
+  async function copyPrompt(value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      message.success('提示词已复制')
+    } catch {
+      message.error('复制提示词失败')
+    }
+  }
 
   const totalCount = history.length + sessionResults.length
   const iconBtn = { size: 'small' as const, type: 'text' as const }
@@ -920,6 +892,16 @@ function ImageGenInner() {
             handleReferenceUpload(e.target.files?.[0])
             e.target.value = ''
           }}
+        />
+        <Tabs
+          size="small"
+          activeKey={engine}
+          onChange={(value) => setEngine(value as ImageGenEngine)}
+          items={[
+            { key: 'openai', label: 'GPT Image 2', disabled: !health?.keyConfigured },
+            { key: 'comfy', label: 'SDXL 生图', disabled: !health?.comfy },
+            { key: 'gemini', label: 'Gemini Image', disabled: !health?.keyConfigured },
+          ]}
         />
         <span className={styles.sectionLabel}>上传图片(改图)</span>
         <div
@@ -968,15 +950,15 @@ function ImageGenInner() {
               <Button size="small" icon={<X size={13} />} onClick={clearBaseImage} />
             </div>
             <div className={styles.basePreviewBottomLeft}>
-              <Button
+              {engine !== 'gemini' && <Button
                 size="small"
                 type="primary"
                 icon={<Brush size={13} />}
                 onClick={() => setMaskEditorOpen(true)}
               >
                 涂抹重绘
-              </Button>
-              {maskDataUrl && (
+              </Button>}
+              {engine !== 'gemini' && maskDataUrl && (
                 <Button size="small" onClick={() => setMaskDataUrl(null)}>
                   清除蒙版
                 </Button>
@@ -1031,36 +1013,10 @@ function ImageGenInner() {
             ))}
         </div>
 
-        <span className={styles.sectionLabel}>风格</span>
-        <div className={styles.chips}>
-          {STYLE_PRESETS.map((p) => {
-            const active = presetId === p.id
-            return (
-              <button
-                key={p.id}
-                type="button"
-                className={styles.styleChip}
-                style={
-                  active
-                    ? { background: p.color, borderColor: p.color, color: '#fff' }
-                    : undefined
-                }
-                onClick={() => setPresetId(p.id)}
-              >
-                <span
-                  className="dot"
-                  style={{ background: active ? 'rgba(255,255,255,0.75)' : p.color }}
-                />
-                {p.label}
-              </button>
-            )
-          })}
-        </div>
-
         <span className={styles.sectionLabel}>
           尺寸
-          {engine === 'comfy' && (
-            <span style={{ opacity: 0.6, textTransform: 'none' }}> · 仅云端生效</span>
+          {engine !== 'openai' && (
+            <span style={{ opacity: 0.6, textTransform: 'none' }}> · 仅 GPT Image 2 可选</span>
           )}
         </span>
         <div className={cx(styles.optionGrid, styles.sizeOptionGrid)}>
@@ -1069,7 +1025,7 @@ function ImageGenInner() {
               key={s.id}
               type="button"
               className={cx(styles.optionBtn, styles.sizeOption, size === s.id && styles.optionBtnActive)}
-              disabled={engine === 'comfy'}
+              disabled={engine !== 'openai'}
               onClick={() => setSize(s.id)}
             >
               <span className="icon">{s.icon}</span>
@@ -1154,13 +1110,6 @@ function ImageGenInner() {
                   </select>
                 </label>
                 <label className={styles.advancedField}>
-                  API 风格
-                  <select value={providerStyle} onChange={(e) => setProviderStyle(e.target.value as ImageGenProviderStyle)}>
-                    <option value="vivid">vivid</option>
-                    <option value="natural">natural</option>
-                  </select>
-                </label>
-                <label className={styles.advancedField}>
                   用户标识（可选）
                   <input
                     maxLength={64}
@@ -1192,6 +1141,7 @@ function ImageGenInner() {
           ))}
         </div>
 
+        {engine === 'comfy' && <>
         <span className={styles.label}>ComfyUI(本地引擎)</span>
         <div className={styles.chips}>
           <Tooltip
@@ -1230,35 +1180,11 @@ function ImageGenInner() {
             </span>
           )}
         </div>
+        </>}
 
-        <span className={styles.label}>引擎</span>
-        <div className={styles.chips}>
-          <Tooltip title={health?.keyConfigured ? '' : '云端图像服务不可达'}>
-            <Button
-              size="small"
-              type={engine === 'openai' ? 'primary' : 'default'}
-              disabled={!health?.keyConfigured}
-              icon={<Cloud size={13} />}
-              onClick={() => setEngine('openai')}
-            >
-              云端 {health?.model || ''}
-            </Button>
-          </Tooltip>
-          <Tooltip title={health?.comfy ? '' : 'ComfyUI 未运行,打开上面的开关'}>
-            <Button
-              size="small"
-              type={engine === 'comfy' ? 'primary' : 'default'}
-              disabled={!health?.comfy}
-              icon={<Monitor size={13} />}
-              onClick={() => setEngine('comfy')}
-            >
-              本地 ComfyUI
-            </Button>
-          </Tooltip>
-          <Tooltip title="重新检测服务状态">
-            <Button size="small" icon={<RefreshCw size={13} />} onClick={refreshHealth} />
-          </Tooltip>
-        </div>
+        <Tooltip title="重新检测服务状态">
+          <Button size="small" icon={<RefreshCw size={13} />} onClick={refreshHealth} />
+        </Tooltip>
 
         {!serviceUp && !comfyBusy && (
           <div className={styles.offline}>没有可用引擎——打开上面的 ComfyUI 开关即可。</div>
@@ -1313,13 +1239,16 @@ function ImageGenInner() {
                   <span className={styles.histTag}>{engineLabel(s.engine)}·未留档</span>
                 </div>
                 <div className={styles.cardBody}>
-                  <div className={styles.cardPrompt} title={s.prompt}>
+                  <div className={styles.cardPrompt} title="点击复制提示词" onClick={() => void copyPrompt(s.prompt)}>
                     {s.prompt}
                   </div>
                   <div className={styles.cardMeta}>
                     <span className="time">{timeLabel(s.createdAt)}</span>
                     <Tooltip title="下载 PNG">
                       <Button {...iconBtn} icon={<Download size={13} />} onClick={() => downloadDataUrl(s.src)} />
+                    </Tooltip>
+                    <Tooltip title="复制提示词">
+                      <Button {...iconBtn} icon={<Copy size={13} />} onClick={() => void copyPrompt(s.prompt)} />
                     </Tooltip>
                   </div>
                 </div>
@@ -1333,13 +1262,16 @@ function ImageGenInner() {
                   <span className={styles.histTag}>{engineLabel(h.engine)}</span>
                 </div>
                 <div className={styles.cardBody}>
-                  <div className={styles.cardPrompt} title={h.prompt}>
+                  <div className={styles.cardPrompt} title="点击复制提示词" onClick={() => void copyPrompt(h.prompt)}>
                     {h.prompt}
                   </div>
                   <div className={styles.cardMeta}>
                     <span className="time">{timeLabel(h.created_at)}</span>
                     <Tooltip title="下载 PNG">
                       <Button {...iconBtn} icon={<Download size={13} />} onClick={() => downloadUrl(h.url)} />
+                    </Tooltip>
+                    <Tooltip title="复制提示词">
+                      <Button {...iconBtn} icon={<Copy size={13} />} onClick={() => void copyPrompt(h.prompt)} />
                     </Tooltip>
                     <Tooltip title="复制链接">
                       <Button

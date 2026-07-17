@@ -48,7 +48,7 @@ declare global {
           feishuAppId: string
           feishuAppSecret: string
           feishuChatId: string
-          imageEngine: '' | 'comfy' | 'openai'
+          imageEngine: '' | 'comfy' | 'openai' | 'gemini'
           comfyDir: string
           comfyPythonPath: string
           comfyLaunchArgs: string
@@ -73,7 +73,7 @@ declare global {
           feishuAppId: string
           feishuAppSecret: string
           feishuChatId: string
-          imageEngine: '' | 'comfy' | 'openai'
+          imageEngine: '' | 'comfy' | 'openai' | 'gemini'
           comfyDir: string
           comfyPythonPath: string
           comfyLaunchArgs: string
@@ -204,6 +204,7 @@ declare global {
           responseFormat?: ImageGenResponseFormat
           providerStyle?: ImageGenProviderStyle
           user?: string
+          model?: 'gemini-3-pro-image-preview'
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
@@ -262,7 +263,7 @@ declare global {
 
 export type PiProvider = 'anthropic' | 'openai'
 
-export type ImageGenEngine = 'openai' | 'comfy'
+export type ImageGenEngine = 'openai' | 'comfy' | 'gemini'
 
 export type Model3DHealth = { configured: boolean }
 

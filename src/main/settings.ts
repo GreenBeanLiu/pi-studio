@@ -43,7 +43,7 @@ type SettingsData = {
    */
   customModelIds: string[]
   /** 生图默认引擎:'comfy' 本地 / 'openai' 云端;空=按可用性自动选 */
-  imageEngine: '' | 'comfy' | 'openai'
+  imageEngine: '' | 'comfy' | 'openai' | 'gemini'
   /** ComfyUI 安装目录(本地引擎启停用);空=内置默认 D:\Works\ComfyUI */
   comfyDir: string
   comfyPythonPath: string
@@ -169,7 +169,9 @@ export function loadSettings(): SettingsData {
       ? (raw.customModelIds as string[])
       : DEFAULTS.customModelIds,
     imageEngine:
-      raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' ? raw.imageEngine : DEFAULTS.imageEngine,
+      raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' || raw.imageEngine === 'gemini'
+        ? raw.imageEngine
+        : DEFAULTS.imageEngine,
     comfyDir: (raw.comfyDir as string) ?? DEFAULTS.comfyDir,
     comfyPythonPath: (raw.comfyPythonPath as string) ?? DEFAULTS.comfyPythonPath,
     comfyLaunchArgs: (raw.comfyLaunchArgs as string) ?? DEFAULTS.comfyLaunchArgs,

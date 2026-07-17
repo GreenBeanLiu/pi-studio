@@ -160,7 +160,7 @@ const api = {
     health: () => ipcRenderer.invoke('imageGen:health'),
     generate: (payload: {
       prompt: string
-      engine: 'openai' | 'comfy'
+      engine: 'openai' | 'comfy' | 'gemini'
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
@@ -171,7 +171,7 @@ const api = {
       outputCompression?: number
       moderation?: 'auto' | 'low'
       responseFormat?: 'b64_json' | 'url'
-      providerStyle?: 'vivid' | 'natural'
+      model?: 'gemini-3-pro-image-preview'
       user?: string
     }) =>
       ipcRenderer.invoke('imageGen:generate', payload),
