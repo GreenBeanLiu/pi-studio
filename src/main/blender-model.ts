@@ -14,6 +14,11 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
+import {
+  inspectBlenderInstall,
+  installAddonAndLaunchBlender,
+  type BlenderInstallStatus,
+} from './blender-setup'
 
 /**
  * 第四种 3D 引擎「Blender 建模」:agent 写 bpy 建模脚本,宿主经 blender-mcp addon
@@ -27,6 +32,14 @@ const BLENDER_PORT = 9876
 const AGENT_TIMEOUT_MS = 10 * 60_000
 const EXEC_TIMEOUT_MS = 120_000
 const REPAIR_ROUNDS = 3
+
+export type BlenderSetupStatus = BlenderInstallStatus & {
+  connected: boolean
+  ok?: boolean
+  error?: string
+}
+
+let blenderSetupInFlight: Promise<BlenderSetupStatus> | null = null
 
 /** blender-mcp addon socket:发 {type,params},收整段 JSON。 */
 function blenderCommand(
@@ -67,6 +80,55 @@ export async function blenderAvailable(): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+async function blenderStatus(): Promise<BlenderSetupStatus> {
+  const connected = await blenderAvailable()
+  try {
+    return { connected, ...(await inspectBlenderInstall()) }
+  } catch (error) {
+    appendAppLog('warn', 'blenderSetup.status', '检查 Blender 安装状态失败', normalizeError(error))
+    return {
+      connected,
+      blenderFound: false,
+      addonInstalled: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+async function runBlenderSetup(): Promise<BlenderSetupStatus> {
+  if (await blenderAvailable()) return { ...(await blenderStatus()), ok: true }
+  try {
+    const installed = await installAddonAndLaunchBlender()
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (await blenderAvailable()) return { connected: true, ok: true, ...installed }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    return {
+      connected: false,
+      ok: false,
+      ...installed,
+      error: 'Blender 已启动，但 blender-mcp 在 30 秒内没有连上，请查看 Blender 的控制台输出',
+    }
+  } catch (error) {
+    appendAppLog('error', 'blenderSetup.install', '安装或启动 Blender MCP 失败', normalizeError(error))
+    const status = await blenderStatus()
+    return {
+      ...status,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+async function setupBlender(): Promise<BlenderSetupStatus> {
+  if (!blenderSetupInFlight) {
+    blenderSetupInFlight = runBlenderSetup().finally(() => {
+      blenderSetupInFlight = null
+    })
+  }
+  return blenderSetupInFlight
 }
 
 /** 把 agent 的建模代码包进独立临时场景执行:不污染用户场景,失败也能收拾干净。 */
@@ -159,8 +221,10 @@ async function generateBlenderModel(payload: {
   if (!prompt) return { error: '请输入模型描述' }
   const settings = loadSettings()
   if (!settings.apiKey) return { error: 'Blender 建模需要在「设置 → 模型」里配置 API Key' }
-  if (!(await blenderAvailable()))
-    return { error: '连不上 Blender(localhost:9876)——确认 Blender 已启动且 blender-mcp 已连接' }
+  if (!(await blenderAvailable())) {
+    const setup = await setupBlender()
+    if (!setup.connected) return { error: setup.error ?? '无法自动启动 Blender' }
+  }
 
   let sourceScript: string | null = null
   let displayPrompt = prompt
@@ -273,6 +337,8 @@ async function generateBlenderModel(payload: {
 
 export function registerBlenderModel(): void {
   ipcMain.handle('model3d:blenderHealth', () => blenderAvailable())
+  ipcMain.handle('model3d:blenderStatus', () => blenderStatus())
+  ipcMain.handle('model3d:setupBlender', () => setupBlender())
   ipcMain.handle('model3d:generateBlender', (_e, payload: { prompt: string; sourceId?: string }) =>
     generateBlenderModel(payload),
   )

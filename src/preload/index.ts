@@ -186,6 +186,8 @@ const api = {
     generateBlender: (payload: { prompt: string; sourceId?: string }) =>
       ipcRenderer.invoke('model3d:generateBlender', payload),
     blenderHealth: () => ipcRenderer.invoke('model3d:blenderHealth'),
+    blenderStatus: () => ipcRenderer.invoke('model3d:blenderStatus'),
+    setupBlender: () => ipcRenderer.invoke('model3d:setupBlender'),
     history: () => ipcRenderer.invoke('model3d:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
     saveThumbnail: (payload: { id: string; dataUrl: string }) =>

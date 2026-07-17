@@ -485,7 +485,10 @@ export default function ModelViewer({
     const width = mount.clientWidth || 1
     const height = mount.clientHeight || 1
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    // logarithmicDepthBuffer:agent 生成的模型常有近共面的大面(饰条贴板面、双层壳),
+    // 默认线性深度在 near=0.1 时精度不够,旋转时共面处斑驳闪烁(z-fighting)。
+    // 对数深度让精度按距离均匀分布,近共面(有微小间隙)的面不再打架。
+    const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(width, height)
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -500,7 +503,8 @@ export default function ModelViewer({
     key.position.set(5, 8, 5)
     scene.add(key)
 
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
+    // far 收到 100:模型统一缩放到 ~2.4 单位,1000 的远平面白白浪费深度精度
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100)
     camera.position.set(0, 0.6, 4)
 
     const controls = new OrbitControls(camera, renderer.domElement)

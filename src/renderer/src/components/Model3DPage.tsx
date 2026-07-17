@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from 'antd'
 import { Box, Sparkles, Trash2, ImagePlus, X, Wrench } from 'lucide-react'
-import { api, type Model3DHistoryItem, type Model3DOptions } from '../lib/api'
+import { api, type BlenderSetupStatus, type Model3DHistoryItem, type Model3DOptions } from '../lib/api'
 import { assessReferenceImage, normalizeReferenceImage } from '../lib/reference-check'
 import ModelViewer from './ModelViewer'
 
@@ -213,7 +213,8 @@ function Model3DPageInner(): React.JSX.Element {
   const [prompt, setPrompt] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [refWarnings, setRefWarnings] = useState<string[]>([])
-  const [blenderUp, setBlenderUp] = useState<boolean | null>(null)
+  const [blenderStatus, setBlenderStatus] = useState<BlenderSetupStatus | null>(null)
+  const [blenderSetupLoading, setBlenderSetupLoading] = useState(false)
   const [refineText, setRefineText] = useState('')
   const [opts, setOpts] = useState<Model3DOptions>({ texture: true, pbr: false })
   const [generating, setGenerating] = useState(false)
@@ -240,8 +241,20 @@ function Model3DPageInner(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (mode === 'blender') void api.model3d.blenderHealth().then(setBlenderUp)
+    if (mode === 'blender') void api.model3d.blenderStatus().then(setBlenderStatus)
   }, [mode])
+
+  const onSetupBlender = async (): Promise<void> => {
+    setBlenderSetupLoading(true)
+    try {
+      const status = await api.model3d.setupBlender()
+      setBlenderStatus(status)
+      if (status.connected) message.success('Blender 已启动，blender-mcp 已连接')
+      else message.error(status.error ?? 'Blender 启动失败')
+    } finally {
+      setBlenderSetupLoading(false)
+    }
+  }
 
   const pickFile = (file: File | null | undefined): void => {
     if (!file) return
@@ -353,9 +366,23 @@ function Model3DPageInner(): React.JSX.Element {
         {mode === 'blender' && (
           <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
             由内嵌 agent 驱动本机 Blender(blender-mcp)建模并导出 glb,可用修改器/布尔/倒角等真建模工具。
-            {blenderUp === false && (
+            {blenderStatus?.connected === false && (
               <div style={{ color: '#faad14', marginTop: 4 }}>
-                连不上 Blender(localhost:9876)——先启动 Blender 并连接 blender-mcp addon。
+                <div>尚未连接 Blender。首次使用会安装经过校验的 blender-mcp addon。</div>
+                <Button
+                  size="small"
+                  type="link"
+                  loading={blenderSetupLoading}
+                  onClick={() => void onSetupBlender()}
+                  style={{ padding: 0, height: 24 }}
+                >
+                  一键安装并启动 Blender
+                </Button>
+              </div>
+            )}
+            {blenderStatus?.connected && (
+              <div style={{ color: '#52c41a', marginTop: 4 }}>
+                Blender 已连接{blenderStatus.version ? ` (${blenderStatus.version})` : ''}
               </div>
             )}
           </div>

@@ -55,6 +55,9 @@ declare global {
           comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
+          imageProviderMode: 'failover' | 'round-robin'
+          imageSecondaryBaseUrl: string
+          imageSecondaryKey: string
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -80,6 +83,9 @@ declare global {
           comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
+          imageProviderMode: 'failover' | 'round-robin'
+          imageSecondaryBaseUrl: string
+          imageSecondaryKey: string
         }) => Promise<{ ok: boolean; sandboxChanged?: boolean; workspaceOpen?: boolean }>
         testConnection: (s: {
           provider: PiProvider
@@ -218,6 +224,8 @@ declare global {
           sourceId?: string
         }) => Promise<Model3DHistoryItem | { error: string }>
         blenderHealth: () => Promise<boolean>
+        blenderStatus: () => Promise<BlenderSetupStatus>
+        setupBlender: () => Promise<BlenderSetupStatus>
         generateCode: (payload: {
           prompt: string
           sourceId?: string
@@ -254,6 +262,16 @@ export type PiProvider = 'anthropic' | 'openai'
 export type ImageGenEngine = 'openai' | 'comfy'
 
 export type Model3DHealth = { configured: boolean }
+
+export type BlenderSetupStatus = {
+  connected: boolean
+  blenderFound: boolean
+  addonInstalled: boolean
+  blenderPath?: string
+  version?: string
+  ok?: boolean
+  error?: string
+}
 
 export type Model3DOptions = {
   modelVersion?: string
@@ -295,6 +313,11 @@ export type ImageGenHealth = {
   comfyLastError?: string
   model: string
   r2: boolean
+  cloudProviders: {
+    primary: boolean
+    secondary: boolean
+    mode: 'failover' | 'round-robin'
+  }
 }
 
 export type RoutineSchedule =

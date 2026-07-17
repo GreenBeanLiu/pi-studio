@@ -34,6 +34,41 @@ function bundleUrl(): string {
   ).href
 }
 
+function depthAuditUrl(): string {
+  return pathToFileURL(
+    join(app.getAppPath(), 'resources', 'model-export', 'audit-z-fighting.js'),
+  ).href
+}
+
+/** Older editable model sources predate the geometry audit. Wire it in while
+ * copying them so fresh generation and iterative refine share the same gate. */
+function withDepthAudit(source: string): string {
+  const importLine = `import { assertNoCoplanarOuterFaces } from ${JSON.stringify(depthAuditUrl())}`
+  let code = source.replace(
+    /import \{ assertNoCoplanarOuterFaces \} from "file:\/\/\/[^"\r\n]*audit-z-fighting\.js"/g,
+    importLine,
+  )
+  if (!/import \{ assertNoCoplanarOuterFaces \} from /.test(code)) {
+    code = code.replace(
+      /(import \{ THREE, GLTFExporter \} from [^\r\n]+)/,
+      `$1\n${importLine}`,
+    )
+  }
+  if (!/assertNoCoplanarOuterFaces\(THREE, root\)/.test(code)) {
+    code = code.replace(
+      /const root = buildModel\(THREE\)/,
+      'const root = buildModel(THREE)\nassertNoCoplanarOuterFaces(THREE, root)',
+    )
+  }
+  if (
+    !/import \{ assertNoCoplanarOuterFaces \} from /.test(code) ||
+    !/assertNoCoplanarOuterFaces\(THREE, root\)/.test(code)
+  ) {
+    throw new Error('旧模型源码无法接入 z-fighting 几何审计')
+  }
+  return code
+}
+
 function workDir(id: string): string {
   const d = join(app.getPath('userData'), 'code-models', id)
   mkdirSync(d, { recursive: true })
@@ -60,6 +95,7 @@ globalThis.FileReader = class {
 }
 
 import { THREE, GLTFExporter } from ${JSON.stringify(bundleUrl())}
+import { assertNoCoplanarOuterFaces } from ${JSON.stringify(depthAuditUrl())}
 import { writeFileSync } from 'node:fs'
 
 /**
@@ -82,6 +118,7 @@ function buildModel(THREE) {
 // === 以下为导出逻辑,请勿修改 ===
 const out = process.argv[2] || 'model.glb'
 const root = buildModel(THREE)
+assertNoCoplanarOuterFaces(THREE, root)
 new GLTFExporter().parse(
   root,
   (result) => {
@@ -107,7 +144,7 @@ function refinePrompt(instruction: string): string {
 - 保持既有结构与命名,只做必要的增量修改;不要推翻重写。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败)。
 - 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入 ≥0.01 或留 ≥0.005 间隙。
-- 每改一版就运行 \`node build-model.js test.glb\` 自测,确保打印 MODEL_OK,反复修正直到稳定成功。
+- 每改一版就运行 \`node build-model.js test.glb\` 自测；若出现 MODEL_Z_FIGHTING，按报出的部件名错开共面结构；直到打印 MODEL_OK。
 - 完成后清理掉 test.glb 等临时产物。`
 }
 
@@ -122,7 +159,7 @@ function agentPrompt(prompt: string): string {
 - 做成"可动画/可拆解":每个能独立运动的部件放各自的 THREE.Group(pivot 节点),mesh 作为其 child,并在 group.userData 里标注 pivot/axis 等语义。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败);用纯色、顶点色或 MeshStandardMaterial 的参数表达材质。
 - 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入 ≥0.01 或留 ≥0.005 间隙。
-- 每改一版就运行 \`node build-model.js test.glb\` 自测,确保打印 MODEL_OK 且无报错,反复修正直到稳定成功。
+- 每改一版就运行 \`node build-model.js test.glb\` 自测；若出现 MODEL_Z_FIGHTING，按报出的部件名错开共面结构；直到打印 MODEL_OK 且无报错。
 - 完成后清理掉 test.glb 等临时产物,只保留改好的 build-model.js。`
 }
 
@@ -179,9 +216,11 @@ async function generateCodeModel(payload: {
     if (sourceScript) {
       // bundle 的 file:// 绝对路径会随版本/安装路径漂移(0.3.59 起 .mjs 改名 .js),
       // 拷贝时统一重写为当前 bundle 地址
-      const code = readFileSync(sourceScript, 'utf-8').replace(
-        /"file:\/\/\/[^"]*three-gltf-bundle\.m?js"/g,
-        JSON.stringify(bundleUrl()),
+      const code = withDepthAudit(
+        readFileSync(sourceScript, 'utf-8').replace(
+          /"file:\/\/\/[^"]*three-gltf-bundle\.m?js"/g,
+          JSON.stringify(bundleUrl()),
+        ),
       )
       writeFileSync(scriptPath, code, 'utf-8')
     } else writeFileSync(scriptPath, skeleton(), 'utf-8')
