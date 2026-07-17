@@ -1041,13 +1041,6 @@ function ImageGenInner() {
               onClick={() => setEngine('openai')}
             >
               云端 {health?.model || ''}
-              {health?.cloudProviders?.primary && health.cloudProviders.secondary
-                ? health.cloudProviders.mode === 'round-robin'
-                  ? ' · 双节点轮询'
-                  : ' · 双节点主备'
-                : health?.cloudProviders?.secondary
-                  ? ' · 3A'
-                  : ''}
             </Button>
           </Tooltip>
           <Tooltip title={health?.comfy ? '' : 'ComfyUI 未运行,打开上面的开关'}>

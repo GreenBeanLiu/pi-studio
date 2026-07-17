@@ -37,9 +37,6 @@ type Settings = {
   comfyCheckpoint: string
   cloudImageRelay: string
   cloudImageKey: string
-  imageProviderMode: 'failover' | 'round-robin'
-  imageSecondaryBaseUrl: string
-  imageSecondaryKey: string
 }
 
 type Category = 'model' | 'tools' | 'imagegen' | 'security' | 'about'
@@ -229,9 +226,6 @@ export default function SettingsModal({
     comfyCheckpoint: '',
     cloudImageRelay: '',
     cloudImageKey: '',
-    imageProviderMode: 'round-robin',
-    imageSecondaryBaseUrl: 'https://www.3a-api.com/v1',
-    imageSecondaryKey: '',
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -944,34 +938,6 @@ export default function SettingsModal({
                 </span>
               </div>
 
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  第二图像 Provider（3A API）
-                  <span className={styles.labelHint}>支持 gpt-image-2；同域时可复用“模型服务”的 OpenAI Key</span>
-                </span>
-                <Select
-                  value={settings.imageProviderMode}
-                  onChange={(value) => patch({ imageProviderMode: value })}
-                  options={[
-                    { value: 'round-robin', label: '轮询分流（默认）' },
-                    { value: 'failover', label: '主备切换' },
-                  ]}
-                />
-                <Input
-                  value={settings.imageSecondaryBaseUrl}
-                  onChange={(e) => patch({ imageSecondaryBaseUrl: e.target.value })}
-                  placeholder="https://www.3a-api.com/v1"
-                />
-                <Input.Password
-                  value={settings.imageSecondaryKey}
-                  onChange={(e) => patch({ imageSecondaryKey: e.target.value })}
-                  placeholder="3A API Key（留空可复用同域 OpenAI Key）"
-                />
-                <span className={styles.labelHint}>
-                  主备切换仅在超时、限流或服务端错误时使用第二节点；轮询分流会交替发起文生图。
-                  参考图和蒙版编辑仍走原云端中继。
-                </span>
-              </div>
             </div>
           )}
 

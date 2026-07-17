@@ -54,11 +54,6 @@ type SettingsData = {
   cloudImageRelay: string
   /** 云端图像 Key;空=未配置（开发环境可用 PI_CLOUD_IMAGE_KEY）。3D 生成也复用此 relay+key */
   cloudImageKey: string
-  /** 两个云端 gpt-image-2 Provider 的调度模式 */
-  imageProviderMode: 'failover' | 'round-robin'
-  /** 第二个 OpenAI 兼容图像 Provider；默认 3A API */
-  imageSecondaryBaseUrl: string
-  imageSecondaryKey: string
   recentWorkspaces: Workspace[]
 }
 
@@ -86,9 +81,6 @@ const DEFAULTS: SettingsData = {
   comfyCheckpoint: '',
   cloudImageRelay: '',
   cloudImageKey: '',
-  imageProviderMode: 'round-robin',
-  imageSecondaryBaseUrl: 'https://www.3a-api.com/v1',
-  imageSecondaryKey: '',
   recentWorkspaces: [],
 }
 
@@ -140,6 +132,16 @@ function encryptField(
 
 export function loadSettings(): SettingsData {
   const raw = readRaw()
+  const legacyImageProviderKeys = [
+    'imageProviderMode',
+    'imageSecondaryBaseUrl',
+    'imageSecondaryKey',
+    'imageSecondaryKeyEncrypted',
+  ]
+  if (legacyImageProviderKeys.some((key) => key in raw)) {
+    for (const key of legacyImageProviderKeys) delete raw[key]
+    writeRaw(raw)
+  }
   const apiKey = decryptField(raw, 'apiKey', 'apiKeyEncrypted')
 
   return {
@@ -174,13 +176,6 @@ export function loadSettings(): SettingsData {
     comfyCheckpoint: (raw.comfyCheckpoint as string) ?? DEFAULTS.comfyCheckpoint,
     cloudImageRelay: (raw.cloudImageRelay as string) ?? DEFAULTS.cloudImageRelay,
     cloudImageKey: decryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted'),
-    imageProviderMode:
-      raw.imageProviderMode === 'round-robin' || raw.imageProviderMode === 'failover'
-        ? raw.imageProviderMode
-        : DEFAULTS.imageProviderMode,
-    imageSecondaryBaseUrl:
-      (raw.imageSecondaryBaseUrl as string) ?? DEFAULTS.imageSecondaryBaseUrl,
-    imageSecondaryKey: decryptField(raw, 'imageSecondaryKey', 'imageSecondaryKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
       ? (raw.recentWorkspaces as Workspace[])
       : DEFAULTS.recentWorkspaces,
@@ -212,9 +207,6 @@ export function saveSettings(
     | 'comfyCheckpoint'
     | 'cloudImageRelay'
     | 'cloudImageKey'
-    | 'imageProviderMode'
-    | 'imageSecondaryBaseUrl'
-    | 'imageSecondaryKey'
   >,
 ): void {
   const raw = readRaw()
@@ -225,7 +217,6 @@ export function saveSettings(
   encryptField(raw, 'feishuSecret', 'feishuSecretEncrypted', settings.feishuSecret)
   encryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted', settings.feishuAppSecret)
   encryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted', settings.cloudImageKey)
-  encryptField(raw, 'imageSecondaryKey', 'imageSecondaryKeyEncrypted', settings.imageSecondaryKey)
   raw.provider = settings.provider
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
@@ -242,8 +233,6 @@ export function saveSettings(
   raw.comfyLaunchArgs = settings.comfyLaunchArgs
   raw.comfyCheckpoint = settings.comfyCheckpoint
   raw.cloudImageRelay = settings.cloudImageRelay
-  raw.imageProviderMode = settings.imageProviderMode
-  raw.imageSecondaryBaseUrl = settings.imageSecondaryBaseUrl
 
   writeRaw(raw)
 }

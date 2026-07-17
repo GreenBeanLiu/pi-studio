@@ -170,9 +170,6 @@ export function registerIpcHandlers(): void {
         comfyCheckpoint: string
         cloudImageRelay: string
         cloudImageKey: string
-        imageProviderMode: 'failover' | 'round-robin'
-        imageSecondaryBaseUrl: string
-        imageSecondaryKey: string
       },
     ) => {
       const sandboxWas = loadSettings().sandboxEnabled

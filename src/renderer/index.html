@@ -31,7 +31,7 @@
             save: () => Promise.resolve({ ok: true, path: 'mock-diagnostics.json' }),
           },
           settings: {
-            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, sandboxEnabled: false, subagentsEnabled: true, imageEngine: '', comfyDir: '', comfyPythonPath: '', comfyLaunchArgs: '', comfyCheckpoint: '', cloudImageRelay: '', cloudImageKey: '', imageProviderMode: 'round-robin', imageSecondaryBaseUrl: 'https://www.3a-api.com/v1', imageSecondaryKey: '', recentWorkspaces: [] }),
+            load: () => Promise.resolve({ provider: 'anthropic', apiKey: '', model: '', baseUrl: '', favoriteModels: '', tavilyApiKey: '', heliconeApiKey: '', securityGuardEnabled: true, sandboxEnabled: false, subagentsEnabled: true, imageEngine: '', comfyDir: '', comfyPythonPath: '', comfyLaunchArgs: '', comfyCheckpoint: '', cloudImageRelay: '', cloudImageKey: '', recentWorkspaces: [] }),
             save: () => Promise.resolve({ ok: true }),
             testConnection: () => Promise.resolve({ ok: true, message: 'mock connection ok' }),
             listModels: () => Promise.resolve({ ok: true, message: 'mock models loaded', models: ['gpt-5.5', 'gpt-5.4'] }),

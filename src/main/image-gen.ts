@@ -5,24 +5,14 @@ import { ComfyRuntime, parseLaunchArgs, type ComfyRuntimeHealth } from './comfy-
 import { resolveCloudImageConfig } from './network-policy'
 import { loadSettings } from './settings'
 import { resolveCloudImageResult } from './image-gen-result'
-import {
-  buildOpenAIImagePayload,
-  isRetryableImageProviderError,
-  normalizeOpenAIBaseUrl,
-  parseOpenAIImageResponse,
-  providerOrder,
-  sameProviderOrigin,
-  type ImageProviderMode,
-} from './image-provider'
 
 // 本地引擎:直连 ComfyUI(默认 8188,可由本应用托管启停)。
-// 云端引擎:VPS 中继(trail-api)→ trigger.dev 跑 gpt-image-2 → R2,SSE 拿结果。
+// 云端引擎:客户端只连 TrailAI;Provider 调度、Hatchet 执行和 R2 归档均在服务端。
 const COMFY_BASE = (process.env.PI_COMFY_BASE || 'http://127.0.0.1:8188').replace(/\/$/, '')
 const COMFY_DIR_DEFAULT = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
 const COMFY_CKPT_PREFERRED = process.env.PI_COMFY_CHECKPOINT?.trim() || ''
 const COMFY_TIMEOUT_MS = 150_000
 const CLOUD_TIMEOUT_MS = 320_000
-const SECONDARY_MODEL = 'gpt-image-2'
 
 // 构建期注入(见 electron.vite.config.ts);优先级:设置页覆盖 > process.env(dev) > 烧入默认。
 declare const __CLOUD_IMAGE_RELAY__: string
@@ -59,46 +49,6 @@ export const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
   )
 }
 
-type SecondaryImageConfig = {
-  available: boolean
-  baseUrl: string
-  key: string
-  mode: ImageProviderMode
-  error?: string
-}
-
-/** 第二个 OpenAI 兼容图像节点；Key 和地址每次从加密设置读取，保存后立即生效。 */
-export const getSecondaryCloud = (): SecondaryImageConfig => {
-  const settings = loadSettings()
-  const baseUrlInput = settings.imageSecondaryBaseUrl?.trim() || 'https://www.3a-api.com/v1'
-  const reusableModelKey =
-    settings.provider === 'openai' &&
-    settings.apiKey?.trim() &&
-    settings.baseUrl?.trim() &&
-    sameProviderOrigin(settings.baseUrl, baseUrlInput)
-      ? settings.apiKey.trim()
-      : ''
-  const key = settings.imageSecondaryKey?.trim() || reusableModelKey
-  const mode = settings.imageProviderMode
-  if (!key) return { available: false, baseUrl: '', key: '', mode }
-  try {
-    return {
-      available: true,
-      baseUrl: normalizeOpenAIBaseUrl(baseUrlInput),
-      key,
-      mode,
-    }
-  } catch (error) {
-    return {
-      available: false,
-      baseUrl: '',
-      key: '',
-      mode,
-      error: error instanceof Error ? error.message : String(error),
-    }
-  }
-}
-
 const NEGATIVE =
   'text, letters, words, watermark, signature, blurry, lowres, jpeg artifacts, frame, border, cropped, deformed'
 
@@ -118,25 +68,18 @@ export type ImageGenHealth = {
   comfyLastError?: string
   model: string
   r2: boolean
-  cloudProviders: {
-    primary: boolean
-    secondary: boolean
-    mode: ImageProviderMode
-  }
 }
 
 function buildImageGenHealth(
   comfy: ComfyRuntimeHealth,
-  primaryOk: boolean,
-  secondaryOk = false,
-  mode: ImageProviderMode = 'failover',
+  cloudOk: boolean,
   model = '',
 ): ImageGenHealth {
   const compatibleCheckpoints = comfy.checkpoints.filter(isCompatibleCheckpoint)
   const configuredCompatible = !comfy.checkpoint || isCompatibleCheckpoint(comfy.checkpoint)
   return {
-    ok: comfy.reachable || primaryOk || secondaryOk,
-    keyConfigured: primaryOk || secondaryOk,
+    ok: comfy.reachable || cloudOk,
+    keyConfigured: cloudOk,
     comfy: comfy.reachable,
     comfyManaged: comfy.managed,
     comfyCheckpoint: comfy.checkpoint,
@@ -152,8 +95,7 @@ function buildImageGenHealth(
     comfyDevices: comfy.deviceNames,
     comfyLastError: comfy.lastError,
     model,
-    r2: primaryOk,
-    cloudProviders: { primary: primaryOk, secondary: secondaryOk, mode },
+    r2: cloudOk,
   }
 }
 
@@ -367,22 +309,6 @@ async function probeCloud(path: string, timeoutMs: number): Promise<Response | n
   }
 }
 
-async function probeSecondaryCloud(): Promise<boolean> {
-  const secondary = getSecondaryCloud()
-  if (!secondary.available) return false
-  try {
-    const response = await fetch(`${secondary.baseUrl}/models`, {
-      headers: { Authorization: `Bearer ${secondary.key}` },
-      signal: AbortSignal.timeout(5000),
-    })
-    if (!response.ok) return false
-    const body = (await response.json()) as { data?: Array<{ id?: unknown }> }
-    return body.data?.some((model) => model.id === SECONDARY_MODEL) ?? false
-  } catch {
-    return false
-  }
-}
-
 /** 云端生成/改图:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
 async function cloudGenerate(
   prompt: string,
@@ -447,91 +373,8 @@ async function cloudGenerate(
   return { error: '云端连接在收到结果前断开了' }
 }
 
-/** 云端 gpt-image-2 支持的尺寸(值直接透传给中继/trigger 任务)。 */
+/** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
 export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
-
-async function secondaryCloudGenerate(
-  prompt: string,
-  size?: ImageGenSize,
-  downloadResult = true,
-): Promise<ImageGenResult> {
-  const secondary = getSecondaryCloud()
-  if (!secondary.available) return { error: secondary.error ?? '备用图像 Provider 未配置' }
-
-  const response = await fetch(`${secondary.baseUrl}/images/generations`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${secondary.key}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(buildOpenAIImagePayload(prompt, size, SECONDARY_MODEL)),
-    signal: AbortSignal.timeout(CLOUD_TIMEOUT_MS),
-  })
-  const text = await response.text()
-  let body: unknown = null
-  try {
-    body = JSON.parse(text)
-  } catch {
-    if (response.ok) return { error: '备用 Provider 返回了无法解析的响应' }
-  }
-  if (!response.ok) {
-    const parsed = parseOpenAIImageResponse(body)
-    const detail = 'error' in parsed ? parsed.error : text.slice(0, 200)
-    return { error: `备用 Provider ${response.status}: ${detail}` }
-  }
-
-  const parsed = parseOpenAIImageResponse(body)
-  if ('error' in parsed) return { error: parsed.error }
-  if ('b64' in parsed) {
-    return { dataUrl: `data:${parsed.mimeType};base64,${parsed.b64}`, publicUrl: null }
-  }
-  return resolveCloudImageResult(parsed.url, downloadResult)
-}
-
-let imageProviderCursor = 0
-
-async function balancedCloudGenerate(
-  prompt: string,
-  size?: ImageGenSize,
-  downloadResult = true,
-): Promise<ImageGenResult> {
-  const primary = getCloud()
-  const secondary = getSecondaryCloud()
-  const order = providerOrder(
-    secondary.mode,
-    imageProviderCursor++,
-    primary.available,
-    secondary.available,
-  )
-  if (!order.length) {
-    return { error: secondary.error ?? primary.error ?? '没有配置可用的云端图像 Provider' }
-  }
-
-  let lastResult: ImageGenResult = { error: '云端图像生成失败' }
-  for (let index = 0; index < order.length; index++) {
-    const provider = order[index]
-    try {
-      lastResult =
-        provider === 'primary'
-          ? await cloudGenerate(prompt, undefined, undefined, size, downloadResult)
-          : await secondaryCloudGenerate(prompt, size, downloadResult)
-    } catch (error) {
-      lastResult = { error: error instanceof Error ? error.message : String(error) }
-    }
-
-    if (!('error' in lastResult)) {
-      appendAppLog('info', 'imagegen.provider', 'Cloud image generated', { provider })
-      return lastResult
-    }
-    const hasNext = index + 1 < order.length
-    if (!hasNext || !isRetryableImageProviderError(lastResult.error)) return lastResult
-    appendAppLog('warn', 'imagegen.provider', 'Cloud image provider failed; trying next', {
-      provider,
-      error: lastResult.error,
-    })
-  }
-  return lastResult
-}
 
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
 export async function generateImage(payload: {
@@ -578,16 +421,13 @@ export async function generateImage(payload: {
       return { error: '蒙版编辑需要先选择一张底图' }
     }
     const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl) : undefined
-    // 备用 OpenAI 兼容节点目前负责文生图负载；参考图/蒙版仍由原中继上传和执行。
-    return references.length || maskUrl
-      ? await cloudGenerate(
-          payload.prompt,
-          references,
-          maskUrl,
-          payload.size,
-          payload.downloadResult !== false,
-        )
-      : await balancedCloudGenerate(payload.prompt, payload.size, payload.downloadResult !== false)
+    return cloudGenerate(
+      payload.prompt,
+      references,
+      maskUrl,
+      payload.size,
+      payload.downloadResult !== false,
+    )
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return {
@@ -607,20 +447,16 @@ export function registerImageGenHandlers(): void {
 
   ipcMain.handle('imageGen:health', async (): Promise<ImageGenHealth> => {
     const cloudConfig = getCloud()
-    const secondaryConfig = getSecondaryCloud()
-    const [comfy, cloudRes, secondaryOk] = await Promise.all([
+    const [comfy, cloudRes] = await Promise.all([
       comfyRuntime.health(),
       cloudConfig.available ? probeCloud('/imagegen/health', 3000) : Promise.resolve(null),
-      secondaryConfig.available ? probeSecondaryCloud() : Promise.resolve(false),
     ])
     const cloud = cloudRes ? ((await cloudRes.json()) as Record<string, unknown>) : null
     const cloudOk = !!cloud?.ok
     return buildImageGenHealth(
       comfy,
       cloudOk,
-      secondaryOk,
-      secondaryConfig.mode,
-      typeof cloud?.model === 'string' ? cloud.model : secondaryOk ? SECONDARY_MODEL : '',
+      typeof cloud?.model === 'string' ? cloud.model : '',
     )
   })
 
@@ -628,7 +464,7 @@ export function registerImageGenHandlers(): void {
     'imageGen:comfyStart',
     async (): Promise<{ ok: true; health: ImageGenHealth } | { error: string; health: ImageGenHealth }> => {
       const result = await comfyRuntime.start()
-      const health = buildImageGenHealth(result.health, false, false, getSecondaryCloud().mode)
+      const health = buildImageGenHealth(result.health, false)
       if (result.ok) {
         appendAppLog('info', 'imagegen.comfy', 'ComfyUI runtime ready', {
           alreadyRunning: result.alreadyRunning,

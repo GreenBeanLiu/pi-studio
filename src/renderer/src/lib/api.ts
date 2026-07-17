@@ -55,9 +55,6 @@ declare global {
           comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
-          imageProviderMode: 'failover' | 'round-robin'
-          imageSecondaryBaseUrl: string
-          imageSecondaryKey: string
           recentWorkspaces: Workspace[]
         }>
         save: (s: {
@@ -83,9 +80,6 @@ declare global {
           comfyCheckpoint: string
           cloudImageRelay: string
           cloudImageKey: string
-          imageProviderMode: 'failover' | 'round-robin'
-          imageSecondaryBaseUrl: string
-          imageSecondaryKey: string
         }) => Promise<{ ok: boolean; sandboxChanged?: boolean; workspaceOpen?: boolean }>
         testConnection: (s: {
           provider: PiProvider
@@ -313,11 +307,6 @@ export type ImageGenHealth = {
   comfyLastError?: string
   model: string
   r2: boolean
-  cloudProviders: {
-    primary: boolean
-    secondary: boolean
-    mode: 'failover' | 'round-robin'
-  }
 }
 
 export type RoutineSchedule =
