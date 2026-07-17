@@ -195,6 +195,15 @@ declare global {
           referenceUrls?: string[]
           maskDataUrl?: string
           size?: ImageGenSize
+          n?: number
+          quality?: ImageGenQuality
+          background?: ImageGenBackground
+          outputFormat?: ImageGenOutputFormat
+          outputCompression?: number
+          moderation?: ImageGenModeration
+          responseFormat?: ImageGenResponseFormat
+          providerStyle?: ImageGenProviderStyle
+          user?: string
         }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
@@ -291,6 +300,13 @@ export type Model3DHistoryItem = {
 
 /** 云端 gpt-image-2 尺寸:方形 / 横版(1536×1024)/ 竖版(1024×1536) */
 export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
+
+export type ImageGenQuality = 'low' | 'medium' | 'high'
+export type ImageGenBackground = 'auto' | 'transparent' | 'opaque'
+export type ImageGenOutputFormat = 'png' | 'jpeg' | 'webp'
+export type ImageGenModeration = 'auto' | 'low'
+export type ImageGenResponseFormat = 'b64_json' | 'url'
+export type ImageGenProviderStyle = 'vivid' | 'natural'
 
 export type ImageGenHealth = {
   ok: boolean

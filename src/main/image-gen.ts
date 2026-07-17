@@ -315,6 +315,7 @@ async function cloudGenerate(
   referenceUrls?: string[],
   maskUrl?: string,
   size?: ImageGenSize,
+  options?: ImageGenOptions,
   downloadResult = true,
 ): Promise<ImageGenResult> {
   const cloud = getCloud()
@@ -328,6 +329,7 @@ async function cloudGenerate(
     body: JSON.stringify({
       prompt,
       ...(size ? { size } : {}),
+      ...(options ?? {}),
       ...(referenceUrls?.length ? { referenceUrls } : {}),
       ...(maskUrl ? { maskUrl } : {}),
     }),
@@ -376,6 +378,18 @@ async function cloudGenerate(
 /** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
 export type ImageGenSize = 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
 
+export type ImageGenOptions = {
+  n?: number
+  quality?: 'low' | 'medium' | 'high'
+  background?: 'auto' | 'transparent' | 'opaque'
+  outputFormat?: 'png' | 'jpeg' | 'webp'
+  outputCompression?: number
+  moderation?: 'auto' | 'low'
+  responseFormat?: 'b64_json' | 'url'
+  providerStyle?: 'vivid' | 'natural'
+  user?: string
+}
+
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
 export async function generateImage(payload: {
   prompt: string
@@ -383,6 +397,15 @@ export async function generateImage(payload: {
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
+  n?: number
+  quality?: ImageGenOptions['quality']
+  background?: ImageGenOptions['background']
+  outputFormat?: ImageGenOptions['outputFormat']
+  outputCompression?: ImageGenOptions['outputCompression']
+  moderation?: ImageGenOptions['moderation']
+  responseFormat?: ImageGenOptions['responseFormat']
+  providerStyle?: ImageGenOptions['providerStyle']
+  user?: string
   /** Workflows already consume the durable public URL and do not need a blocking base64 copy. */
   downloadResult?: boolean
 }): Promise<ImageGenResult> {
@@ -426,6 +449,17 @@ export async function generateImage(payload: {
       references,
       maskUrl,
       payload.size,
+      {
+        n: payload.n,
+        quality: payload.quality,
+        background: payload.background,
+        outputFormat: payload.outputFormat,
+        outputCompression: payload.outputCompression,
+        moderation: payload.moderation,
+        responseFormat: payload.responseFormat,
+        providerStyle: payload.providerStyle,
+        user: payload.user,
+      },
       payload.downloadResult !== false,
     )
   } catch (e) {
@@ -499,6 +533,15 @@ export function registerImageGenHandlers(): void {
         referenceUrls?: string[]
         maskDataUrl?: string
         size?: ImageGenSize
+        n?: number
+        quality?: ImageGenOptions['quality']
+        background?: ImageGenOptions['background']
+        outputFormat?: ImageGenOptions['outputFormat']
+        outputCompression?: ImageGenOptions['outputCompression']
+        moderation?: ImageGenOptions['moderation']
+        responseFormat?: ImageGenOptions['responseFormat']
+        providerStyle?: ImageGenOptions['providerStyle']
+        user?: string
       },
     ): Promise<ImageGenResult> => generateImage(payload),
   )

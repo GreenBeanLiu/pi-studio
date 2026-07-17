@@ -164,6 +164,15 @@ const api = {
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: 'square_hd' | 'landscape_4_3' | 'portrait_4_3'
+      n?: number
+      quality?: 'low' | 'medium' | 'high'
+      background?: 'auto' | 'transparent' | 'opaque'
+      outputFormat?: 'png' | 'jpeg' | 'webp'
+      outputCompression?: number
+      moderation?: 'auto' | 'low'
+      responseFormat?: 'b64_json' | 'url'
+      providerStyle?: 'vivid' | 'natural'
+      user?: string
     }) =>
       ipcRenderer.invoke('imageGen:generate', payload),
     history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),

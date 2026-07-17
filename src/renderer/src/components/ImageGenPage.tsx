@@ -23,6 +23,12 @@ import {
   api,
   type ImageGenEngine,
   type ImageGenSize,
+  type ImageGenQuality,
+  type ImageGenBackground,
+  type ImageGenOutputFormat,
+  type ImageGenModeration,
+  type ImageGenResponseFormat,
+  type ImageGenProviderStyle,
   type ImageGenHealth,
   type ImageGenHistoryItem,
 } from '../lib/api'
@@ -275,6 +281,60 @@ const useStyles = createStyles(({ token, css }) => ({
     background: ${token.colorPrimaryBg} !important;
     color: ${token.colorPrimary} !important;
   `,
+  sizeOptionGrid: css`
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  `,
+  sizeOption: css`
+    aspect-ratio: 1;
+    justify-content: center;
+    padding: 6px;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    &:hover:not(:disabled) {
+      transform: scale(1.07);
+      position: relative;
+      z-index: 1;
+    }
+  `,
+  advancedToggle: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 2px 0;
+    border: 0;
+    background: transparent;
+    color: ${token.colorTextTertiary};
+    font-size: 12px;
+    cursor: pointer;
+    &:hover { color: ${token.colorTextSecondary}; }
+    svg { transition: transform 0.15s; }
+    svg.open { transform: rotate(180deg); }
+  `,
+  advancedGrid: css`
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  `,
+  advancedField: css`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    color: ${token.colorTextTertiary};
+    font-size: 11px;
+    select, input {
+      width: 100%;
+      min-width: 0;
+      height: 30px;
+      border: 1px solid ${token.colorBorderSecondary};
+      border-radius: ${token.borderRadius}px;
+      padding: 0 8px;
+      color: ${token.colorTextSecondary};
+      background: ${token.colorFillQuaternary};
+      outline: none;
+    }
+    select:focus, input:focus { border-color: ${token.colorPrimary}; }
+  `,
   label: css`
     font-size: 13px;
     color: ${token.colorTextSecondary};
@@ -518,6 +578,15 @@ function ImageGenInner() {
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [size, setSize] = useState<ImageGenSize>('square_hd')
   const [count, setCount] = useState(1)
+  const [quality, setQuality] = useState<ImageGenQuality>('medium')
+  const [background, setBackground] = useState<ImageGenBackground>('auto')
+  const [outputFormat, setOutputFormat] = useState<ImageGenOutputFormat>('png')
+  const [outputCompression, setOutputCompression] = useState(90)
+  const [moderation, setModeration] = useState<ImageGenModeration>('auto')
+  const [responseFormat, setResponseFormat] = useState<ImageGenResponseFormat>('b64_json')
+  const [providerStyle, setProviderStyle] = useState<ImageGenProviderStyle>('vivid')
+  const [requestUser, setRequestUser] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [examplesOpen, setExamplesOpen] = useState(false)
   const [comfyBusy, setComfyBusy] = useState(false)
   const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
@@ -638,10 +707,14 @@ function ImageGenInner() {
     const isEdit = !!baseImage
     // 出图数量:改图固定 1 张;并发总量封顶 4
     const n = isEdit ? 1 : Math.min(count, 4 - pending.length)
+    if (engine === 'openai') {
+      void generateOne(text, isEdit, n)
+      return
+    }
     for (let i = 0; i < n; i++) void generateOne(text, isEdit)
   }
 
-  async function generateOne(text: string, isEdit: boolean) {
+  async function generateOne(text: string, isEdit: boolean, n = 1) {
     const preset = STYLE_PRESETS.find((p) => p.id === presetId)
     const full = preset?.suffix
       ? `${text}, ${preset.suffix}. High quality, sharp, no watermark, no text.`
@@ -662,7 +735,24 @@ function ImageGenInner() {
         prompt: full,
         engine,
         // 尺寸仅云端 gpt-image-2 生效;本地 ComfyUI 由 workflow 固定
-        ...(engine === 'openai' ? { size } : {}),
+        ...(engine === 'openai'
+          ? {
+              size,
+              n,
+              ...(advancedOpen
+                ? {
+                    quality,
+                    background,
+                    outputFormat,
+                    ...(outputFormat !== 'png' ? { outputCompression } : {}),
+                    moderation,
+                    responseFormat,
+                    providerStyle,
+                    ...(requestUser.trim() ? { user: requestUser.trim() } : {}),
+                  }
+                : {}),
+            }
+          : {}),
         ...(refUrls ? { referenceUrls: refUrls } : {}),
         ...(maskDataUrl ? { maskDataUrl } : {}),
       })
@@ -685,11 +775,17 @@ function ImageGenInner() {
     }
   }
 
-  function downloadDataUrl(src: string) {
+  function downloadDataUrl(src: string, extension = 'png') {
     const a = document.createElement('a')
     a.href = src
-    a.download = `pi-image-${Date.now()}.png`
+    a.download = `pi-image-${Date.now()}.${extension}`
     a.click()
+  }
+
+  function imageExtension(contentType: string) {
+    if (contentType.includes('jpeg')) return 'jpg'
+    if (contentType.includes('webp')) return 'webp'
+    return 'png'
   }
 
   async function downloadUrl(url: string) {
@@ -698,7 +794,7 @@ function ImageGenInner() {
       if (!resp.ok) throw new Error(String(resp.status))
       const blob = await resp.blob()
       const obj = URL.createObjectURL(blob)
-      downloadDataUrl(obj)
+      downloadDataUrl(obj, imageExtension(blob.type))
       setTimeout(() => URL.revokeObjectURL(obj), 10_000)
     } catch {
       navigator.clipboard.writeText(url)
@@ -958,12 +1054,12 @@ function ImageGenInner() {
             <span style={{ opacity: 0.6, textTransform: 'none' }}> · 仅云端生效</span>
           )}
         </span>
-        <div className={styles.optionGrid}>
+        <div className={cx(styles.optionGrid, styles.sizeOptionGrid)}>
           {SIZE_OPTIONS.map((s) => (
             <button
               key={s.id}
               type="button"
-              className={cx(styles.optionBtn, size === s.id && styles.optionBtnActive)}
+              className={cx(styles.optionBtn, styles.sizeOption, size === s.id && styles.optionBtnActive)}
               disabled={engine === 'comfy'}
               onClick={() => setSize(s.id)}
             >
@@ -972,6 +1068,88 @@ function ImageGenInner() {
             </button>
           ))}
         </div>
+
+        {engine === 'openai' && (
+          <div>
+            <button
+              type="button"
+              className={styles.advancedToggle}
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              <span>GPT Image 2 高级参数</span>
+              <ChevronDown size={13} className={advancedOpen ? 'open' : ''} />
+            </button>
+            {advancedOpen && (
+              <div className={styles.advancedGrid} style={{ marginTop: 8 }}>
+                <label className={styles.advancedField}>
+                  质量
+                  <select value={quality} onChange={(e) => setQuality(e.target.value as ImageGenQuality)}>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </label>
+                <label className={styles.advancedField}>
+                  背景
+                  <select value={background} onChange={(e) => setBackground(e.target.value as ImageGenBackground)}>
+                    <option value="auto">auto</option>
+                    <option value="transparent">transparent</option>
+                    <option value="opaque">opaque</option>
+                  </select>
+                </label>
+                <label className={styles.advancedField}>
+                  输出格式
+                  <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value as ImageGenOutputFormat)}>
+                    <option value="png">png</option>
+                    <option value="jpeg">jpeg</option>
+                    <option value="webp">webp</option>
+                  </select>
+                </label>
+                <label className={styles.advancedField}>
+                  压缩 0–100
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    disabled={outputFormat === 'png'}
+                    value={outputCompression}
+                    onChange={(e) => setOutputCompression(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                  />
+                </label>
+                <label className={styles.advancedField}>
+                  审核
+                  <select value={moderation} onChange={(e) => setModeration(e.target.value as ImageGenModeration)}>
+                    <option value="auto">auto</option>
+                    <option value="low">low</option>
+                  </select>
+                </label>
+                <label className={styles.advancedField}>
+                  响应格式
+                  <select value={responseFormat} onChange={(e) => setResponseFormat(e.target.value as ImageGenResponseFormat)}>
+                    <option value="b64_json">b64_json</option>
+                    <option value="url">url</option>
+                  </select>
+                </label>
+                <label className={styles.advancedField}>
+                  API 风格
+                  <select value={providerStyle} onChange={(e) => setProviderStyle(e.target.value as ImageGenProviderStyle)}>
+                    <option value="vivid">vivid</option>
+                    <option value="natural">natural</option>
+                  </select>
+                </label>
+                <label className={styles.advancedField}>
+                  用户标识（可选）
+                  <input
+                    maxLength={64}
+                    value={requestUser}
+                    placeholder="例如 pi-studio-user"
+                    onChange={(e) => setRequestUser(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
 
         <span className={styles.sectionLabel}>
           出图数量
