@@ -896,7 +896,14 @@ function ImageGenInner() {
         <Tabs
           size="small"
           activeKey={engine}
-          onChange={(value) => setEngine(value as ImageGenEngine)}
+          onChange={(value) => {
+            const nextEngine = value as ImageGenEngine
+            if (nextEngine === 'gemini') {
+              setMaskDataUrl(null)
+              setMaskEditorOpen(false)
+            }
+            setEngine(nextEngine)
+          }}
           items={[
             { key: 'openai', label: 'GPT Image 2', disabled: !health?.keyConfigured },
             { key: 'comfy', label: 'SDXL 生图', disabled: !health?.comfy },
