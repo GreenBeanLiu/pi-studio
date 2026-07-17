@@ -282,7 +282,9 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorPrimary} !important;
   `,
   sizeOptionGrid: css`
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(3, 76px);
+    justify-content: start;
+    gap: 8px;
   `,
   sizeOption: css`
     aspect-ratio: 1;
@@ -290,7 +292,7 @@ const useStyles = createStyles(({ token, css }) => ({
     padding: 6px;
     transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
     &:hover:not(:disabled) {
-      transform: scale(1.07);
+      transform: scale(1.12);
       position: relative;
       z-index: 1;
     }
