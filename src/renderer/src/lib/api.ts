@@ -10,7 +10,7 @@ import type {
   ToolCall,
 } from '@earendil-works/pi-ai/compat'
 import type {
-  LlmProfileWrite,
+  LlmProfileSavePayload,
   LlmProviderProfile,
   ModelCatalogView,
   PiProvider,
@@ -21,6 +21,7 @@ import type {
 
 export type {
   LlmProfileWrite,
+  LlmProfileSavePayload,
   LlmProviderProfile,
   ModelCatalogView,
   PiProvider,
@@ -72,15 +73,11 @@ declare global {
           model: string
           baseUrl: string
         }) => Promise<ProviderModelListResult>
-        syncCustomModels: (ids: string[]) => Promise<{ ok: boolean }>
         onChanged: (cb: () => void) => () => void
       }
       llmProfiles: {
         list: () => Promise<LlmProfileListResult>
-        save: (payload: {
-          profile: LlmProfileWrite
-          create: boolean
-        }) => Promise<
+        save: (payload: LlmProfileSavePayload) => Promise<
           { ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }
         >
         delete: (id: string) => Promise<{ ok: true; warning?: string } | { error: string }>
@@ -91,8 +88,11 @@ declare global {
         >
       }
       modelCatalog: {
-        view: () => Promise<
+        loadProviderLabels: () => Promise<
           { ok: true; view: ModelCatalogView } | { error: string }
+        >
+        reconcileFavoriteRoutes: () => Promise<
+          { ok: true; changed: boolean; warning?: string } | { error: string }
         >
       }
       sandbox: {

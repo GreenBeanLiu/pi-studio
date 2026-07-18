@@ -22,6 +22,7 @@ function dependencies(
       baseUrl: '',
       heliconeEnabled: false,
       customModelIds: [],
+      favoriteModelRoutes: [],
     }),
     getConnection: () => ({
       available: true,
@@ -45,6 +46,10 @@ function dependencies(
     deleteProfile: vi.fn(async () => undefined),
     refreshProfileModels: vi.fn(async () => profile),
     projectModels: vi.fn(),
+    loadCachedProfiles: vi.fn(() => []),
+    saveCachedProfiles: vi.fn(),
+    loadAvailableModels: vi.fn(async () => []),
+    saveCustomModelIds: vi.fn(),
     ...overrides,
   }
 }
@@ -55,8 +60,9 @@ describe('model catalog coordination', () => {
     const deps = dependencies()
     const catalog = new ModelCatalogCoordinator(deps, onChanged)
 
-    const result = await catalog.saveProfile(
-      {
+    const result = await catalog.saveProfile({
+      create: true,
+      profile: {
         id: 'three-a-main',
         display_name: '3A Main',
         base_url: 'https://api.3a-api.com/v1',
@@ -66,8 +72,7 @@ describe('model catalog coordination', () => {
         enabled: true,
         sort_order: 0,
       },
-      true,
-    )
+    })
 
     expect(result.profile.id).toBe('three-a-main')
     expect(deps.projectModels).toHaveBeenCalledOnce()
@@ -105,11 +110,124 @@ describe('model catalog coordination', () => {
     expect(deps.projectModels).toHaveBeenCalledOnce()
   })
 
+  it('removes projected cloud models when a scoped session token cannot be issued', async () => {
+    const deps = dependencies({
+      createSessionToken: vi.fn(async () => {
+        throw new Error('token unavailable')
+      }),
+    })
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.prepareRuntime()).resolves.toEqual({
+      profiles: [],
+      chatToken: '',
+      warning: 'token unavailable',
+    })
+    expect(deps.projectModels).toHaveBeenLastCalledWith(
+      expect.objectContaining({ gatewayProfiles: [] }),
+    )
+  })
+
+  it('keeps the selected cloud lane when catalog refresh fails but a cached catalog exists', async () => {
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => {
+        throw new Error('catalog offline')
+      }),
+      loadCachedProfiles: vi.fn(() => [profile]),
+    })
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.prepareRuntime()).resolves.toEqual({
+      profiles: [profile],
+      chatToken: 'chat-token',
+      warning: 'catalog offline',
+    })
+    expect(deps.projectModels).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayProfiles: [profile] }),
+    )
+  })
+
   it('publishes a renderer-safe provider label view', async () => {
     const catalog = new ModelCatalogCoordinator(dependencies())
 
-    await expect(catalog.view()).resolves.toEqual({
+    await expect(catalog.loadProviderLabels()).resolves.toEqual({
       providerLabels: { 'three-a-main': '3A Main' },
     })
+  })
+
+  it('loads provider labels from the last valid cache when the gateway is offline', async () => {
+    const catalog = new ModelCatalogCoordinator(
+      dependencies({
+        fetchCatalog: vi.fn(async () => {
+          throw new Error('offline')
+        }),
+        loadCachedProfiles: vi.fn(() => [profile]),
+      }),
+    )
+
+    await expect(catalog.loadProviderLabels()).resolves.toEqual({
+      providerLabels: { 'three-a-main': '3A Main' },
+    })
+  })
+
+  it('ignores malformed cached profiles before projecting them', async () => {
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => {
+        throw new Error('offline')
+      }),
+      loadCachedProfiles: vi.fn(
+        () => [{ id: 'broken', models: ['x'], enabled: true }] as LlmProviderProfile[],
+      ),
+    })
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.sync()).resolves.toEqual({ profiles: [], warning: 'offline' })
+    expect(deps.projectModels).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayProfiles: undefined }),
+    )
+  })
+
+  it('reconciles only missing favorites for the active direct provider', async () => {
+    const deps = dependencies({
+      loadLocalSettings: () => ({
+        provider: 'openai',
+        baseUrl: '',
+        heliconeEnabled: false,
+        customModelIds: ['existing-model'],
+        favoriteModelRoutes: [
+          { provider: 'openai', model: 'custom-direct' },
+          { provider: 'three-a-main', model: 'cloud-only' },
+        ],
+      }),
+      loadAvailableModels: vi.fn(async () => [
+        { provider: 'openai', id: 'existing-model' },
+        { provider: 'three-a-main', id: 'gpt-5.5' },
+      ]),
+    })
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.reconcileFavoriteRoutes()).resolves.toEqual({ changed: true })
+    expect(deps.saveCustomModelIds).toHaveBeenCalledWith(['existing-model', 'custom-direct'])
+    expect(deps.projectModels).toHaveBeenCalledOnce()
+  })
+
+  it('matches favorite routes case-insensitively using the shared route identity', async () => {
+    const deps = dependencies({
+      loadLocalSettings: () => ({
+        provider: 'openai',
+        baseUrl: '',
+        heliconeEnabled: false,
+        customModelIds: [],
+        favoriteModelRoutes: [{ provider: 'openai', model: 'custom-direct' }],
+      }),
+      loadAvailableModels: vi.fn(async () => [
+        { provider: 'OpenAI', id: 'CUSTOM-DIRECT' },
+      ]),
+    })
+
+    await expect(new ModelCatalogCoordinator(deps).reconcileFavoriteRoutes()).resolves.toEqual({
+      changed: false,
+    })
+    expect(deps.saveCustomModelIds).not.toHaveBeenCalled()
   })
 })

@@ -31,6 +31,10 @@ export type LlmProfileWrite = {
   sort_order: number
 }
 
+export type LlmProfileSavePayload =
+  | { create: true; profile: LlmProfileWrite }
+  | { create: false; profile: LlmProfileWrite }
+
 export type SettingsForm = {
   provider: PiProvider
   apiKey: string
@@ -70,4 +74,42 @@ export type SettingsSaveInput = SettingsForm & {
 
 export type ModelCatalogView = {
   providerLabels: Record<string, string>
+}
+
+export function createDefaultSettingsForm(): SettingsForm {
+  return {
+    provider: 'anthropic',
+    apiKey: '',
+    model: '',
+    baseUrl: '',
+    favoriteModels: '',
+    tavilyApiKey: '',
+    heliconeApiKey: '',
+    securityGuardEnabled: true,
+    sandboxEnabled: false,
+    subagentsEnabled: true,
+    feishuWebhookUrl: '',
+    feishuSecret: '',
+    feishuAppId: '',
+    feishuAppSecret: '',
+    feishuChatId: '',
+    imageEngine: '',
+    comfyDir: '',
+    comfyPythonPath: '',
+    comfyLaunchArgs: '',
+    comfyCheckpoint: '',
+    cloudImageRelay: '',
+    cloudImageKey: '',
+  }
+}
+
+export function createDefaultSettingsView(): SettingsView {
+  return {
+    ...createDefaultSettingsForm(),
+    favoriteModelRoutes: [],
+    selectedModelRoute: null,
+    cloudImageKeyConfigured: false,
+    modelAccessConfigured: false,
+    recentWorkspaces: [],
+  }
 }

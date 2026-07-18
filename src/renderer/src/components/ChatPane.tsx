@@ -1206,7 +1206,6 @@ export default function ChatPane({
   const [compacting, setCompacting] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [favoriteModels, setFavoriteModels] = useState<ModelRoute[]>([])
-  const [directProvider, setDirectProvider] = useState('')
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({})
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
@@ -1244,6 +1243,19 @@ export default function ChatPane({
   const runRecordsRef = useRef(runRecords)
   messagesStateRef.current = messages
   runRecordsRef.current = runRecords
+
+  const refreshModelSwitcherState = useCallback(async (): Promise<void> => {
+    const [settingsResult, labelsResult] = await Promise.allSettled([
+      api.settings.load(),
+      api.modelCatalog.loadProviderLabels(),
+    ])
+    if (settingsResult.status === 'fulfilled') {
+      setFavoriteModels(settingsResult.value.favoriteModelRoutes ?? [])
+    }
+    if (labelsResult.status === 'fulfilled' && !('error' in labelsResult.value)) {
+      setProviderLabels(labelsResult.value.view.providerLabels)
+    }
+  }, [])
 
   useEffect(() => {
     if (!agentIssue) return
@@ -1296,20 +1308,7 @@ export default function ChatPane({
     api.pi.getMessages().then(setMessages).catch(() => {})
     api.pi.getAvailableModels().then(setModels).catch(() => {})
     api.pi.getCommands().then(setCommands).catch(() => {})
-    api.settings
-      .load()
-      .then((s) => {
-        setFavoriteModels(s.favoriteModelRoutes ?? [])
-        setDirectProvider(s.provider)
-      })
-      .catch(() => {})
-    api.modelCatalog
-      .view()
-      .then((result) => {
-        if ('error' in result) return
-        setProviderLabels(result.view.providerLabels)
-      })
-      .catch(() => {})
+    void refreshModelSwitcherState()
     api.pi
       .getState()
       .then((s) => {
@@ -1324,67 +1323,35 @@ export default function ChatPane({
         if (typeof s.isStreaming === 'boolean') setSending(s.isStreaming)
       })
       .catch(() => {})
-  }, [workspace?.path])
+  }, [workspace?.path, refreshModelSwitcherState])
 
-  // 模型切换列表里 pi registry 不认识的 id(第三方网关自定义模型,模型上新
-  // 永远快于 pi 内置清单):自动注册进 models.json(merge 语义)再重拉一次。
-  // ref 记录已同步的集合,避免 setModels 触发的循环。
-  const syncedCustomModelsRef = useRef<string | null>(null)
+  // 主进程拥有收藏模型补录策略；渲染层只触发幂等协调并刷新展示数据。
+  const syncedCustomModelsRef = useRef(false)
   useEffect(() => {
-    if (models.length === 0) return
-    const known = new Set(models.map((m) => favoriteRouteKey(m.provider, m.id)))
-    const missing = favoriteModels.filter(
-      (route) =>
-        route.provider === directProvider &&
-        !known.has(favoriteRouteKey(route.provider, route.model)),
-    )
-    const key = missing
-      .map((route) => favoriteRouteKey(route.provider, route.model))
-      .sort()
-      .join(',')
-    if (syncedCustomModelsRef.current === key) return
-    syncedCustomModelsRef.current = key
-    if (missing.length === 0) return
-    api.settings
-      .syncCustomModels(missing.map((route) => route.model))
-      .then(async () => {
-        const next = await api.pi.getAvailableModels()
-        setModels(next)
-        const nextKnown = new Set(next.map((m) => favoriteRouteKey(m.provider, m.id)))
-        if (
-          missing.some(
-            (route) => !nextKnown.has(favoriteRouteKey(route.provider, route.model)),
-          )
-        ) {
-          antdMessage.info('已注册自定义模型,重新打开工作区后可选')
-        }
+    syncedCustomModelsRef.current = false
+  }, [workspace?.path])
+  useEffect(() => {
+    if (models.length === 0 || syncedCustomModelsRef.current) return
+    syncedCustomModelsRef.current = true
+    api.modelCatalog
+      .reconcileFavoriteRoutes()
+      .then(async (result) => {
+        if ('error' in result || !result.changed) return
+        setModels(await api.pi.getAvailableModels())
       })
       .catch(() => {})
-  }, [models, favoriteModels, directProvider])
+  }, [models, favoriteModels])
 
   // 设置页保存后即时同步(无需重开工作区):重载模型切换列表 + 可用模型清单,
   // 并让上面的自定义模型注册重新评估(新增的第三方 id 立刻可选)。
   useEffect(() => {
     const off = api.settings.onChanged(() => {
-      api.settings
-        .load()
-        .then((s) => {
-          setFavoriteModels(s.favoriteModelRoutes ?? [])
-          setDirectProvider(s.provider)
-        })
-        .catch(() => {})
-      syncedCustomModelsRef.current = null
+      void refreshModelSwitcherState()
+      syncedCustomModelsRef.current = false
       api.pi.getAvailableModels().then(setModels).catch(() => {})
-      api.modelCatalog
-        .view()
-        .then((result) => {
-          if ('error' in result) return
-          setProviderLabels(result.view.providerLabels)
-        })
-        .catch(() => {})
     })
     return off
-  }, [])
+  }, [refreshModelSwitcherState])
 
   // For the completion notification — the event subscription effect runs once,
   // so it reads the current workspace through a ref.

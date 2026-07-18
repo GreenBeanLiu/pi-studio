@@ -16,6 +16,7 @@ import {
   type SandboxImageStatus,
   type SecurityPolicy,
 } from '../lib/api'
+import { createDefaultSettingsView } from '../../../shared/contracts'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
@@ -201,35 +202,7 @@ export default function SettingsModal({
   const { styles } = useStyles()
 
   const [category, setCategory] = useState<Category>('model')
-  const [settings, setSettings] = useState<Settings>({
-    provider: 'anthropic',
-    apiKey: '',
-    model: '',
-    baseUrl: '',
-    favoriteModels: '',
-    favoriteModelRoutes: [],
-    selectedModelRoute: null,
-    tavilyApiKey: '',
-    heliconeApiKey: '',
-    securityGuardEnabled: true,
-    sandboxEnabled: false,
-    subagentsEnabled: true,
-    feishuWebhookUrl: '',
-    feishuSecret: '',
-    feishuAppId: '',
-    feishuAppSecret: '',
-    feishuChatId: '',
-    imageEngine: '',
-    comfyDir: '',
-    comfyPythonPath: '',
-    comfyLaunchArgs: '',
-    comfyCheckpoint: '',
-    cloudImageRelay: '',
-    cloudImageKey: '',
-    cloudImageKeyConfigured: false,
-    modelAccessConfigured: false,
-    recentWorkspaces: [],
-  })
+  const [settings, setSettings] = useState<Settings>(() => createDefaultSettingsView())
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
   const [version, setVersion] = useState('')
@@ -354,7 +327,9 @@ export default function SettingsModal({
     setLlmProfilesError('')
     try {
       const { create, ...profile } = llmProfileDraft
-      const result = await api.llmProfiles.save({ profile, create })
+      const result = await api.llmProfiles.save(
+        create ? { profile, create: true } : { profile, create: false },
+      )
       if ('error' in result) {
         setLlmProfilesError(result.error)
         return

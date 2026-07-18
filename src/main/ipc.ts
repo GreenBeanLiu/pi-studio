@@ -14,7 +14,6 @@ import {
   saveSettings,
   addRecentWorkspace,
   removeRecentWorkspace,
-  saveCustomModelIds,
   saveSelectedModelRoute,
   type PiProvider,
 } from './settings'
@@ -46,8 +45,8 @@ import {
 } from './security-policy'
 import { registerImageGenHandlers } from './image-gen'
 import { getCloudConnection } from './cloud-connection'
-import type { LlmProfileWrite } from './llm-gateway'
 import { ModelCatalogCoordinator } from './model-catalog'
+import { parseLlmProfileSavePayload } from './ipc-contracts'
 import { prepareAgentRuntime } from './agent-runtime-config'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
@@ -187,19 +186,6 @@ export function registerIpcHandlers(): void {
       }
     },
   )
-  // 模型切换列表里 registry 缺失的自定义 id:持久化并立刻写进 models.json,
-  // pi 的 get_available_models 会热读该文件,当前会话即可选择
-  ipcMain.handle('settings:syncCustomModels', (_e, ids: string[]) => {
-    const cleaned = [...new Set((ids ?? []).map((s) => String(s).trim()).filter(Boolean))]
-    saveCustomModelIds(cleaned)
-    return modelCatalog.sync().then((result) => ({
-      ok: true,
-      warning: result.warning
-        ? `配置已保存，但模型目录暂未同步：${result.warning}`
-        : undefined,
-    }))
-  })
-
   ipcMain.handle('llmProfiles:list', async () => {
     try {
       return { ok: true, profiles: await modelCatalog.listProfiles() }
@@ -207,18 +193,25 @@ export function registerIpcHandlers(): void {
       return { error: (err as Error).message ?? String(err) }
     }
   })
-  ipcMain.handle('modelCatalog:view', async () => {
+  ipcMain.handle('modelCatalog:loadProviderLabels', async () => {
     try {
-      return { ok: true, view: await modelCatalog.view() }
+      return { ok: true, view: await modelCatalog.loadProviderLabels() }
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
+    }
+  })
+  ipcMain.handle('modelCatalog:reconcileFavoriteRoutes', async () => {
+    try {
+      return { ok: true, ...(await modelCatalog.reconcileFavoriteRoutes()) }
     } catch (err) {
       return { error: (err as Error).message ?? String(err) }
     }
   })
   ipcMain.handle(
     'llmProfiles:save',
-    async (_event, payload: { profile: LlmProfileWrite; create: boolean }) => {
+    async (_event, payload: unknown) => {
       try {
-        const result = await modelCatalog.saveProfile(payload.profile, payload.create)
+        const result = await modelCatalog.saveProfile(parseLlmProfileSavePayload(payload))
         return { ok: true, profile: result.profile, warning: result.warning }
       } catch (err) {
         return { error: (err as Error).message ?? String(err) }

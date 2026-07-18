@@ -9,7 +9,12 @@ import {
   parseFavoriteModelRoutes,
   type ModelRoute,
 } from '../shared/model-route'
-import type { PiProvider, SettingsForm, Workspace } from '../shared/contracts'
+import {
+  createDefaultSettingsForm,
+  type PiProvider,
+  type SettingsForm,
+  type Workspace,
+} from '../shared/contracts'
 
 export type { PiProvider, Workspace } from '../shared/contracts'
 
@@ -21,31 +26,10 @@ export type SettingsData = SettingsForm & {
 }
 
 const DEFAULTS: SettingsData = {
-  provider: 'anthropic',
-  apiKey: '',
-  model: '',
-  baseUrl: '',
-  favoriteModels: '',
+  ...createDefaultSettingsForm(),
   favoriteModelRoutes: [],
   selectedModelRoute: null,
-  tavilyApiKey: '',
-  heliconeApiKey: '',
-  securityGuardEnabled: true,
-  sandboxEnabled: false,
-  subagentsEnabled: true,
-  feishuWebhookUrl: '',
-  feishuSecret: '',
-  feishuAppId: '',
-  feishuAppSecret: '',
-  feishuChatId: '',
   customModelIds: [],
-  imageEngine: '',
-  comfyDir: '',
-  comfyPythonPath: '',
-  comfyLaunchArgs: '',
-  comfyCheckpoint: '',
-  cloudImageRelay: '',
-  cloudImageKey: '',
   recentWorkspaces: [],
 }
 
