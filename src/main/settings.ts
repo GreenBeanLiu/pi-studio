@@ -1,6 +1,10 @@
 import { safeStorage, app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import {
+  buildGatewayProviderConfigs,
+  type LlmProviderProfile,
+} from './llm-gateway'
 
 export type PiProvider = 'anthropic' | 'openai'
 
@@ -307,6 +311,8 @@ export function writeModelsOverride(
   baseUrl: string,
   heliconeEnabled: boolean,
   customModelIds: string[] = [],
+  gatewayRelay = '',
+  gatewayProfiles: LlmProviderProfile[] = [],
 ): void {
   const dir = agentConfigDir()
   mkdirSync(dir, { recursive: true })
@@ -335,6 +341,9 @@ export function writeModelsOverride(
     providerConfig = { ...(providerConfig ?? {}), models: ids.map((id) => ({ id })) }
   }
 
-  const providers = providerConfig ? { [provider]: providerConfig } : {}
+  const providers: Record<string, unknown> = providerConfig ? { [provider]: providerConfig } : {}
+  if (gatewayRelay.trim()) {
+    Object.assign(providers, buildGatewayProviderConfigs(gatewayRelay, gatewayProfiles))
+  }
   writeFileSync(modelsPath, JSON.stringify({ providers }, null, 2), 'utf-8')
 }

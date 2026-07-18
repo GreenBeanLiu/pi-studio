@@ -38,6 +38,13 @@ const api = {
     },
   },
 
+  llmProfiles: {
+    list: () => ipcRenderer.invoke('llmProfiles:list'),
+    save: (payload: unknown) => ipcRenderer.invoke('llmProfiles:save', payload),
+    delete: (id: string) => ipcRenderer.invoke('llmProfiles:delete', id),
+    refreshModels: (id: string) => ipcRenderer.invoke('llmProfiles:refreshModels', id),
+  },
+
   sandbox: {
     detect: () => ipcRenderer.invoke('sandbox:detect'),
     imageStatus: () => ipcRenderer.invoke('sandbox:imageStatus'),

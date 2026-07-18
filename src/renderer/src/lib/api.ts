@@ -99,6 +99,17 @@ declare global {
         syncCustomModels: (ids: string[]) => Promise<{ ok: boolean }>
         onChanged: (cb: () => void) => () => void
       }
+      llmProfiles: {
+        list: () => Promise<LlmProfileListResult>
+        save: (payload: {
+          profile: LlmProfileWrite
+          create: boolean
+        }) => Promise<{ ok: true; profile: LlmProviderProfile } | { error: string }>
+        delete: (id: string) => Promise<{ ok: true } | { error: string }>
+        refreshModels: (
+          id: string,
+        ) => Promise<{ ok: true; profile: LlmProviderProfile } | { error: string }>
+      }
       sandbox: {
         detect: () => Promise<SandboxDetect>
         imageStatus: () => Promise<SandboxImageStatus>
@@ -267,6 +278,32 @@ declare global {
 }
 
 export type PiProvider = 'anthropic' | 'openai'
+
+export type LlmProviderProfile = {
+  id: string
+  display_name: string
+  base_url?: string
+  api_type: 'openai-completions'
+  models: string[]
+  enabled: boolean
+  sort_order: number
+  has_key: boolean
+}
+
+export type LlmProfileWrite = {
+  id: string
+  display_name: string
+  base_url: string
+  api_type: 'openai-completions'
+  api_key: string
+  models: string[]
+  enabled: boolean
+  sort_order: number
+}
+
+export type LlmProfileListResult =
+  | { ok: true; profiles: LlmProviderProfile[] }
+  | { error: string }
 
 export type ImageGenEngine = 'openai' | 'comfy' | 'gemini'
 

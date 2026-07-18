@@ -46,7 +46,17 @@ import {
   type SecurityPolicy,
   type SecurityPolicyRuleTarget,
 } from './security-policy'
-import { registerImageGenHandlers } from './image-gen'
+import { getCloud, registerImageGenHandlers } from './image-gen'
+import {
+  createLlmProfile,
+  deleteLlmProfile,
+  fetchLlmCatalog,
+  listLlmProfiles,
+  refreshLlmProfileModels,
+  updateLlmProfile,
+  type LlmProfileWrite,
+  type LlmProviderProfile,
+} from './llm-gateway'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
@@ -79,6 +89,36 @@ export function registerIpcHandlers(): void {
         error: normalizeError(err),
       })
     }
+  }
+
+  const llmCloud = (): { relay: string; key: string } => {
+    const cloud = getCloud()
+    if (!cloud.available) throw new Error('请先配置 Pi Studio 云服务地址和应用令牌')
+    return { relay: cloud.relay, key: cloud.key }
+  }
+
+  const syncLlmModels = async (): Promise<LlmProviderProfile[]> => {
+    const settings = loadSettings()
+    const cloud = getCloud()
+    if (!cloud.available) {
+      writeModelsOverride(
+        settings.provider,
+        settings.baseUrl,
+        !!settings.heliconeApiKey,
+        settings.customModelIds,
+      )
+      return []
+    }
+    const catalog = await fetchLlmCatalog(cloud.relay, cloud.key)
+    writeModelsOverride(
+      settings.provider,
+      settings.baseUrl,
+      !!settings.heliconeApiKey,
+      settings.customModelIds,
+      cloud.relay,
+      catalog.providers,
+    )
+    return catalog.providers
   }
 
   // ── Window controls ──────────────────────────────────────────────
@@ -196,9 +236,54 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:syncCustomModels', (_e, ids: string[]) => {
     const cleaned = [...new Set((ids ?? []).map((s) => String(s).trim()).filter(Boolean))]
     saveCustomModelIds(cleaned)
-    const settings = loadSettings()
-    writeModelsOverride(settings.provider, settings.baseUrl, !!settings.heliconeApiKey, cleaned)
-    return { ok: true }
+    return syncLlmModels().then(() => ({ ok: true }))
+  })
+
+  ipcMain.handle('llmProfiles:list', async () => {
+    try {
+      const cloud = llmCloud()
+      return { ok: true, profiles: await listLlmProfiles(cloud.relay, cloud.key) }
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
+    }
+  })
+  ipcMain.handle(
+    'llmProfiles:save',
+    async (_event, payload: { profile: LlmProfileWrite; create: boolean }) => {
+      try {
+        const cloud = llmCloud()
+        const profile = payload.create
+          ? await createLlmProfile(cloud.relay, cloud.key, payload.profile)
+          : await updateLlmProfile(cloud.relay, cloud.key, payload.profile)
+        await syncLlmModels()
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send('settings:changed')
+        }
+        return { ok: true, profile }
+      } catch (err) {
+        return { error: (err as Error).message ?? String(err) }
+      }
+    },
+  )
+  ipcMain.handle('llmProfiles:delete', async (_event, id: string) => {
+    try {
+      const cloud = llmCloud()
+      await deleteLlmProfile(cloud.relay, cloud.key, id)
+      await syncLlmModels()
+      return { ok: true }
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
+    }
+  })
+  ipcMain.handle('llmProfiles:refreshModels', async (_event, id: string) => {
+    try {
+      const cloud = llmCloud()
+      const profile = await refreshLlmProfileModels(cloud.relay, cloud.key, id)
+      await syncLlmModels()
+      return { ok: true, profile }
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
+    }
   })
 
   ipcMain.handle(
@@ -281,8 +366,23 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(event.sender)
     const settings = loadSettings()
 
-    if (!settings.apiKey) {
-      return { error: '请先在设置中填写 API Key' }
+    let gatewayProfiles: LlmProviderProfile[] = []
+    let gatewayRelay = ''
+    let gatewayKey = ''
+    const cloud = getCloud()
+    if (cloud.available) {
+      try {
+        const catalog = await fetchLlmCatalog(cloud.relay, cloud.key)
+        gatewayProfiles = catalog.providers.filter((profile) => profile.models.length > 0)
+        gatewayRelay = cloud.relay
+        gatewayKey = cloud.key
+      } catch (err) {
+        appendAppLog('warn', 'llm.catalog', 'Failed to load cloud model catalog', normalizeError(err))
+      }
+    }
+
+    if (!settings.apiKey && gatewayProfiles.length === 0) {
+      return { error: '请先配置本地直连 API Key，或在云端模型线路中添加可用模型' }
     }
 
     writeModelsOverride(
@@ -290,6 +390,8 @@ export function registerIpcHandlers(): void {
       settings.baseUrl,
       !!settings.heliconeApiKey,
       settings.customModelIds,
+      gatewayRelay,
+      gatewayProfiles,
     )
     syncWebSearchExtension(!!settings.tavilyApiKey)
     syncSecurityGuardExtension(settings.securityGuardEnabled)
@@ -305,13 +407,16 @@ export function registerIpcHandlers(): void {
       await piClientManager.startWorkspace(
         workspacePath,
         {
-          [apiKeyEnvVar(settings.provider)]: settings.apiKey,
+          ...(settings.apiKey ? { [apiKeyEnvVar(settings.provider)]: settings.apiKey } : {}),
+          ...(gatewayKey ? { PI_STUDIO_LLM_KEY: gatewayKey } : {}),
           PI_CODING_AGENT_DIR: agentConfigDir(),
           ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
           ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
         },
-        settings.provider,
-        settings.model || undefined,
+        settings.apiKey ? settings.provider : gatewayProfiles[0].id,
+        settings.apiKey
+          ? settings.model || undefined
+          : gatewayProfiles[0].models[0] || undefined,
         async (agentEvent) => {
           if (agentEvent.type === 'agent_end') {
             await sealRunChanges(workspacePath, 'agent ended')

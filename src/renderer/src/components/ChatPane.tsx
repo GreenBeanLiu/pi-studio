@@ -1205,6 +1205,7 @@ export default function ChatPane({
   const [compacting, setCompacting] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [favoriteModels, setFavoriteModels] = useState<string[]>([])
+  const [providerLabels, setProviderLabels] = useState<Record<string, string>>({})
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
@@ -1304,6 +1305,15 @@ export default function ChatPane({
         ),
       )
       .catch(() => {})
+    api.llmProfiles
+      .list()
+      .then((result) => {
+        if ('error' in result) return
+        setProviderLabels(
+          Object.fromEntries(result.profiles.map((profile) => [profile.id, profile.display_name])),
+        )
+      })
+      .catch(() => {})
     api.pi
       .getState()
       .then((s) => {
@@ -1362,6 +1372,15 @@ export default function ChatPane({
         .catch(() => {})
       syncedCustomModelsRef.current = null
       api.pi.getAvailableModels().then(setModels).catch(() => {})
+      api.llmProfiles
+        .list()
+        .then((result) => {
+          if ('error' in result) return
+          setProviderLabels(
+            Object.fromEntries(result.profiles.map((profile) => [profile.id, profile.display_name])),
+          )
+        })
+        .catch(() => {})
     })
     return off
   }, [])
@@ -2279,16 +2298,13 @@ export default function ChatPane({
     }
     // User-configured favorites win; otherwise the registry appends models
     // chronologically, so the tail is the newest — show the latest few.
-    const anyFavoriteExists =
-      favSet.size > 0 && models.some((m) => favSet.has(m.id.toLowerCase()))
     return [...byProvider.entries()]
       .map(([provider, list]) => {
-        const shown = anyFavoriteExists
-          ? list.filter((m) => favSet.has(m.id.toLowerCase()))
-          : list.slice(-8).reverse()
+        const providerFavorites = list.filter((m) => favSet.has(m.id.toLowerCase()))
+        const shown = providerFavorites.length > 0 ? providerFavorites : list.slice(-8).reverse()
         return {
           type: 'group' as const,
-          label: provider,
+          label: providerLabels[provider] ?? provider,
           children: shown.map((m) => ({
             key: `${m.provider}::${m.id}`,
             label: m.id,
@@ -2296,7 +2312,7 @@ export default function ChatPane({
         }
       })
       .filter((g) => g.children.length > 0)
-  }, [models, favoriteModels])
+  }, [models, favoriteModels, providerLabels])
 
   // ── Thinking level ───────────────────────────────────────────────
   const THINKING_LEVELS: { key: ThinkingLevel; label: string }[] = [

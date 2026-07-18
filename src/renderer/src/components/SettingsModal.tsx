@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm } from 'antd'
-import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck, Trash2, Plus, Image as ImageIcon } from 'lucide-react'
+import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
 import {
   api,
   type Channel,
   type ChannelType,
   type PiProvider,
+  type LlmProfileWrite,
+  type LlmProviderProfile,
   type ProviderConnectionResult,
   type ProviderModelListResult,
   type SandboxDetect,
@@ -186,6 +188,24 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  profileCard: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadiusLG}px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: ${token.colorBgContainer};
+  `,
+
+  profileMeta: css`
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  `,
+
 }))
 
 export default function SettingsModal({
@@ -248,6 +268,11 @@ export default function SettingsModal({
   const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
   const [sandboxBuilding, setSandboxBuilding] = useState(false)
   const [sandboxBuildLog, setSandboxBuildLog] = useState('')
+  const [llmProfiles, setLlmProfiles] = useState<LlmProviderProfile[]>([])
+  const [llmProfilesLoading, setLlmProfilesLoading] = useState(false)
+  const [llmProfilesError, setLlmProfilesError] = useState('')
+  const [llmProfileDraft, setLlmProfileDraft] = useState<(LlmProfileWrite & { create: boolean }) | null>(null)
+  const [llmProfileSaving, setLlmProfileSaving] = useState(false)
 
   async function detectSandbox() {
     setSandboxDetecting(true)
@@ -294,7 +319,82 @@ export default function SettingsModal({
       .catch((err) => setPolicyError((err as Error).message ?? '读取安全策略失败'))
     api.app.version().then(setVersion).catch(() => {})
     api.app.piVersion().then(setPiVersion).catch(() => {})
+    void loadLlmProfiles()
   }, [])
+
+  async function loadLlmProfiles() {
+    setLlmProfilesLoading(true)
+    setLlmProfilesError('')
+    try {
+      const result = await api.llmProfiles.list()
+      if ('error' in result) {
+        setLlmProfilesError(result.error)
+        return
+      }
+      setLlmProfiles(result.profiles)
+    } finally {
+      setLlmProfilesLoading(false)
+    }
+  }
+
+  function addLlmProfile() {
+    setLlmProfileDraft({
+      id: '',
+      display_name: '',
+      base_url: '',
+      api_type: 'openai-completions',
+      api_key: '',
+      models: [],
+      enabled: true,
+      sort_order: llmProfiles.length,
+      create: true,
+    })
+  }
+
+  function editLlmProfile(profile: LlmProviderProfile) {
+    setLlmProfileDraft({
+      id: profile.id,
+      display_name: profile.display_name,
+      base_url: profile.base_url ?? '',
+      api_type: profile.api_type,
+      api_key: '',
+      models: profile.models,
+      enabled: profile.enabled,
+      sort_order: profile.sort_order,
+      create: false,
+    })
+  }
+
+  async function saveLlmProfile() {
+    if (!llmProfileDraft) return
+    setLlmProfileSaving(true)
+    setLlmProfilesError('')
+    try {
+      const { create, ...profile } = llmProfileDraft
+      const result = await api.llmProfiles.save({ profile, create })
+      if ('error' in result) {
+        setLlmProfilesError(result.error)
+        return
+      }
+      setLlmProfileDraft(null)
+      await loadLlmProfiles()
+    } finally {
+      setLlmProfileSaving(false)
+    }
+  }
+
+  async function removeLlmProfile(id: string) {
+    const result = await api.llmProfiles.delete(id)
+    if ('error' in result) setLlmProfilesError(result.error)
+    else await loadLlmProfiles()
+  }
+
+  async function refreshLlmModels(id: string) {
+    setLlmProfilesLoading(true)
+    const result = await api.llmProfiles.refreshModels(id)
+    if ('error' in result) setLlmProfilesError(result.error)
+    await loadLlmProfiles()
+  }
 
   async function handleSave() {
     setSaving(true)
@@ -470,6 +570,66 @@ export default function SettingsModal({
         <div className={styles.content}>
           {category === 'model' && (
             <div className={styles.form}>
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  Pi Studio 云服务
+                  <span className={styles.labelHint}>这里只保存应用令牌；3A、OpenRouter 等上游 Key 加密存储在服务器</span>
+                </span>
+                <Input
+                  value={settings.cloudImageRelay}
+                  onChange={(e) => patch({ cloudImageRelay: e.target.value })}
+                  placeholder="https://trail-api.glanger.xyz（留空使用内置地址）"
+                />
+                <Input.Password
+                  value={settings.cloudImageKey}
+                  onChange={(e) => patch({ cloudImageKey: e.target.value })}
+                  placeholder="Pi Studio 应用令牌"
+                />
+                <span className={styles.labelHint}>首次修改地址或令牌后请先保存设置，再管理下方线路。</span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  云端模型线路
+                  <span className={styles.labelHint}>每条线路会成为模型切换器中的一个 provider 分组</span>
+                </span>
+                <div className={styles.actionRow}>
+                  <Button size="small" type="primary" icon={<Plus size={13} />} onClick={addLlmProfile}>
+                    添加线路
+                  </Button>
+                  <Button size="small" icon={<RefreshCw size={13} />} loading={llmProfilesLoading} onClick={loadLlmProfiles}>
+                    刷新
+                  </Button>
+                </div>
+                {llmProfilesError && <Alert type="warning" showIcon message={llmProfilesError} />}
+                {llmProfiles.map((profile) => (
+                  <div className={styles.profileCard} key={profile.id}>
+                    <div className={styles.profileMeta}>
+                      <div>
+                        <strong>{profile.display_name}</strong>{' '}
+                        <Tag color={profile.enabled ? 'green' : 'default'}>{profile.id}</Tag>
+                      </div>
+                      <span className={styles.labelHint}>
+                        {profile.models.length > 0 ? profile.models.join(' · ') : '尚未配置模型'}
+                      </span>
+                    </div>
+                    <div className={styles.actionRow} style={{ flexWrap: 'nowrap' }}>
+                      <Button size="small" title="从上游 /models 同步" icon={<RefreshCw size={13} />} onClick={() => refreshLlmModels(profile.id)} />
+                      <Button size="small" title="编辑" icon={<Pencil size={13} />} onClick={() => editLlmProfile(profile)} />
+                      <Popconfirm title="删除这条模型线路？" onConfirm={() => removeLlmProfile(profile.id)}>
+                        <Button size="small" danger icon={<Trash2 size={13} />} />
+                      </Popconfirm>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Alert
+                type="info"
+                showIcon
+                message="本地直连（备用）"
+                description="云端线路不可用时仍可使用下面的单一 API Key；不需要备用可留空。"
+              />
               <div className={styles.section}>
                 <span className={styles.label}>AI 提供商</span>
                 <Segmented
@@ -1078,6 +1238,66 @@ export default function SettingsModal({
           )}
         </div>
       </div>
+      <Modal
+        open={!!llmProfileDraft}
+        title={llmProfileDraft?.create ? '添加模型线路' : '编辑模型线路'}
+        onCancel={() => setLlmProfileDraft(null)}
+        onOk={saveLlmProfile}
+        okText="保存线路"
+        confirmLoading={llmProfileSaving}
+        okButtonProps={{
+          disabled:
+            !llmProfileDraft?.id.trim() ||
+            !llmProfileDraft?.display_name.trim() ||
+            !llmProfileDraft?.base_url.trim() ||
+            (!!llmProfileDraft?.create && !llmProfileDraft?.api_key.trim()),
+        }}
+      >
+        {llmProfileDraft && (
+          <div className={styles.form}>
+            <div className={styles.section}>
+              <span className={styles.label}>线路 ID</span>
+              <Input
+                value={llmProfileDraft.id}
+                disabled={!llmProfileDraft.create}
+                onChange={(e) => setLlmProfileDraft((draft) => draft && ({ ...draft, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))}
+                placeholder="three-a-grok"
+              />
+            </div>
+            <div className={styles.section}>
+              <span className={styles.label}>显示名称</span>
+              <Input value={llmProfileDraft.display_name} onChange={(e) => setLlmProfileDraft((draft) => draft && ({ ...draft, display_name: e.target.value }))} placeholder="3A Grok" />
+            </div>
+            <div className={styles.section}>
+              <span className={styles.label}>上游 API Base URL</span>
+              <Input value={llmProfileDraft.base_url} onChange={(e) => setLlmProfileDraft((draft) => draft && ({ ...draft, base_url: e.target.value }))} placeholder="https://api.example.com/v1" />
+            </div>
+            <div className={styles.section}>
+              <span className={styles.label}>
+                上游 API Key
+                {!llmProfileDraft.create && <span className={styles.labelHint}>留空保留原 Key</span>}
+              </span>
+              <Input.Password value={llmProfileDraft.api_key} onChange={(e) => setLlmProfileDraft((draft) => draft && ({ ...draft, api_key: e.target.value }))} placeholder="sk-…" />
+            </div>
+            <div className={styles.section}>
+              <span className={styles.label}>可用模型</span>
+              <Input.TextArea
+                value={llmProfileDraft.models.join('\n')}
+                onChange={(e) => setLlmProfileDraft((draft) => draft && ({ ...draft, models: e.target.value.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean) }))}
+                placeholder={'grok-4\ngrok-4-fast'}
+                autoSize={{ minRows: 3, maxRows: 7 }}
+              />
+              <span className={styles.labelHint}>每行一个；保存后也可以点击线路右侧刷新按钮从上游 /models 自动读取。</span>
+            </div>
+            <div className={styles.section}>
+              <span className={styles.switchItem}>
+                <Switch size="small" checked={llmProfileDraft.enabled} onChange={(enabled) => setLlmProfileDraft((draft) => draft && ({ ...draft, enabled }))} />
+                在模型切换器中启用
+              </span>
+            </div>
+          </div>
+        )}
+      </Modal>
     </Modal>
   )
 }
