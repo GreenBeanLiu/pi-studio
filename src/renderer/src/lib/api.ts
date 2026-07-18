@@ -191,6 +191,7 @@ declare global {
         generate: (payload: {
           prompt: string
           engine: ImageGenEngine
+          batchId?: string
           referenceUrls?: string[]
           maskDataUrl?: string
           size?: ImageGenSize
@@ -205,10 +206,11 @@ declare global {
           responseFormat?: ImageGenResponseFormat
           providerStyle?: ImageGenProviderStyle
           user?: string
-          model?: 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
-        }) => Promise<{ dataUrl: string; publicUrl: string | null } | { error: string }>
+          model?: 'gpt-image-2' | 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
+        }) => Promise<{ dataUrl: string; publicUrl: string | null; urls?: string[] } | { error: string }>
         history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
         historyDelete: (id: string) => Promise<{ ok: boolean }>
+        historyDeleteBatch: (batchId: string) => Promise<{ ok: boolean }>
         uploadReference: (dataUrl: string) => Promise<{ ok: true; url: string } | { error: string }>
         comfyStart: () => Promise<
           | { ok: true; health: ImageGenHealth }
@@ -442,8 +444,10 @@ export type RoutineStepProgress = {
 
 export type ImageGenHistoryItem = {
   id: string
+  batch_id: string
   prompt: string
   engine: string
+  model: string | null
   provider: string | null
   url: string
   created_at: number

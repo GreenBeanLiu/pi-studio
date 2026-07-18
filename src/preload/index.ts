@@ -178,6 +178,7 @@ const api = {
     generate: (payload: {
       prompt: string
       engine: 'openai' | 'comfy' | 'gemini' | 'grok'
+      batchId?: string
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
@@ -190,12 +191,13 @@ const api = {
       outputCompression?: number
       moderation?: 'auto' | 'low'
       responseFormat?: 'b64_json' | 'url'
-      model?: 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
+      model?: 'gpt-image-2' | 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
       user?: string
     }) =>
       ipcRenderer.invoke('imageGen:generate', payload),
     history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),
     historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
+    historyDeleteBatch: (batchId: string) => ipcRenderer.invoke('imageGen:historyDeleteBatch', batchId),
     uploadReference: (dataUrl: string) => ipcRenderer.invoke('imageGen:uploadReference', dataUrl),
     comfyStart: () => ipcRenderer.invoke('imageGen:comfyStart'),
     comfyStop: () => ipcRenderer.invoke('imageGen:comfyStop'),

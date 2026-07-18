@@ -83,12 +83,14 @@ function buildImageGenHealth(
   }
 }
 
-export type ImageGenResult = { dataUrl: string; publicUrl: string | null } | { error: string }
+export type ImageGenResult = { dataUrl: string; publicUrl: string | null; urls?: string[] } | { error: string }
 
 export type ImageGenHistoryItem = {
   id: string
+  batch_id: string
   prompt: string
   engine: string
+  model: string | null
   provider: string | null
   url: string
   created_at: number
@@ -296,6 +298,7 @@ async function probeCloud(path: string, timeoutMs: number): Promise<Response | n
 /** 云端生成/改图:POST 一个 SSE 长连接,event: result 里拿 R2 URL,再下载转 dataUrl。 */
 async function cloudGenerate(
   prompt: string,
+  batchId: string,
   referenceUrls?: string[],
   maskUrl?: string,
   size?: ImageGenSize,
@@ -313,6 +316,7 @@ async function cloudGenerate(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
+      batchId,
       ...(model ? { model } : {}),
       ...(size ? { size } : {}),
       ...(options ?? {}),
@@ -344,7 +348,8 @@ async function cloudGenerate(
 
       if (event === 'error') return { error: data.message || '云端生成失败' }
       if (event === 'result') {
-        const url = data.urls?.[0]
+        const urls = Array.isArray(data.urls) ? data.urls.filter((item: unknown): item is string => typeof item === 'string') : []
+        const url = urls[0]
         if (!url) return { error: '云端任务完成但没有返回图片 URL' }
         const resolved = await resolveCloudImageResult(url, downloadResult)
         if ('downloadError' in resolved) {
@@ -353,7 +358,7 @@ async function cloudGenerate(
             error: resolved.downloadError,
           })
         }
-        return resolved
+        return { ...resolved, urls }
       }
       // event: status — 阶段进度,目前不透传到 UI
     }
@@ -393,6 +398,7 @@ export type ImageGenOptions = {
 export async function generateImage(payload: {
   prompt: string
   engine: 'openai' | 'comfy' | 'gemini' | 'grok'
+  batchId?: string
   model?: CloudImageModel
   referenceUrls?: string[]
   maskDataUrl?: string
@@ -412,6 +418,7 @@ export async function generateImage(payload: {
   downloadResult?: boolean
 }): Promise<ImageGenResult> {
   try {
+    const batchId = payload.batchId || crypto.randomUUID()
     if (payload.engine === 'comfy') {
       const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0], payload.maskDataUrl)
       // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
@@ -422,7 +429,9 @@ export async function generateImage(payload: {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt: payload.prompt,
+              batchId,
               engine: payload.referenceUrls?.length ? 'comfy-edit' : 'comfy',
+              model: 'sdxl-local',
               provider: 'sdxl-local',
               image_base64: r.dataUrl.split(',', 2)[1],
             }),
@@ -448,6 +457,7 @@ export async function generateImage(payload: {
     const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl) : undefined
     return cloudGenerate(
       payload.prompt,
+      batchId,
       references,
       maskUrl,
       payload.size,
@@ -535,6 +545,7 @@ export function registerImageGenHandlers(): void {
       payload: {
         prompt: string
         engine: 'openai' | 'comfy' | 'gemini' | 'grok'
+        batchId?: string
         model?: CloudImageModel
         referenceUrls?: string[]
         maskDataUrl?: string
@@ -579,7 +590,7 @@ export function registerImageGenHandlers(): void {
         return { error: cloud.error ?? '云端图像服务未配置' }
       }
       try {
-        const r = await cloudFetch(`/imagegen/history?limit=${n}`)
+        const r = await cloudFetch(`/imagegen/history?limit=${n}&grouped=true`)
         if (!r.ok) return { error: `历史接口 ${r.status}` }
         return (await r.json()) as ImageGenHistoryItem[]
       } catch {
@@ -594,6 +605,21 @@ export function registerImageGenHandlers(): void {
       if (!getCloudConnection().available) return { ok: false }
       try {
         const r = await cloudFetch(`/imagegen/history/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        })
+        return { ok: r.ok }
+      } catch {
+        return { ok: false }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'imageGen:historyDeleteBatch',
+    async (_e, batchId: string): Promise<{ ok: boolean }> => {
+      if (!getCloudConnection().available) return { ok: false }
+      try {
+        const r = await cloudFetch(`/imagegen/history-batches/${encodeURIComponent(batchId)}`, {
           method: 'DELETE',
         })
         return { ok: r.ok }

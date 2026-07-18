@@ -1,0 +1,632 @@
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { App as AntApp, Button, Modal, Spin, Switch, Tooltip } from 'antd'
+import { createStyles } from 'antd-style'
+import { Image as ImageIcon, RefreshCw, Sparkles } from 'lucide-react'
+
+import {
+  api,
+  type ImageGenHealth,
+  type ImageGenHistoryItem,
+} from '../lib/api'
+import ImageHistoryBatchRow from './ImageHistoryBatchRow'
+import ImageInputSection, { type ReferenceUploadState } from './ImageInputSection'
+import ImageModelSelector from './ImageModelSelector'
+import ImageOutputSection from './ImageOutputSection'
+import { groupImageGenerationHistory } from './image-generation-history'
+import {
+  buildImageGenerationRequest,
+  defaultImageModel,
+  imageModel,
+  type ImageModelKey,
+  type ImageOutputSettings,
+} from './image-generation-models'
+
+const PROMPT_MAX = 500
+const PAGE_SIZE = 60
+
+const DEFAULT_OUTPUT: ImageOutputSettings = {
+  count: 1,
+  size: '1024x1024',
+  quality: 'auto',
+  background: 'auto',
+  outputFormat: 'png',
+  outputCompression: 90,
+  moderation: 'auto',
+  responseFormat: 'b64_json',
+  requestUser: '',
+  advanced: false,
+  geminiAspectRatio: '1:1',
+  geminiImageSize: '1K',
+  grokAspectRatio: '1:1',
+  grokImageSize: '1K',
+}
+
+type PendingBatch = { id: string; prompt: string; model: string; count: number }
+type SessionImage = ImageGenHistoryItem & { local: true }
+
+type MaskEditorProps = {
+  open: boolean
+  src: string
+  onCancel: () => void
+  onApply: (mask: string) => void
+}
+
+const useStyles = createStyles(({ token, css }) => ({
+  page: css`
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(340px, 35fr) minmax(0, 65fr);
+    gap: 16px;
+    padding: 16px;
+    background: ${token.colorBgLayout};
+    @media (max-width: 900px) { grid-template-columns: 1fr; overflow-y: auto; }
+  `,
+  panel: css`
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorBgContainer};
+    border: 1px solid ${token.colorBorderSecondary};
+  `,
+  sectionTitle: css`
+    font-size: 12px;
+    font-weight: 600;
+    color: ${token.colorTextSecondary};
+  `,
+  modelHint: css`
+    margin-top: -8px;
+    font-size: 11px;
+    color: ${token.colorTextTertiary};
+  `,
+  comfy: css`
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: ${token.colorTextTertiary};
+  `,
+  warning: css`
+    padding: 8px 10px;
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorWarningBg};
+    color: ${token.colorWarningText};
+    font-size: 12px;
+  `,
+  gallery: css`
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px;
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorBgContainer};
+    border: 1px solid ${token.colorBorderSecondary};
+  `,
+  galleryHead: css`
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    .sub { font-size: 11px; font-weight: 400; color: ${token.colorTextTertiary}; }
+  `,
+  rows: css`
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  `,
+  pending: css`
+    min-height: 104px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border: 1px dashed ${token.colorPrimaryBorder};
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorPrimaryBg};
+  `,
+  empty: css`
+    min-height: 260px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 8px;
+    color: ${token.colorTextTertiary};
+  `,
+  load: css`
+    min-height: 32px;
+    display: grid;
+    place-items: center;
+    color: ${token.colorTextTertiary};
+    font-size: 11px;
+  `,
+  lightbox: css`
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, .82);
+    cursor: zoom-out;
+    img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
+  `,
+}))
+
+function timestampLabel(value: number) {
+  return new Date(value > 1e12 ? value : value * 1000).toLocaleString(undefined, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function providerTag(engine: string, provider: string | null, model: string | null) {
+  const providerName = provider === 'three-a-grok'
+    ? '3A Grok'
+    : provider === 'three-a'
+      ? '3A'
+      : provider === 'tikhub'
+        ? 'TikHub'
+        : provider
+  const modelName = model === 'sdxl-local'
+    ? 'SDXL'
+    : model?.startsWith('gemini')
+      ? 'Gemini'
+      : model?.startsWith('grok')
+        ? 'Grok'
+        : engine.startsWith('comfy')
+          ? 'SDXL'
+          : 'GPT'
+  return providerName ? `${modelName} · ${providerName}` : modelName
+}
+
+export default function ImageGenerationWorkspace({
+  MaskEditorComponent,
+}: {
+  MaskEditorComponent: ComponentType<MaskEditorProps>
+}) {
+  const { styles } = useStyles()
+  const { message } = AntApp.useApp()
+  const [health, setHealth] = useState<ImageGenHealth | null>(null)
+  const [modelKey, setModelKey] = useState<ImageModelKey>('sdxl-local')
+  const [prompt, setPrompt] = useState('')
+  const [output, setOutput] = useState<ImageOutputSettings>(DEFAULT_OUTPUT)
+  const [baseImage, setBaseImage] = useState<string | null>(null)
+  const [upload, setUpload] = useState<ReferenceUploadState>({ status: 'idle' })
+  const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false)
+  const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
+  const [sessionImages, setSessionImages] = useState<SessionImage[]>([])
+  const [pending, setPending] = useState<PendingBatch[]>([])
+  const [selectedByBatch, setSelectedByBatch] = useState<Record<string, string>>({})
+  const [compareOpen, setCompareOpen] = useState(false)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [comfyBusy, setComfyBusy] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [historyDone, setHistoryDone] = useState(false)
+  const uploadOwnerRef = useRef<string | null>(null)
+  const galleryRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const limitRef = useRef(PAGE_SIZE)
+
+  const model = imageModel(modelKey)
+  const batches = useMemo(
+    () => groupImageGenerationHistory([...sessionImages, ...history]),
+    [history, sessionImages],
+  )
+  const selectedImages = useMemo(
+    () => batches.flatMap((batch) => {
+      const selectedId = selectedByBatch[batch.id]
+      const selected = batch.images.find((image) => image.id === selectedId)
+      return selected ? [{ batchId: batch.id, prompt: batch.prompt, image: selected }] : []
+    }),
+    [batches, selectedByBatch],
+  )
+
+  async function refreshHealth() {
+    const next = await api.imageGen.health()
+    setHealth(next)
+    setModelKey((current) => {
+      const currentModel = imageModel(current)
+      if (currentModel.group === '云端模型' && !next.keyConfigured && next.comfy) return 'sdxl-local'
+      return current
+    })
+  }
+
+  async function fetchHistory(limit = limitRef.current) {
+    const result = await api.imageGen.history(limit)
+    if (!Array.isArray(result)) return
+    setHistory(result)
+    const persistedUrls = new Set(result.map((item) => item.url))
+    setSessionImages((items) => items.filter((item) => !persistedUrls.has(item.url)))
+    const batchCount = new Set(result.map((item) => item.batch_id || item.id)).size
+    setHistoryDone(batchCount < limit)
+  }
+
+  async function loadMore() {
+    if (loadingMore || historyDone) return
+    setLoadingMore(true)
+    try {
+      limitRef.current += PAGE_SIZE
+      await fetchHistory(limitRef.current)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  useEffect(() => {
+    void Promise.all([
+      api.settings.load().catch(() => null),
+      api.imageGen.health(),
+    ]).then(([settings, initialHealth]) => {
+      setHealth(initialHealth)
+      const preferred = defaultImageModel(settings?.imageEngine)
+      const preferredModel = imageModel(preferred)
+      setModelKey(preferredModel.group === '云端模型' && !initialHealth.keyConfigured && initialHealth.comfy
+        ? 'sdxl-local'
+        : preferred)
+    })
+    void fetchHistory()
+  }, [])
+
+  useEffect(() => {
+    const root = galleryRef.current
+    const sentinel = sentinelRef.current
+    if (!root || !sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore()
+      },
+      { root, rootMargin: '200px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [historyDone, loadingMore])
+
+  function clearInputImage() {
+    setBaseImage(null)
+    setMaskDataUrl(null)
+    setUpload({ status: 'idle' })
+    uploadOwnerRef.current = null
+  }
+
+  function selectModel(next: ImageModelKey) {
+    const definition = imageModel(next)
+    if (!definition.acceptsImage) clearInputImage()
+    if (!definition.acceptsMask) {
+      setMaskDataUrl(null)
+      setMaskEditorOpen(false)
+    }
+    setModelKey(next)
+  }
+
+  function handleFile(file?: File) {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      message.error('请选择图片文件')
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      message.error('图片不能超过 20MB')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') return
+      const dataUrl = reader.result
+      setBaseImage(dataUrl)
+      setMaskDataUrl(null)
+      uploadOwnerRef.current = dataUrl
+      if (!health?.keyConfigured) {
+        setUpload({ status: 'idle' })
+        return
+      }
+      setUpload({ status: 'uploading' })
+      void api.imageGen.uploadReference(dataUrl).then((result) => {
+        if (uploadOwnerRef.current !== dataUrl) return
+        setUpload('error' in result ? { status: 'error', error: result.error } : { status: 'done', url: result.url })
+      }).catch((error: unknown) => {
+        if (uploadOwnerRef.current !== dataUrl) return
+        setUpload({ status: 'error', error: error instanceof Error ? error.message : String(error) })
+      })
+    }
+    reader.onerror = () => message.error('读取图片失败')
+    reader.readAsDataURL(file)
+  }
+
+  function useAsInput(url: string) {
+    setBaseImage(url)
+    setMaskDataUrl(null)
+    setUpload({ status: 'done', url })
+    uploadOwnerRef.current = url
+    message.success('已设为输入图片')
+  }
+
+  async function toggleComfy(enabled: boolean) {
+    setComfyBusy(true)
+    try {
+      if (enabled) {
+        const result = await api.imageGen.comfyStart()
+        if ('error' in result) message.error(result.error)
+        else message.success('ComfyUI 已启动')
+      } else {
+        const result = await api.imageGen.comfyStop()
+        if (!result.ok && result.external) message.warning('ComfyUI 由外部启动，请从启动它的位置关闭')
+      }
+    } finally {
+      await refreshHealth()
+      setComfyBusy(false)
+    }
+  }
+
+  async function generate() {
+    if (pending.length >= 3) return
+    const batchId = crypto.randomUUID()
+    const reference = baseImage
+      ? model.engine !== 'comfy' && upload.status === 'done'
+        ? upload.url
+        : baseImage
+      : undefined
+    let request
+    try {
+      request = buildImageGenerationRequest({
+        modelKey,
+        prompt,
+        batchId,
+        referenceUrls: reference ? [reference] : undefined,
+        maskDataUrl: maskDataUrl ?? undefined,
+        output,
+      })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : String(error))
+      return
+    }
+
+    const pendingBatch: PendingBatch = {
+      id: batchId,
+      prompt: request.prompt,
+      model: model.label,
+      count: request.n,
+    }
+    setPending((items) => [pendingBatch, ...items])
+    try {
+      const results = request.engine === 'comfy'
+        ? await Promise.all(Array.from({ length: request.n }, () => api.imageGen.generate({ ...request, n: 1 })))
+        : [await api.imageGen.generate(request)]
+      const error = results.find((result) => 'error' in result)
+      if (error && 'error' in error) message.error(error.error)
+
+      const successfulResults = results.filter(
+        (result): result is { dataUrl: string; publicUrl: string | null; urls?: string[] } => 'dataUrl' in result,
+      )
+      const immediateImages = successfulResults.flatMap((result) => {
+        const urls = result.urls?.length ? result.urls : result.publicUrl ? [result.publicUrl] : []
+        return urls.length ? urls : [result.dataUrl]
+      })
+      if (immediateImages.length) {
+        const now = Date.now()
+        setSessionImages((items) => [
+          ...immediateImages.map((url, index): SessionImage => ({
+            id: `${batchId}-${index}`,
+            batch_id: batchId,
+            prompt: request.prompt,
+            engine: request.engine,
+            model: modelKey,
+            provider: '本次会话',
+            url,
+            created_at: now + index,
+            local: true,
+          })),
+          ...items,
+        ])
+      }
+      if (successfulResults.some((result) => result.publicUrl || result.urls?.length)) await fetchHistory()
+    } finally {
+      setPending((items) => items.filter((item) => item.id !== batchId))
+    }
+  }
+
+  async function deleteImage(id: string) {
+    const local = sessionImages.some((item) => item.id === id)
+    if (!local) {
+      const result = await api.imageGen.historyDelete(id)
+      if (!result.ok) {
+        message.error('删除失败')
+        return
+      }
+      setHistory((items) => items.filter((item) => item.id !== id))
+    } else {
+      setSessionImages((items) => items.filter((item) => item.id !== id))
+    }
+  }
+
+  async function deleteBatch(batchId: string) {
+    const hasRemote = history.some((item) => item.batch_id === batchId)
+    if (hasRemote) {
+      const result = await api.imageGen.historyDeleteBatch(batchId)
+      if (!result.ok) {
+        message.error('删除批次失败')
+        return
+      }
+    }
+    setHistory((items) => items.filter((item) => item.batch_id !== batchId))
+    setSessionImages((items) => items.filter((item) => item.batch_id !== batchId))
+  }
+
+  async function download(url: string) {
+    try {
+      const response = await fetch(url)
+      if (!response.ok) throw new Error(String(response.status))
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = `pi-image-${Date.now()}.${blob.type.includes('jpeg') ? 'jpg' : blob.type.includes('webp') ? 'webp' : 'png'}`
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    } catch {
+      await api.clipboard.writeText(url)
+      message.warning('下载失败，已复制图片链接')
+    }
+  }
+
+  const canGenerate =
+    pending.length < 3 &&
+    (!!prompt.trim() || (!!baseImage && model.acceptsImage)) &&
+    (model.engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
+
+  return (
+    <div className={styles.page}>
+      <section className={styles.panel}>
+        <span className={styles.sectionTitle}>模型</span>
+        <ImageModelSelector value={modelKey} cloudAvailable={!!health?.keyConfigured} onChange={selectModel} />
+        <span className={styles.modelHint}>{model.description}</span>
+
+        <ImageInputSection
+          prompt={prompt}
+          promptMax={PROMPT_MAX}
+          acceptsImage={model.acceptsImage}
+          acceptsMask={model.acceptsMask}
+          baseImage={baseImage}
+          maskDataUrl={maskDataUrl}
+          upload={upload}
+          onPromptChange={setPrompt}
+          onFile={handleFile}
+          onPreview={setPreview}
+          onClearImage={clearInputImage}
+          onEditMask={() => setMaskEditorOpen(true)}
+          onClearMask={() => setMaskDataUrl(null)}
+        />
+
+        <ImageOutputSection
+          modelKey={modelKey}
+          value={output}
+          hasMask={!!maskDataUrl}
+          onChange={(patch) => setOutput((current) => ({ ...current, ...patch }))}
+        />
+
+        {model.engine === 'comfy' && (
+          <div className={styles.comfy}>
+            <Switch
+              checked={health?.comfy ?? false}
+              loading={comfyBusy}
+              disabled={!!health?.comfy && !health.comfyManaged}
+              checkedChildren="运行中"
+              unCheckedChildren="已关闭"
+              onChange={(value) => void toggleComfy(value)}
+            />
+            <span>{health?.comfyCheckpoint || '本地 ComfyUI / SDXL'}</span>
+          </div>
+        )}
+
+        {!canGenerate && !comfyBusy && !health?.ok && (
+          <div className={styles.warning}>当前模型服务不可用，请刷新状态或启动本地 ComfyUI。</div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Tooltip title="重新检测服务状态">
+            <Button icon={<RefreshCw size={14} />} onClick={() => void refreshHealth()} />
+          </Tooltip>
+          <Button
+            block
+            type="primary"
+            size="large"
+            icon={<Sparkles size={15} />}
+            disabled={!canGenerate}
+            onClick={() => void generate()}
+          >
+            生成 {maskDataUrl ? 1 : output.count} 张图片
+          </Button>
+        </div>
+      </section>
+
+      <section className={styles.gallery} ref={galleryRef}>
+        <div className={styles.galleryHead}>
+          历史记录（{batches.length} 批）
+          {pending.length > 0 && <span className="sub">{pending.length} 批生成中</span>}
+          <Button
+            size="small"
+            style={{ marginLeft: 'auto' }}
+            disabled={selectedImages.length < 2}
+            onClick={() => setCompareOpen(true)}
+          >
+            对比已选（{selectedImages.length}）
+          </Button>
+        </div>
+        {!batches.length && !pending.length && (
+          <div className={styles.empty}><ImageIcon size={38} strokeWidth={1.2} />还没有生成记录</div>
+        )}
+        <div className={styles.rows}>
+          {pending.map((item) => (
+            <div key={item.id} className={styles.pending}>
+              <Spin size="small" />
+              <div><strong>{item.model} · 正在生成 {item.count} 张</strong><div>{item.prompt}</div></div>
+            </div>
+          ))}
+          {batches.map((batch) => (
+            <ImageHistoryBatchRow
+              key={batch.id}
+              batch={batch}
+              selectedId={selectedByBatch[batch.id]}
+              tag={providerTag(batch.engine, batch.provider, batch.model)}
+              time={timestampLabel(batch.createdAt)}
+              canUseAsInput={model.acceptsImage}
+              onSelect={(id) => setSelectedByBatch((current) => {
+                const next = { ...current }
+                if (next[batch.id] === id) delete next[batch.id]
+                else next[batch.id] = id
+                return next
+              })}
+              onPreview={setPreview}
+              onDownload={(url) => void download(url)}
+              onCopyPrompt={() => void api.clipboard.writeText(batch.prompt).then(() => message.success('提示词已复制'))}
+              onCopyLink={(url) => void api.clipboard.writeText(url).then(() => message.success('图片链接已复制'))}
+              onUseAsInput={useAsInput}
+              onDeleteImage={(id) => void deleteImage(id)}
+              onDeleteBatch={() => void deleteBatch(batch.id)}
+            />
+          ))}
+        </div>
+        <div ref={sentinelRef} />
+        {!!batches.length && <div className={styles.load}>{loadingMore ? <Spin size="small" /> : historyDone ? '没有更多了' : ''}</div>}
+      </section>
+
+      {preview && <div className={styles.lightbox} onClick={() => setPreview(null)}><img src={preview} alt="预览" onClick={(event) => event.stopPropagation()} /></div>}
+      <Modal
+        open={compareOpen}
+        title={`图片对比（${selectedImages.length} 张）`}
+        width="min(1200px, 94vw)"
+        footer={null}
+        onCancel={() => setCompareOpen(false)}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, Math.max(1, selectedImages.length))}, minmax(0, 1fr))`, gap: 10 }}>
+          {selectedImages.map(({ batchId, prompt: selectedPrompt, image }) => (
+            <div key={batchId} style={{ minWidth: 0 }}>
+              <img src={image.url} alt={selectedPrompt} style={{ width: '100%', aspectRatio: '1', objectFit: 'contain', background: '#111', borderRadius: 6 }} />
+              <div title={selectedPrompt} style={{ marginTop: 6, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedPrompt}</div>
+            </div>
+          ))}
+        </div>
+      </Modal>
+      {baseImage && (
+        <MaskEditorComponent
+          open={maskEditorOpen}
+          src={baseImage}
+          onCancel={() => setMaskEditorOpen(false)}
+          onApply={(mask) => {
+            setMaskDataUrl(mask)
+            setMaskEditorOpen(false)
+            setOutput((current) => ({ ...current, count: 1 }))
+            message.success('蒙版已保存，局部重绘固定输出 1 张')
+          }}
+        />
+      )}
+    </div>
+  )
+}
