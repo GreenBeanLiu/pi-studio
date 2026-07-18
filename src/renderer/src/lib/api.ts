@@ -104,11 +104,15 @@ declare global {
         save: (payload: {
           profile: LlmProfileWrite
           create: boolean
-        }) => Promise<{ ok: true; profile: LlmProviderProfile } | { error: string }>
-        delete: (id: string) => Promise<{ ok: true } | { error: string }>
+        }) => Promise<
+          { ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }
+        >
+        delete: (id: string) => Promise<{ ok: true; warning?: string } | { error: string }>
         refreshModels: (
           id: string,
-        ) => Promise<{ ok: true; profile: LlmProviderProfile } | { error: string }>
+        ) => Promise<
+          { ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }
+        >
       }
       sandbox: {
         detect: () => Promise<SandboxDetect>

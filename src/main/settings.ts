@@ -312,7 +312,7 @@ export function writeModelsOverride(
   heliconeEnabled: boolean,
   customModelIds: string[] = [],
   gatewayRelay = '',
-  gatewayProfiles: LlmProviderProfile[] = [],
+  gatewayProfiles?: LlmProviderProfile[],
 ): void {
   const dir = agentConfigDir()
   mkdirSync(dir, { recursive: true })
@@ -341,8 +341,20 @@ export function writeModelsOverride(
     providerConfig = { ...(providerConfig ?? {}), models: ids.map((id) => ({ id })) }
   }
 
-  const providers: Record<string, unknown> = providerConfig ? { [provider]: providerConfig } : {}
-  if (gatewayRelay.trim()) {
+  let providers: Record<string, unknown> = {}
+  if (gatewayProfiles === undefined && existsSync(modelsPath)) {
+    try {
+      const existing = JSON.parse(readFileSync(modelsPath, 'utf-8')) as {
+        providers?: Record<string, unknown>
+      }
+      providers = { ...(existing.providers ?? {}) }
+    } catch {
+      providers = {}
+    }
+  }
+  if (providerConfig) providers[provider] = providerConfig
+  else delete providers[provider]
+  if (gatewayRelay.trim() && gatewayProfiles) {
     Object.assign(providers, buildGatewayProviderConfigs(gatewayRelay, gatewayProfiles))
   }
   writeFileSync(modelsPath, JSON.stringify({ providers }, null, 2), 'utf-8')

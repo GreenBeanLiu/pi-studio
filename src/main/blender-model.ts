@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from
 import { join } from 'path'
 import { connect } from 'net'
 import { loadRpcClient, resolvePiCliPath, embeddedNodeEnv } from './pi-client'
-import { loadSettings, apiKeyEnvVar, agentConfigDir, writeModelsOverride } from './settings'
+import { prepareAgentRuntime } from './agent-runtime-config'
 import {
   modelsDir,
   loadHistory,
@@ -219,8 +219,12 @@ async function generateBlenderModel(payload: {
 }): Promise<Model3DResult> {
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return { error: '请输入模型描述' }
-  const settings = loadSettings()
-  if (!settings.apiKey) return { error: 'Blender 建模需要在「设置 → 模型」里配置 API Key' }
+  let runtime
+  try {
+    runtime = await prepareAgentRuntime()
+  } catch (err) {
+    return { error: (err as Error).message ?? 'Blender 建模需要配置模型线路' }
+  }
   if (!(await blenderAvailable())) {
     const setup = await setupBlender()
     if (!setup.connected) return { error: setup.error ?? '无法自动启动 Blender' }
@@ -248,21 +252,12 @@ async function generateBlenderModel(payload: {
     else writeFileSync(scriptPath, SKELETON, 'utf-8')
     pr('building')
 
-    writeModelsOverride(
-      settings.provider,
-      settings.baseUrl,
-      !!settings.heliconeApiKey,
-      settings.customModelIds,
-    )
     const RpcClient = await loadRpcClient()
     const client = new RpcClient({
       cwd: dir,
-      env: embeddedNodeEnv({
-        [apiKeyEnvVar(settings.provider)]: settings.apiKey,
-        PI_CODING_AGENT_DIR: agentConfigDir(),
-      }),
-      provider: settings.provider,
-      model: settings.model || undefined,
+      env: embeddedNodeEnv(runtime.env),
+      provider: runtime.provider,
+      model: runtime.model,
       cliPath: resolvePiCliPath(),
     })
     await client.start()

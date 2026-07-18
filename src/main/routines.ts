@@ -2,7 +2,8 @@ import { app, BrowserWindow, ipcMain, Notification } from 'electron'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { loadSettings, apiKeyEnvVar, agentConfigDir, writeModelsOverride } from './settings'
+import { loadSettings } from './settings'
+import { prepareAgentRuntime } from './agent-runtime-config'
 import { embeddedNodeEnv, loadRpcClient, resolvePiCliPath } from './pi-client'
 import { prepareSandboxLaunch } from './sandbox'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
@@ -331,23 +332,12 @@ type AgentSession = {
 async function ensureAgentClient(routine: Routine, session: AgentSession): Promise<NonNullable<AgentSession['client']>> {
   if (session.client) return session.client
   const settings = loadSettings()
-  if (!settings.apiKey) throw new Error('未配置 API Key(agent 节点需要)')
+  const runtime = await prepareAgentRuntime()
   syncWebSearchExtension(!!settings.tavilyApiKey)
   syncSecurityGuardExtension(settings.securityGuardEnabled)
   syncWorkspaceMemoryExtension()
-  writeModelsOverride(
-    settings.provider,
-    settings.baseUrl,
-    !!settings.heliconeApiKey,
-    settings.customModelIds,
-  )
   const RpcClient = await loadRpcClient()
-  const env = {
-    [apiKeyEnvVar(settings.provider)]: settings.apiKey,
-    PI_CODING_AGENT_DIR: agentConfigDir(),
-    ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
-    ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
-  }
+  const env = runtime.env
   const launch = settings.sandboxEnabled
     ? await prepareSandboxLaunch(routine.workspacePath, env)
     : { cliPath: resolvePiCliPath(), env }
@@ -356,8 +346,8 @@ async function ensureAgentClient(routine: Routine, session: AgentSession): Promi
     // Electron 打包后 RpcClient 用 process.execPath(=pi-studio.exe)拉起子进程,
     // 不带这个标记会再开一个应用窗口而不是跑 pi CLI → 卡 30s "Timeout waiting for response"。
     env: embeddedNodeEnv(launch.env),
-    provider: settings.provider,
-    model: settings.model || undefined,
+    provider: runtime.provider,
+    model: runtime.model,
     cliPath: launch.cliPath,
   })
   await client.start()

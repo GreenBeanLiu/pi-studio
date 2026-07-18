@@ -4,7 +4,7 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { spawn } from 'child_process'
 import { loadRpcClient, resolvePiCliPath, embeddedNodeEnv } from './pi-client'
-import { loadSettings, apiKeyEnvVar, agentConfigDir, writeModelsOverride } from './settings'
+import { prepareAgentRuntime } from './agent-runtime-config'
 import {
   modelsDir,
   loadHistory,
@@ -186,8 +186,12 @@ async function generateCodeModel(payload: {
 }): Promise<Model3DResult> {
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return { error: '请输入模型描述' }
-  const settings = loadSettings()
-  if (!settings.apiKey) return { error: '代码建模需要在「设置 → 模型」里配置 API Key' }
+  let runtime
+  try {
+    runtime = await prepareAgentRuntime()
+  } catch (err) {
+    return { error: (err as Error).message ?? '代码建模需要配置模型线路' }
+  }
 
   let sourceScript: string | null = null
   let displayPrompt = prompt
@@ -226,22 +230,13 @@ async function generateCodeModel(payload: {
     } else writeFileSync(scriptPath, skeleton(), 'utf-8')
     pr('building')
 
-    writeModelsOverride(
-      settings.provider,
-      settings.baseUrl,
-      !!settings.heliconeApiKey,
-      settings.customModelIds,
-    )
     const RpcClient = await loadRpcClient()
-    const env = embeddedNodeEnv({
-      [apiKeyEnvVar(settings.provider)]: settings.apiKey,
-      PI_CODING_AGENT_DIR: agentConfigDir(),
-    })
+    const env = embeddedNodeEnv(runtime.env)
     const client = new RpcClient({
       cwd: dir,
       env,
-      provider: settings.provider,
-      model: settings.model || undefined,
+      provider: runtime.provider,
+      model: runtime.model,
       cliPath: resolvePiCliPath(),
     })
     await client.start()

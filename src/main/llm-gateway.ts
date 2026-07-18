@@ -84,6 +84,13 @@ export function fetchLlmCatalog(relay: string, appKey: string): Promise<LlmCatal
   return gatewayJson(relay, appKey, '/llm/catalog')
 }
 
+export function createLlmSessionToken(
+  relay: string,
+  appKey: string,
+): Promise<{ token: string; expires_at: number; scope: 'llm:chat' }> {
+  return gatewayJson(relay, appKey, '/llm/session-token', { method: 'POST' })
+}
+
 export function listLlmProfiles(relay: string, appKey: string): Promise<LlmProviderProfile[]> {
   return gatewayJson(relay, appKey, '/llm/profiles')
 }

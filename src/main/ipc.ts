@@ -14,8 +14,6 @@ import {
   saveSettings,
   addRecentWorkspace,
   removeRecentWorkspace,
-  apiKeyEnvVar,
-  agentConfigDir,
   writeModelsOverride,
   saveCustomModelIds,
   type PiProvider,
@@ -57,6 +55,7 @@ import {
   type LlmProfileWrite,
   type LlmProviderProfile,
 } from './llm-gateway'
+import { prepareAgentRuntime } from './agent-runtime-config'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
@@ -97,7 +96,7 @@ export function registerIpcHandlers(): void {
     return { relay: cloud.relay, key: cloud.key }
   }
 
-  const syncLlmModels = async (): Promise<LlmProviderProfile[]> => {
+  const syncLlmModels = async (): Promise<{ profiles: LlmProviderProfile[]; warning?: string }> => {
     const settings = loadSettings()
     const cloud = getCloud()
     if (!cloud.available) {
@@ -107,18 +106,30 @@ export function registerIpcHandlers(): void {
         !!settings.heliconeApiKey,
         settings.customModelIds,
       )
-      return []
+      return { profiles: [] }
     }
-    const catalog = await fetchLlmCatalog(cloud.relay, cloud.key)
-    writeModelsOverride(
-      settings.provider,
-      settings.baseUrl,
-      !!settings.heliconeApiKey,
-      settings.customModelIds,
-      cloud.relay,
-      catalog.providers,
-    )
-    return catalog.providers
+    try {
+      const catalog = await fetchLlmCatalog(cloud.relay, cloud.key)
+      writeModelsOverride(
+        settings.provider,
+        settings.baseUrl,
+        !!settings.heliconeApiKey,
+        settings.customModelIds,
+        cloud.relay,
+        catalog.providers,
+      )
+      return { profiles: catalog.providers }
+    } catch (err) {
+      writeModelsOverride(
+        settings.provider,
+        settings.baseUrl,
+        !!settings.heliconeApiKey,
+        settings.customModelIds,
+      )
+      const warning = `配置已保存，但模型目录暂未同步：${(err as Error).message ?? String(err)}`
+      appendAppLog('warn', 'llm.catalog', warning, normalizeError(err))
+      return { profiles: [], warning }
+    }
   }
 
   // ── Window controls ──────────────────────────────────────────────
@@ -236,7 +247,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:syncCustomModels', (_e, ids: string[]) => {
     const cleaned = [...new Set((ids ?? []).map((s) => String(s).trim()).filter(Boolean))]
     saveCustomModelIds(cleaned)
-    return syncLlmModels().then(() => ({ ok: true }))
+    return syncLlmModels().then((result) => ({ ok: true, warning: result.warning }))
   })
 
   ipcMain.handle('llmProfiles:list', async () => {
@@ -255,11 +266,11 @@ export function registerIpcHandlers(): void {
         const profile = payload.create
           ? await createLlmProfile(cloud.relay, cloud.key, payload.profile)
           : await updateLlmProfile(cloud.relay, cloud.key, payload.profile)
-        await syncLlmModels()
+        const sync = await syncLlmModels()
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) win.webContents.send('settings:changed')
         }
-        return { ok: true, profile }
+        return { ok: true, profile, warning: sync.warning }
       } catch (err) {
         return { error: (err as Error).message ?? String(err) }
       }
@@ -269,8 +280,8 @@ export function registerIpcHandlers(): void {
     try {
       const cloud = llmCloud()
       await deleteLlmProfile(cloud.relay, cloud.key, id)
-      await syncLlmModels()
-      return { ok: true }
+      const sync = await syncLlmModels()
+      return { ok: true, warning: sync.warning }
     } catch (err) {
       return { error: (err as Error).message ?? String(err) }
     }
@@ -279,8 +290,8 @@ export function registerIpcHandlers(): void {
     try {
       const cloud = llmCloud()
       const profile = await refreshLlmProfileModels(cloud.relay, cloud.key, id)
-      await syncLlmModels()
-      return { ok: true, profile }
+      const sync = await syncLlmModels()
+      return { ok: true, profile, warning: sync.warning }
     } catch (err) {
       return { error: (err as Error).message ?? String(err) }
     }
@@ -366,33 +377,12 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(event.sender)
     const settings = loadSettings()
 
-    let gatewayProfiles: LlmProviderProfile[] = []
-    let gatewayRelay = ''
-    let gatewayKey = ''
-    const cloud = getCloud()
-    if (cloud.available) {
-      try {
-        const catalog = await fetchLlmCatalog(cloud.relay, cloud.key)
-        gatewayProfiles = catalog.providers.filter((profile) => profile.models.length > 0)
-        gatewayRelay = cloud.relay
-        gatewayKey = cloud.key
-      } catch (err) {
-        appendAppLog('warn', 'llm.catalog', 'Failed to load cloud model catalog', normalizeError(err))
-      }
+    let runtime
+    try {
+      runtime = await prepareAgentRuntime()
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
     }
-
-    if (!settings.apiKey && gatewayProfiles.length === 0) {
-      return { error: '请先配置本地直连 API Key，或在云端模型线路中添加可用模型' }
-    }
-
-    writeModelsOverride(
-      settings.provider,
-      settings.baseUrl,
-      !!settings.heliconeApiKey,
-      settings.customModelIds,
-      gatewayRelay,
-      gatewayProfiles,
-    )
     syncWebSearchExtension(!!settings.tavilyApiKey)
     syncSecurityGuardExtension(settings.securityGuardEnabled)
     syncWorkspaceMemoryExtension()
@@ -406,17 +396,9 @@ export function registerIpcHandlers(): void {
     try {
       await piClientManager.startWorkspace(
         workspacePath,
-        {
-          ...(settings.apiKey ? { [apiKeyEnvVar(settings.provider)]: settings.apiKey } : {}),
-          ...(gatewayKey ? { PI_STUDIO_LLM_KEY: gatewayKey } : {}),
-          PI_CODING_AGENT_DIR: agentConfigDir(),
-          ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
-          ...(settings.heliconeApiKey ? { HELICONE_API_KEY: settings.heliconeApiKey } : {}),
-        },
-        settings.apiKey ? settings.provider : gatewayProfiles[0].id,
-        settings.apiKey
-          ? settings.model || undefined
-          : gatewayProfiles[0].models[0] || undefined,
+        runtime.env,
+        runtime.provider,
+        runtime.model,
         async (agentEvent) => {
           if (agentEvent.type === 'agent_end') {
             await sealRunChanges(workspacePath, 'agent ended')

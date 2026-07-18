@@ -378,6 +378,7 @@ export default function SettingsModal({
       }
       setLlmProfileDraft(null)
       await loadLlmProfiles()
+      if (result.warning) setLlmProfilesError(result.warning)
     } finally {
       setLlmProfileSaving(false)
     }
@@ -386,14 +387,20 @@ export default function SettingsModal({
   async function removeLlmProfile(id: string) {
     const result = await api.llmProfiles.delete(id)
     if ('error' in result) setLlmProfilesError(result.error)
-    else await loadLlmProfiles()
+    else {
+      await loadLlmProfiles()
+      if (result.warning) setLlmProfilesError(result.warning)
+    }
   }
 
   async function refreshLlmModels(id: string) {
     setLlmProfilesLoading(true)
     const result = await api.llmProfiles.refreshModels(id)
     if ('error' in result) setLlmProfilesError(result.error)
-    await loadLlmProfiles()
+    else {
+      await loadLlmProfiles()
+      if (result.warning) setLlmProfilesError(result.warning)
+    }
   }
 
   async function handleSave() {
