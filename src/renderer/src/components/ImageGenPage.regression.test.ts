@@ -9,6 +9,14 @@ describe('ImageGenPage UI regressions', () => {
     expect(source).toContain('height: 76px')
   })
 
+  it('offers Gemini aspect ratio and resolution controls instead of disabling GPT sizes', () => {
+    expect(source).toContain('const GEMINI_ASPECT_OPTIONS')
+    expect(source).toContain('const GEMINI_RESOLUTION_OPTIONS')
+    expect(source).toContain('aspectRatio: geminiAspectRatio')
+    expect(source).toContain('imageSize: geminiImageSize')
+    expect(source).not.toContain("disabled={engine !== 'openai'}")
+  })
+
   it('allows selecting SDXL even before the local runtime is installed', () => {
     expect(source).toContain("key: 'comfy'")
     expect(source).not.toMatch(/\{\s*key:\s*'comfy',\s*label:\s*'SDXL 生图',\s*disabled:/)

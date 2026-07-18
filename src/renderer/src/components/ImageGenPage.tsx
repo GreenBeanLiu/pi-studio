@@ -22,6 +22,8 @@ import {
   api,
   type ImageGenEngine,
   type ImageGenSize,
+  type GeminiImageAspectRatio,
+  type GeminiImageResolution,
   type ImageGenQuality,
   type ImageGenBackground,
   type ImageGenOutputFormat,
@@ -52,6 +54,21 @@ const SIZE_OPTIONS: { id: ImageGenSize; label: string; icon: string }[] = [
   { id: '1792x1024', label: '1792×1024', icon: '▭' },
   { id: 'auto', label: 'auto', icon: '↔' },
 ]
+
+const GEMINI_ASPECT_OPTIONS: { id: GeminiImageAspectRatio; icon: string }[] = [
+  { id: '1:1', icon: '□' },
+  { id: '2:3', icon: '▯' },
+  { id: '3:2', icon: '▭' },
+  { id: '3:4', icon: '▯' },
+  { id: '4:3', icon: '▭' },
+  { id: '4:5', icon: '▯' },
+  { id: '5:4', icon: '▭' },
+  { id: '9:16', icon: '▯' },
+  { id: '16:9', icon: '▭' },
+  { id: '21:9', icon: '▬' },
+]
+
+const GEMINI_RESOLUTION_OPTIONS: GeminiImageResolution[] = ['1K', '2K', '4K']
 
 const QUALITY_OPTIONS: ImageGenQuality[] = ['low', 'medium', 'high', 'auto', 'standard', 'hd']
 
@@ -554,6 +571,8 @@ function ImageGenInner() {
   const [prompt, setPrompt] = useState('')
   const [engine, setEngine] = useState<ImageGenEngine>('comfy')
   const [size, setSize] = useState<ImageGenSize>('1024x1024')
+  const [geminiAspectRatio, setGeminiAspectRatio] = useState<GeminiImageAspectRatio>('1:1')
+  const [geminiImageSize, setGeminiImageSize] = useState<GeminiImageResolution>('1K')
   const [count, setCount] = useState(1)
   const [quality, setQuality] = useState<ImageGenQuality>('auto')
   const [background, setBackground] = useState<ImageGenBackground>('auto')
@@ -728,7 +747,12 @@ function ImageGenInner() {
                 : {}),
             }
           : engine === 'gemini'
-            ? { model: 'gemini-3-pro-image-preview', n }
+            ? {
+                model: 'gemini-3-pro-image-preview',
+                n,
+                aspectRatio: geminiAspectRatio,
+                imageSize: geminiImageSize,
+              }
           : {}),
         ...(refUrls ? { referenceUrls: refUrls } : {}),
         ...(maskDataUrl ? { maskDataUrl } : {}),
@@ -1029,26 +1053,56 @@ function ImageGenInner() {
             ))}
         </div>
 
-        <span className={styles.sectionLabel}>
-          尺寸
-          {engine !== 'openai' && (
-            <span style={{ opacity: 0.6, textTransform: 'none' }}> · 仅 GPT Image 2 可选</span>
-          )}
-        </span>
-        <div className={cx(styles.optionGrid, styles.sizeOptionGrid)}>
-          {SIZE_OPTIONS.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={cx(styles.optionBtn, styles.sizeOption, size === s.id && styles.optionBtnActive)}
-              disabled={engine !== 'openai'}
-              onClick={() => setSize(s.id)}
-            >
-              <span className="icon">{s.icon}</span>
-              {s.label}
-            </button>
-          ))}
-        </div>
+        {engine === 'openai' && (
+          <>
+            <span className={styles.sectionLabel}>尺寸</span>
+            <div className={cx(styles.optionGrid, styles.sizeOptionGrid)}>
+              {SIZE_OPTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={cx(styles.optionBtn, styles.sizeOption, size === s.id && styles.optionBtnActive)}
+                  onClick={() => setSize(s.id)}
+                >
+                  <span className="icon">{s.icon}</span>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {engine === 'gemini' && (
+          <>
+            <span className={styles.sectionLabel}>画幅比例</span>
+            <div className={cx(styles.optionGrid, styles.sizeOptionGrid)}>
+              {GEMINI_ASPECT_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={cx(styles.optionBtn, styles.sizeOption, geminiAspectRatio === option.id && styles.optionBtnActive)}
+                  onClick={() => setGeminiAspectRatio(option.id)}
+                >
+                  <span className="icon">{option.icon}</span>
+                  {option.id}
+                </button>
+              ))}
+            </div>
+            <span className={styles.sectionLabel}>分辨率</span>
+            <div className={styles.optionGrid}>
+              {GEMINI_RESOLUTION_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={cx(styles.optionBtn, geminiImageSize === option && styles.optionBtnActive)}
+                  onClick={() => setGeminiImageSize(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {engine === 'openai' && (
           <>
