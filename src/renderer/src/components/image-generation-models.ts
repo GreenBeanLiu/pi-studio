@@ -12,9 +12,9 @@ import type {
   ImageGenSize,
 } from '../lib/api'
 
+// 本地 ComfyUI 引擎已移除(2026-07-17):生图全走服务端
 export type ImageModelKey =
   | 'gpt-image-2'
-  | 'sdxl-local'
   | 'gemini-3-pro-image-preview'
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'
@@ -23,10 +23,10 @@ export type ImageModelDefinition = {
   key: ImageModelKey
   label: string
   description: string
-  group: '云端模型' | '本地模型'
+  group: '云端模型'
   engine: ImageGenEngine
-  cloudModel?: Exclude<ImageModelKey, 'sdxl-local' | 'gpt-image-2'>
-  parameters: 'gpt' | 'gemini' | 'grok' | 'sdxl'
+  cloudModel?: Exclude<ImageModelKey, 'gpt-image-2'>
+  parameters: 'gpt' | 'gemini' | 'grok'
   acceptsImage: boolean
   acceptsMask: boolean
 }
@@ -75,16 +75,6 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
     acceptsImage: false,
     acceptsMask: false,
   },
-  {
-    key: 'sdxl-local',
-    label: 'SDXL 本地',
-    description: '文生图 / 本地改图',
-    group: '本地模型',
-    engine: 'comfy',
-    parameters: 'sdxl',
-    acceptsImage: true,
-    acceptsMask: true,
-  },
 ] as const
 
 const MODEL_BY_KEY = new Map(IMAGE_MODELS.map((model) => [model.key, model]))
@@ -96,10 +86,9 @@ export function imageModel(key: ImageModelKey): ImageModelDefinition {
 }
 
 export function defaultImageModel(engine: string | undefined): ImageModelKey {
-  if (engine === 'openai') return 'gpt-image-2'
   if (engine === 'gemini') return 'gemini-3-pro-image-preview'
   if (engine === 'grok') return 'grok-imagine-image'
-  return 'sdxl-local'
+  return 'gpt-image-2'
 }
 
 export type ImageOutputSettings = {

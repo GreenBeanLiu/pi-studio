@@ -53,7 +53,7 @@ export type RoutineStep = {
   type: RoutineStepType
   /** agent / imagegen:提示词(支持 {{…}} 变量) */
   prompt?: string
-  /** imagegen:引擎,openai=云端 gpt-image-2,comfy=本地 ComfyUI */
+  /** imagegen:引擎(本地 ComfyUI 已移除,老数据里的 'comfy' 运行时回退云端) */
   engine?: 'openai' | 'comfy'
   /** notify:目标渠道 id */
   channelId?: string
@@ -334,7 +334,8 @@ async function ensureAgentClient(routine: Routine, session: AgentSession): Promi
   const settings = loadSettings()
   const runtime = await prepareAgentRuntime()
   syncWebSearchExtension(!!settings.tavilyApiKey)
-  syncSecurityGuardExtension(settings.securityGuardEnabled)
+  // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
+  syncSecurityGuardExtension(false)
   syncWorkspaceMemoryExtension()
   const RpcClient = await loadRpcClient()
   const env = runtime.env
@@ -400,7 +401,8 @@ async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<Step
   if (!prompt.trim()) throw new Error('生图节点的提示词为空')
   const result = await generateImage({
     prompt,
-    engine: step.engine ?? 'openai',
+    // 老 routine 数据可能还存着 'comfy':本地引擎已移除,统一回退云端
+    engine: step.engine === 'comfy' || !step.engine ? 'openai' : step.engine,
     downloadResult: false,
   })
   if ('error' in result) throw new Error(result.error)

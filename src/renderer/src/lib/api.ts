@@ -212,11 +212,6 @@ declare global {
         historyDelete: (id: string) => Promise<{ ok: boolean }>
         historyDeleteBatch: (batchId: string) => Promise<{ ok: boolean }>
         uploadReference: (dataUrl: string) => Promise<{ ok: true; url: string } | { error: string }>
-        comfyStart: () => Promise<
-          | { ok: true; health: ImageGenHealth }
-          | { error: string; health: ImageGenHealth }
-        >
-        comfyStop: () => Promise<{ ok: boolean; external: boolean }>
       }
       model3d: {
         health: () => Promise<Model3DHealth>
@@ -268,7 +263,7 @@ export type LlmProfileListResult =
   | { ok: true; profiles: LlmProviderProfile[] }
   | { error: string }
 
-export type ImageGenEngine = 'openai' | 'comfy' | 'gemini' | 'grok'
+export type ImageGenEngine = 'openai' | 'gemini' | 'grok'
 
 export type GeminiImageAspectRatio =
   | '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
@@ -333,16 +328,6 @@ export type ImageGenProviderStyle = 'vivid' | 'natural'
 export type ImageGenHealth = {
   ok: boolean
   keyConfigured: boolean
-  comfy: boolean
-  comfyManaged: boolean
-  comfyCheckpoint: string
-  comfyCheckpointAvailable: boolean | null
-  comfyCheckpoints: string[]
-  comfyWorkflowReady: boolean
-  comfyPythonVersion?: string
-  comfyTorchVersion?: string
-  comfyDevices: string[]
-  comfyLastError?: string
   model: string
   r2: boolean
 }
@@ -524,6 +509,13 @@ export type ModelInfo = {
   id: string
   contextWindow: number
   reasoning: boolean
+  // pi registry 的完整模型对象还带这些(RPC 原样透传;老版本/自定义条目可能缺,全部可选)
+  name?: string
+  api?: string
+  baseUrl?: string
+  input?: string[]
+  maxTokens?: number
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
 }
 
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'

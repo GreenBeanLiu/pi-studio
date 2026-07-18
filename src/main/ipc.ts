@@ -321,7 +321,8 @@ export function registerIpcHandlers(): void {
       return { error: (err as Error).message ?? String(err) }
     }
     syncWebSearchExtension(!!settings.tavilyApiKey)
-    syncSecurityGuardExtension(settings.securityGuardEnabled)
+    // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
+    syncSecurityGuardExtension(false)
     syncWorkspaceMemoryExtension()
     try {
       syncSubagentWorkflow(settings.subagentsEnabled)

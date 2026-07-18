@@ -24,7 +24,8 @@ describe('image generation model catalog', () => {
     expect(defaultImageModel('openai')).toBe('gpt-image-2')
     expect(defaultImageModel('gemini')).toBe('gemini-3-pro-image-preview')
     expect(defaultImageModel('grok')).toBe('grok-imagine-image')
-    expect(defaultImageModel('comfy')).toBe('sdxl-local')
+    // 本地引擎已移除:老设置里存的 'comfy' 回退到云端默认
+    expect(defaultImageModel('comfy')).toBe('gpt-image-2')
   })
 
   it('builds one four-image GPT batch from an image-only input', () => {

@@ -1,7 +1,7 @@
 import type { ModelRoute } from './model-route'
 
 export type PiProvider = 'anthropic' | 'openai'
-export type ImageEngine = '' | 'comfy' | 'openai' | 'gemini' | 'grok'
+export type ImageEngine = '' | 'openai' | 'gemini' | 'grok'
 
 export type Workspace = {
   path: string
@@ -52,10 +52,6 @@ export type SettingsForm = {
   feishuAppSecret: string
   feishuChatId: string
   imageEngine: ImageEngine
-  comfyDir: string
-  comfyPythonPath: string
-  comfyLaunchArgs: string
-  comfyCheckpoint: string
   cloudImageRelay: string
   cloudImageKey: string
 }
@@ -94,10 +90,6 @@ export function createDefaultSettingsForm(): SettingsForm {
     feishuAppSecret: '',
     feishuChatId: '',
     imageEngine: '',
-    comfyDir: '',
-    comfyPythonPath: '',
-    comfyLaunchArgs: '',
-    comfyCheckpoint: '',
     cloudImageRelay: '',
     cloudImageKey: '',
   }

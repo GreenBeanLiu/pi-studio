@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
-import { App as AntApp, Button, Modal, Spin, Switch, Tooltip } from 'antd'
+import { App as AntApp, Button, Modal, Spin, Tooltip } from 'antd'
 import { createStyles } from 'antd-style'
 import { Image as ImageIcon, RefreshCw, Sparkles } from 'lucide-react'
 
@@ -80,14 +80,6 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
   modelHint: css`
     margin-top: -8px;
-    font-size: 11px;
-    color: ${token.colorTextTertiary};
-  `,
-  comfy: css`
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
     font-size: 11px;
     color: ${token.colorTextTertiary};
   `,
@@ -175,6 +167,7 @@ function providerTag(engine: string, provider: string | null, model: string | nu
       : provider === 'tikhub'
         ? 'TikHub'
         : provider
+  // sdxl/comfy 分支保留:历史画廊里可能还有本地引擎时代生成的旧图
   const modelName = model === 'sdxl-local'
     ? 'SDXL'
     : model?.startsWith('gemini')
@@ -195,7 +188,7 @@ export default function ImageGenerationWorkspace({
   const { styles } = useStyles()
   const { message } = AntApp.useApp()
   const [health, setHealth] = useState<ImageGenHealth | null>(null)
-  const [modelKey, setModelKey] = useState<ImageModelKey>('sdxl-local')
+  const [modelKey, setModelKey] = useState<ImageModelKey>('gpt-image-2')
   const [prompt, setPrompt] = useState('')
   const [output, setOutput] = useState<ImageOutputSettings>(DEFAULT_OUTPUT)
   const [baseImage, setBaseImage] = useState<string | null>(null)
@@ -208,7 +201,6 @@ export default function ImageGenerationWorkspace({
   const [selectedByBatch, setSelectedByBatch] = useState<Record<string, string>>({})
   const [compareOpen, setCompareOpen] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
-  const [comfyBusy, setComfyBusy] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [historyDone, setHistoryDone] = useState(false)
   const uploadOwnerRef = useRef<string | null>(null)
@@ -231,13 +223,7 @@ export default function ImageGenerationWorkspace({
   )
 
   async function refreshHealth() {
-    const next = await api.imageGen.health()
-    setHealth(next)
-    setModelKey((current) => {
-      const currentModel = imageModel(current)
-      if (currentModel.group === '云端模型' && !next.keyConfigured && next.comfy) return 'sdxl-local'
-      return current
-    })
+    setHealth(await api.imageGen.health())
   }
 
   async function fetchHistory(limit = limitRef.current) {
@@ -267,11 +253,7 @@ export default function ImageGenerationWorkspace({
       api.imageGen.health(),
     ]).then(([settings, initialHealth]) => {
       setHealth(initialHealth)
-      const preferred = defaultImageModel(settings?.imageEngine)
-      const preferredModel = imageModel(preferred)
-      setModelKey(preferredModel.group === '云端模型' && !initialHealth.keyConfigured && initialHealth.comfy
-        ? 'sdxl-local'
-        : preferred)
+      setModelKey(defaultImageModel(settings?.imageEngine))
     })
     void fetchHistory()
   }, [])
@@ -349,28 +331,11 @@ export default function ImageGenerationWorkspace({
     message.success('已设为输入图片')
   }
 
-  async function toggleComfy(enabled: boolean) {
-    setComfyBusy(true)
-    try {
-      if (enabled) {
-        const result = await api.imageGen.comfyStart()
-        if ('error' in result) message.error(result.error)
-        else message.success('ComfyUI 已启动')
-      } else {
-        const result = await api.imageGen.comfyStop()
-        if (!result.ok && result.external) message.warning('ComfyUI 由外部启动，请从启动它的位置关闭')
-      }
-    } finally {
-      await refreshHealth()
-      setComfyBusy(false)
-    }
-  }
-
   async function generate() {
     if (pending.length >= 3) return
     const batchId = crypto.randomUUID()
     const reference = baseImage
-      ? model.engine !== 'comfy' && upload.status === 'done'
+      ? upload.status === 'done'
         ? upload.url
         : baseImage
       : undefined
@@ -397,9 +362,7 @@ export default function ImageGenerationWorkspace({
     }
     setPending((items) => [pendingBatch, ...items])
     try {
-      const results = request.engine === 'comfy'
-        ? await Promise.all(Array.from({ length: request.n }, () => api.imageGen.generate({ ...request, n: 1 })))
-        : [await api.imageGen.generate(request)]
+      const results = [await api.imageGen.generate(request)]
       const error = results.find((result) => 'error' in result)
       if (error && 'error' in error) message.error(error.error)
 
@@ -480,7 +443,7 @@ export default function ImageGenerationWorkspace({
   const canGenerate =
     pending.length < 3 &&
     (!!prompt.trim() || (!!baseImage && model.acceptsImage)) &&
-    (model.engine === 'comfy' ? !!health?.comfy : !!health?.keyConfigured)
+    !!health?.keyConfigured
 
   return (
     <div className={styles.page}>
@@ -512,22 +475,8 @@ export default function ImageGenerationWorkspace({
           onChange={(patch) => setOutput((current) => ({ ...current, ...patch }))}
         />
 
-        {model.engine === 'comfy' && (
-          <div className={styles.comfy}>
-            <Switch
-              checked={health?.comfy ?? false}
-              loading={comfyBusy}
-              disabled={!!health?.comfy && !health.comfyManaged}
-              checkedChildren="运行中"
-              unCheckedChildren="已关闭"
-              onChange={(value) => void toggleComfy(value)}
-            />
-            <span>{health?.comfyCheckpoint || '本地 ComfyUI / SDXL'}</span>
-          </div>
-        )}
-
-        {!canGenerate && !comfyBusy && !health?.ok && (
-          <div className={styles.warning}>当前模型服务不可用，请刷新状态或启动本地 ComfyUI。</div>
+        {!canGenerate && !health?.ok && (
+          <div className={styles.warning}>当前模型服务不可用，请检查云端生图配置或刷新状态。</div>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
           <Tooltip title="重新检测服务状态">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm } from 'antd'
-import { Eye, EyeOff, Bot, Globe, Info, ShieldCheck, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
+import { Eye, EyeOff, Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
 import {
   api,
   type Channel,
@@ -14,31 +14,21 @@ import {
   type ProviderModelListResult,
   type SandboxDetect,
   type SandboxImageStatus,
-  type SecurityPolicy,
 } from '../lib/api'
 import { createDefaultSettingsView } from '../../../shared/contracts'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
-type Category = 'model' | 'tools' | 'imagegen' | 'security' | 'about'
+// 安全策略分类已移除(2026-07-17):隔离职责交给沙箱(WSL2+bubblewrap),
+// 规则式软拦截(securityGuard/策略编辑器)不再暴露,后端代码保留但不启用。
+type Category = 'model' | 'tools' | 'imagegen' | 'about'
 
 const CATEGORIES: { key: Category; label: string; icon: typeof Bot }[] = [
   { key: 'model', label: '模型服务', icon: Bot },
   { key: 'tools', label: '扩展工具', icon: Globe },
   { key: 'imagegen', label: '生图', icon: ImageIcon },
-  { key: 'security', label: '安全策略', icon: ShieldCheck },
   { key: 'about', label: '关于', icon: Info },
 ]
-
-const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
-  commandAllowlist: [],
-  commandBlocklist: [],
-  writeAllowlist: [],
-  writeBlocklist: [],
-  requireConfirmationForDangerousCommands: true,
-  blockProtectedPaths: true,
-  blockOutsideWorkspace: true,
-}
 
 const useStyles = createStyles(({ token, css }) => ({
   main: css`
@@ -138,22 +128,6 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorTextSecondary};
   `,
 
-  policyGrid: css`
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  `,
-
-  policyScope: css`
-    border: 1px solid ${token.colorBorderSecondary};
-    border-radius: ${token.borderRadius}px;
-    background: ${token.colorFillTertiary};
-    padding: 8px 10px;
-    color: ${token.colorTextSecondary};
-    font-size: 12px;
-    line-height: 1.5;
-  `,
-
   aboutRow: css`
     display: flex;
     justify-content: space-between;
@@ -215,10 +189,6 @@ export default function SettingsModal({
   const [channelDraft, setChannelDraft] = useState<Channel | null>(null)
   const [channelTesting, setChannelTesting] = useState<string | null>(null)
   const [channelTestResult, setChannelTestResult] = useState<Record<string, string>>({})
-  const [securityPolicy, setSecurityPolicy] = useState<SecurityPolicy>(DEFAULT_SECURITY_POLICY)
-  const [policyScope, setPolicyScope] = useState<'default' | 'workspace'>('default')
-  const [policyWorkspacePath, setPolicyWorkspacePath] = useState('')
-  const [policyError, setPolicyError] = useState<string | null>(null)
   const [sandboxDetect, setSandboxDetect] = useState<SandboxDetect | null>(null)
   const [sandboxDetecting, setSandboxDetecting] = useState(false)
   const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
@@ -265,14 +235,6 @@ export default function SettingsModal({
     api.settings.load().then(setSettings)
     detectSandbox()
     api.channels.list().then(setChannels).catch(() => {})
-    api.securityPolicy
-      .load()
-      .then((result) => {
-        setSecurityPolicy(result.policy)
-        setPolicyScope(result.scope)
-        setPolicyWorkspacePath(result.workspacePath ?? '')
-      })
-      .catch((err) => setPolicyError((err as Error).message ?? '读取安全策略失败'))
     api.app.version().then(setVersion).catch(() => {})
     api.app.piVersion().then(setPiVersion).catch(() => {})
     void loadLlmProfiles()
@@ -365,13 +327,6 @@ export default function SettingsModal({
     setSaving(true)
     try {
       const saveResult = await api.settings.save(settings)
-      const result = await api.securityPolicy.save(securityPolicy)
-      if ('error' in result) {
-        setPolicyError(result.error)
-        return
-      }
-      setPolicyScope(result.scope)
-      setPolicyWorkspacePath(result.workspacePath ?? '')
       onClose()
       // 沙箱开关变了且有工作区在开:旧 agent 还跑在旧模式,自动重启工作区切换生效
       if (saveResult.sandboxChanged && saveResult.workspaceOpen) onSandboxToggled?.()
@@ -386,21 +341,6 @@ export default function SettingsModal({
     setModelFetchResult(null)
   }
 
-  function patchPolicy(update: Partial<SecurityPolicy>) {
-    setSecurityPolicy((policy) => ({ ...policy, ...update }))
-    setPolicyError(null)
-  }
-
-  function linesToRules(value: string): string[] {
-    return value
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-  }
-
-  function rulesToLines(value: string[]): string {
-    return value.join('\n')
-  }
 
   const CHANNEL_TYPE_LABEL: Record<ChannelType, string> = {
     'feishu-webhook': '飞书群机器人',
@@ -905,24 +845,6 @@ export default function SettingsModal({
 
               <div className={styles.section}>
                 <span className={styles.label}>
-                  Agent 安全边界
-                  <span className={styles.labelHint}>拦截危险命令、越界写入和敏感文件改写</span>
-                </span>
-                <div className={styles.actionRow}>
-                  <Switch
-                    size="small"
-                    checked={settings.securityGuardEnabled}
-                    onChange={(checked) => patch({ securityGuardEnabled: checked })}
-                  />
-                  <span className={styles.labelHint}>{settings.securityGuardEnabled ? '已开启' : '已关闭'}</span>
-                </div>
-                <span className={styles.labelHint}>
-                  修改后需重新打开工作区生效。默认阻止 rm -rf、递归强删、提权命令、注册表删除，以及 .env、.git、node_modules 和密钥文件写入。
-                </span>
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
                   沙箱模式（WSL2 + bubblewrap）
                   <Tag color="orange" style={{ marginLeft: 8 }}>
                     实验性
@@ -1003,176 +925,22 @@ export default function SettingsModal({
 
           {category === 'imagegen' && (
             <div className={styles.form}>
+              {/* 本地 ComfyUI 配置已移除(2026-07-17):生图全走服务端 */}
               <div className={styles.section}>
                 <span className={styles.label}>
-                  默认引擎
-                  <span className={styles.labelHint}>生图页打开时的默认引擎；自动=按当前可用情况选</span>
+                  默认模型
+                  <span className={styles.labelHint}>生图页打开时默认选中的云端模型</span>
                 </span>
                 <Select
-                  value={settings.imageEngine || 'auto'}
-                  onChange={(v) => patch({ imageEngine: v === 'auto' ? '' : (v as 'comfy' | 'openai' | 'gemini' | 'grok') })}
+                  value={settings.imageEngine || 'openai'}
+                  onChange={(v) => patch({ imageEngine: v as 'openai' | 'gemini' | 'grok' })}
                   style={{ width: 220 }}
                   options={[
-                    { value: 'auto', label: '自动' },
-                    { value: 'openai', label: '云端 gpt-image-2' },
-                    { value: 'gemini', label: '云端 Gemini Image' },
-                    { value: 'grok', label: '云端 Grok Image' },
-                    { value: 'comfy', label: '本地 ComfyUI' },
+                    { value: 'openai', label: 'GPT Image 2' },
+                    { value: 'gemini', label: 'Gemini Image' },
+                    { value: 'grok', label: 'Grok Image' },
                   ]}
                 />
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  ComfyUI 目录
-                  <span className={styles.labelHint}>本地引擎的安装目录（含 .venv）；留空用默认 D:\Works\ComfyUI</span>
-                </span>
-                <Input
-                  value={settings.comfyDir}
-                  onChange={(e) => patch({ comfyDir: e.target.value })}
-                  placeholder="D:\\Works\\ComfyUI"
-                />
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  Python 路径（可选）
-                  <span className={styles.labelHint}>留空自动使用 ComfyUI 目录下的 .venv</span>
-                </span>
-                <Input
-                  value={settings.comfyPythonPath}
-                  onChange={(e) => patch({ comfyPythonPath: e.target.value })}
-                  placeholder="D:\\Works\\ComfyUI\\.venv\\Scripts\\python.exe"
-                />
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  Checkpoint（可选）
-                  <span className={styles.labelHint}>填写 models/checkpoints 下的文件名；留空自动选择兼容的 SD checkpoint，Flux/SD3 等需专用 workflow</span>
-                </span>
-                <Input
-                  value={settings.comfyCheckpoint}
-                  onChange={(e) => patch({ comfyCheckpoint: e.target.value })}
-                  placeholder="例如：v1-5-pruned-emaonly.safetensors"
-                />
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  启动参数（可选）
-                  <span className={styles.labelHint}>留空使用 main.py --port {'{port}'}；支持用引号包裹参数</span>
-                </span>
-                <Input
-                  value={settings.comfyLaunchArgs}
-                  onChange={(e) => patch({ comfyLaunchArgs: e.target.value })}
-                  placeholder="main.py --port {port} --listen 127.0.0.1"
-                />
-              </div>
-
-            </div>
-          )}
-
-          {category === 'security' && (
-            <div className={styles.form}>
-              <div className={styles.policyScope}>
-                当前编辑：
-                {policyScope === 'workspace'
-                  ? `当前工作区策略${policyWorkspacePath ? ` · ${policyWorkspacePath}` : ''}`
-                  : '默认策略（打开工作区前使用）'}
-                <br />
-                保存后下一次工具调用生效；不需要重启应用。命令规则按包含/前缀匹配，路径规则相对当前工作区解析。
-              </div>
-
-              {policyError && <Alert type="error" showIcon message={policyError} />}
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  默认保护
-                  <span className={styles.labelHint}>建议全部开启，必要时用允许规则放行具体命令或路径</span>
-                </span>
-                <div className={styles.actionRow}>
-                  <span className={styles.switchItem}>
-                    <Switch
-                      size="small"
-                      checked={securityPolicy.blockOutsideWorkspace}
-                      onChange={(checked) => patchPolicy({ blockOutsideWorkspace: checked })}
-                    />
-                    越界写入
-                  </span>
-                  <span className={styles.switchItem}>
-                    <Switch
-                      size="small"
-                      checked={securityPolicy.blockProtectedPaths}
-                      onChange={(checked) => patchPolicy({ blockProtectedPaths: checked })}
-                    />
-                    敏感路径
-                  </span>
-                  <span className={styles.switchItem}>
-                    <Switch
-                      size="small"
-                      checked={securityPolicy.requireConfirmationForDangerousCommands}
-                      onChange={(checked) =>
-                        patchPolicy({ requireConfirmationForDangerousCommands: checked })
-                      }
-                    />
-                    危险确认
-                  </span>
-                </div>
-              </div>
-
-              <div className={styles.policyGrid}>
-                <div className={styles.section}>
-                  <span className={styles.label}>
-                    命令允许规则
-                    <span className={styles.labelHint}>一行一个前缀；命中后不再弹危险确认</span>
-                  </span>
-                  <Input.TextArea
-                    value={rulesToLines(securityPolicy.commandAllowlist)}
-                    onChange={(e) => patchPolicy({ commandAllowlist: linesToRules(e.target.value) })}
-                    placeholder={'git status\npnpm test\nnpm run build'}
-                    autoSize={{ minRows: 5, maxRows: 8 }}
-                  />
-                </div>
-
-                <div className={styles.section}>
-                  <span className={styles.label}>
-                    命令阻止规则
-                    <span className={styles.labelHint}>一行一个关键字；命中后直接阻止</span>
-                  </span>
-                  <Input.TextArea
-                    value={rulesToLines(securityPolicy.commandBlocklist)}
-                    onChange={(e) => patchPolicy({ commandBlocklist: linesToRules(e.target.value) })}
-                    placeholder={'git push --force\ncurl | powershell\nSet-ExecutionPolicy'}
-                    autoSize={{ minRows: 5, maxRows: 8 }}
-                  />
-                </div>
-
-                <div className={styles.section}>
-                  <span className={styles.label}>
-                    写入允许路径
-                    <span className={styles.labelHint}>一行一个路径；可放行受保护目录内的具体文件</span>
-                  </span>
-                  <Input.TextArea
-                    value={rulesToLines(securityPolicy.writeAllowlist)}
-                    onChange={(e) => patchPolicy({ writeAllowlist: linesToRules(e.target.value) })}
-                    placeholder={'.env.example\ndocs/\nsrc/generated/'}
-                    autoSize={{ minRows: 5, maxRows: 8 }}
-                  />
-                </div>
-
-                <div className={styles.section}>
-                  <span className={styles.label}>
-                    写入阻止路径
-                    <span className={styles.labelHint}>一行一个路径；命中后直接阻止</span>
-                  </span>
-                  <Input.TextArea
-                    value={rulesToLines(securityPolicy.writeBlocklist)}
-                    onChange={(e) => patchPolicy({ writeBlocklist: linesToRules(e.target.value) })}
-                    placeholder={'.github/workflows/\npackage-lock.json\nscripts/release-local.js'}
-                    autoSize={{ minRows: 5, maxRows: 8 }}
-                  />
-                </div>
               </div>
             </div>
           )}

@@ -1,6 +1,6 @@
-import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { memo, Fragment, useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
 import { createStyles } from 'antd-style'
-import { Spin, Popover, Segmented, Switch, Button, message as antdMessage, Modal, Tabs, Empty } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button, Tooltip, message as antdMessage, Modal, Tabs, Empty } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -885,6 +885,26 @@ const useStyles = createStyles(({ token, css }) => ({
   modelRowActive: css`
     background: ${token.colorFillSecondary};
     color: ${token.colorPrimary};
+  `,
+
+  modelGroupLabel: css`
+    padding: 6px 10px 3px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: ${token.colorTextTertiary};
+    user-select: none;
+  `,
+
+  modelRowTag: css`
+    margin-left: auto;
+    padding: 0 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    line-height: 16px;
+    background: ${token.colorFillSecondary};
+    color: ${token.colorTextTertiary};
+    flex-shrink: 0;
   `,
 
   paramGrid: css`
@@ -2277,14 +2297,57 @@ export default function ChatPane({
         return {
           type: 'group' as const,
           label: providerLabels[provider] ?? provider,
+          provider,
           children: shown.map((m) => ({
             key: `${m.provider}::${m.id}`,
             label: m.id,
+            info: m,
           })),
         }
       })
       .filter((g) => g.children.length > 0)
   }, [models, favoriteModels, providerLabels])
+
+  /** hover 模型行时展示的参数卡:字段来自 pi registry,缺啥就不显示啥。 */
+  function modelParamsTooltip(m: ModelInfo): ReactNode {
+    const fmtTokens = (n?: number) =>
+      !n ? null : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
+    const cost = m.cost ?? {}
+    const hasCost = (cost.input ?? 0) > 0 || (cost.output ?? 0) > 0
+    const host = (() => {
+      try {
+        return m.baseUrl ? new URL(m.baseUrl).host : null
+      } catch {
+        return null
+      }
+    })()
+    const rows: [string, string][] = []
+    if (m.name && m.name !== m.id) rows.push(['名称', m.name])
+    rows.push(['服务商', m.provider])
+    if (host) rows.push(['接入点', host])
+    if (m.api) rows.push(['协议', m.api])
+    const ctx = fmtTokens(m.contextWindow)
+    if (ctx) rows.push(['上下文', `${ctx} tokens`])
+    const maxOut = fmtTokens(m.maxTokens)
+    if (maxOut) rows.push(['最大输出', `${maxOut} tokens`])
+    rows.push(['推理', m.reasoning ? '支持' : '不支持'])
+    if (m.input?.length) rows.push(['输入', m.input.join(' + ')])
+    if (hasCost)
+      rows.push([
+        '价格/M',
+        `入 $${cost.input ?? 0} · 出 $${cost.output ?? 0}`,
+      ])
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px', fontSize: 12 }}>
+        {rows.map(([k, v]) => (
+          <Fragment key={k}>
+            <span style={{ opacity: 0.65 }}>{k}</span>
+            <span style={{ fontFamily: 'monospace' }}>{v}</span>
+          </Fragment>
+        ))}
+      </div>
+    )
+  }
 
   // ── Thinking level ───────────────────────────────────────────────
   const THINKING_LEVELS: { key: ThinkingLevel; label: string }[] = [
@@ -2306,11 +2369,6 @@ export default function ChatPane({
     }
   }
 
-  // Flat model list for the params panel (favorites, else newest-8 per provider)
-  const modelList = useMemo(
-    () => modelMenuItems.flatMap((g) => g.children.map((c) => ({ key: c.key, label: c.label }))),
-    [modelMenuItems],
-  )
 
   async function pickModel(key: string) {
     const sep = key.indexOf('::')
@@ -2350,20 +2408,34 @@ export default function ChatPane({
       <div>
         <div className={styles.paramLabel}>模型</div>
         <div className={styles.modelList}>
-          {modelList.length === 0 && <div className={styles.paramHint}>暂无可选模型</div>}
-          {modelList.map((m) => {
-            const active = currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
-            return (
-              <button
-                key={m.key}
-                className={cx(styles.modelRow, active && styles.modelRowActive)}
-                onClick={() => pickModel(m.key)}
-              >
-                {active && <Check size={12} />}
-                <span style={{ marginLeft: active ? 0 : 18 }}>{m.label}</span>
-              </button>
-            )
-          })}
+          {modelMenuItems.length === 0 && <div className={styles.paramHint}>暂无可选模型</div>}
+          {/* 服务商 → 模型 两级展示:同名模型(不同网关)靠分组区分;hover 行出参数卡 */}
+          {modelMenuItems.map((group) => (
+            <div key={group.provider}>
+              <div className={styles.modelGroupLabel}>{group.label}</div>
+              {group.children.map((m) => {
+                const active =
+                  currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
+                return (
+                  <Tooltip
+                    key={m.key}
+                    title={modelParamsTooltip(m.info)}
+                    placement="right"
+                    mouseEnterDelay={0.35}
+                  >
+                    <button
+                      className={cx(styles.modelRow, active && styles.modelRowActive)}
+                      onClick={() => pickModel(m.key)}
+                    >
+                      {active && <Check size={12} />}
+                      <span style={{ marginLeft: active ? 0 : 18 }}>{m.label}</span>
+                      {m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
+                    </button>
+                  </Tooltip>
+                )
+              })}
+            </div>
+          ))}
         </div>
       </div>
 

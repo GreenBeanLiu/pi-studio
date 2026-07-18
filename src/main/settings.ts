@@ -132,13 +132,9 @@ export function loadSettings(): SettingsData {
       ? (raw.customModelIds as string[])
       : DEFAULTS.customModelIds,
     imageEngine:
-      raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' || raw.imageEngine === 'gemini' || raw.imageEngine === 'grok'
+      raw.imageEngine === 'openai' || raw.imageEngine === 'gemini' || raw.imageEngine === 'grok'
         ? raw.imageEngine
         : DEFAULTS.imageEngine,
-    comfyDir: (raw.comfyDir as string) ?? DEFAULTS.comfyDir,
-    comfyPythonPath: (raw.comfyPythonPath as string) ?? DEFAULTS.comfyPythonPath,
-    comfyLaunchArgs: (raw.comfyLaunchArgs as string) ?? DEFAULTS.comfyLaunchArgs,
-    comfyCheckpoint: (raw.comfyCheckpoint as string) ?? DEFAULTS.comfyCheckpoint,
     cloudImageRelay: (raw.cloudImageRelay as string) ?? DEFAULTS.cloudImageRelay,
     cloudImageKey: decryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted'),
     recentWorkspaces: Array.isArray(raw.recentWorkspaces)
@@ -167,10 +163,6 @@ export function saveSettings(settings: SettingsForm): void {
   raw.feishuAppId = settings.feishuAppId
   raw.feishuChatId = settings.feishuChatId
   raw.imageEngine = settings.imageEngine
-  raw.comfyDir = settings.comfyDir
-  raw.comfyPythonPath = settings.comfyPythonPath
-  raw.comfyLaunchArgs = settings.comfyLaunchArgs
-  raw.comfyCheckpoint = settings.comfyCheckpoint
   raw.cloudImageRelay = settings.cloudImageRelay
 
   writeRaw(raw)

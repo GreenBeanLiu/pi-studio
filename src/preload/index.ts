@@ -177,7 +177,7 @@ const api = {
     health: () => ipcRenderer.invoke('imageGen:health'),
     generate: (payload: {
       prompt: string
-      engine: 'openai' | 'comfy' | 'gemini' | 'grok'
+      engine: 'openai' | 'gemini' | 'grok'
       batchId?: string
       referenceUrls?: string[]
       maskDataUrl?: string
@@ -199,8 +199,6 @@ const api = {
     historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
     historyDeleteBatch: (batchId: string) => ipcRenderer.invoke('imageGen:historyDeleteBatch', batchId),
     uploadReference: (dataUrl: string) => ipcRenderer.invoke('imageGen:uploadReference', dataUrl),
-    comfyStart: () => ipcRenderer.invoke('imageGen:comfyStart'),
-    comfyStop: () => ipcRenderer.invoke('imageGen:comfyStop'),
   },
 
   model3d: {

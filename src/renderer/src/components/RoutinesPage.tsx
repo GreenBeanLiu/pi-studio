@@ -882,10 +882,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       value={step.engine ?? 'openai'}
                       onChange={(v) => updateStep(step.id, { engine: v })}
                       style={{ width: 200 }}
-                      options={[
-                        { value: 'openai', label: '云端 gpt-image-2' },
-                        { value: 'comfy', label: '本地 ComfyUI' },
-                      ]}
+                      options={[{ value: 'openai', label: '云端 gpt-image-2' }]}
                     />
                   </div>
                 )}
