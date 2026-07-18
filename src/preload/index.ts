@@ -15,6 +15,10 @@ const api = {
     piVersion: () => ipcRenderer.invoke('app:piVersion'),
   },
 
+  clipboard: {
+    writeText: (value: string) => ipcRenderer.invoke('clipboard:writeText', value),
+  },
+
   diagnostics: {
     getLogs: () => ipcRenderer.invoke('diagnostics:getLogs'),
     save: (payload: { defaultPath: string; content: string }) =>

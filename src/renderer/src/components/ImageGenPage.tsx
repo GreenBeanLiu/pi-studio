@@ -251,17 +251,17 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorPrimary} !important;
   `,
   sizeOptionGrid: css`
-    grid-template-columns: repeat(3, minmax(104px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
   `,
   sizeOption: css`
-    aspect-ratio: 1;
+    height: 76px;
     justify-content: center;
-    min-height: 92px;
-    padding: 10px 6px;
+    min-width: 0;
+    padding: 8px 3px;
     transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
     &:hover:not(:disabled) {
-      transform: scale(1.12);
+      transform: scale(1.05);
       position: relative;
       z-index: 1;
     }
@@ -422,6 +422,7 @@ const useStyles = createStyles(({ token, css }) => ({
   cardImage: css`
     position: relative;
     aspect-ratio: 1;
+    overflow: hidden;
     cursor: zoom-in;
     background: ${token.colorFillTertiary};
 
@@ -430,6 +431,10 @@ const useStyles = createStyles(({ token, css }) => ({
       height: 100%;
       object-fit: cover;
       display: block;
+      transition: transform 0.18s ease;
+    }
+    &:hover img {
+      transform: scale(1.08);
     }
   `,
   cardBody: css`
@@ -446,9 +451,10 @@ const useStyles = createStyles(({ token, css }) => ({
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    cursor: copy;
+    cursor: text;
     min-height: 36px;
     word-break: break-word;
+    user-select: text;
   `,
   cardMeta: css`
     display: flex;
@@ -587,7 +593,6 @@ function ImageGenInner() {
     const h = await api.imageGen.health()
     setHealth(h)
     setEngine((prev) => {
-      if (prev === 'comfy' && !h.comfy && h.keyConfigured) return 'openai'
       if ((prev === 'openai' || prev === 'gemini') && !h.keyConfigured && h.comfy) return 'comfy'
       return prev
     })
@@ -855,6 +860,10 @@ function ImageGenInner() {
 
   const engineLabel = (e: string) =>
     e.startsWith('gemini') ? 'Gemini' : e.startsWith('cloud') ? 'GPT' : e.startsWith('comfy') ? 'SDXL' : e
+  const historyTag = (engineName: string, provider: string | null) => {
+    const providerName = provider === 'three-a' ? '3A' : provider === 'tikhub' ? 'TikHub' : provider
+    return providerName ? `${engineLabel(engineName)} · ${providerName}` : engineLabel(engineName)
+  }
   const timeLabel = (ts: number) =>
     new Date(ts > 1e12 ? ts : ts * 1000).toLocaleString(undefined, {
       month: 'numeric',
@@ -869,7 +878,7 @@ function ImageGenInner() {
 
   async function copyPrompt(value: string) {
     try {
-      await navigator.clipboard.writeText(value)
+      await api.clipboard.writeText(value)
       message.success('提示词已复制')
     } catch {
       message.error('复制提示词失败')
@@ -906,7 +915,7 @@ function ImageGenInner() {
           }}
           items={[
             { key: 'openai', label: 'GPT Image 2', disabled: !health?.keyConfigured },
-            { key: 'comfy', label: 'SDXL 生图', disabled: !health?.comfy },
+            { key: 'comfy', label: 'SDXL 生图' },
             { key: 'gemini', label: 'Gemini Image', disabled: !health?.keyConfigured },
           ]}
         />
@@ -1246,7 +1255,7 @@ function ImageGenInner() {
                   <span className={styles.histTag}>{engineLabel(s.engine)}·未留档</span>
                 </div>
                 <div className={styles.cardBody}>
-                  <div className={styles.cardPrompt} title="点击复制提示词" onClick={() => void copyPrompt(s.prompt)}>
+                  <div className={styles.cardPrompt} title={s.prompt}>
                     {s.prompt}
                   </div>
                   <div className={styles.cardMeta}>
@@ -1266,10 +1275,10 @@ function ImageGenInner() {
               <div key={h.id} className={styles.card}>
                 <div className={styles.cardImage} onClick={() => openLightbox(h.url)}>
                   <img src={h.url} alt={h.prompt} loading="lazy" />
-                  <span className={styles.histTag}>{engineLabel(h.engine)}</span>
+                  <span className={styles.histTag}>{historyTag(h.engine, h.provider)}</span>
                 </div>
                 <div className={styles.cardBody}>
-                  <div className={styles.cardPrompt} title="点击复制提示词" onClick={() => void copyPrompt(h.prompt)}>
+                  <div className={styles.cardPrompt} title={h.prompt}>
                     {h.prompt}
                   </div>
                   <div className={styles.cardMeta}>

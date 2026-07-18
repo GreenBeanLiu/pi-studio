@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, app, dialog, shell } from 'electron'
+import { ipcMain, BrowserWindow, app, clipboard, dialog, shell } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
@@ -99,6 +99,10 @@ export function registerIpcHandlers(): void {
 
   // ── App ──────────────────────────────────────────────────────────
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('clipboard:writeText', (_event, value: unknown) => {
+    if (typeof value !== 'string') throw new TypeError('clipboard text must be a string')
+    clipboard.writeText(value)
+  })
   // 底层 pi 引擎(@earendil-works/pi-coding-agent)的版本 —— pi-studio 基于它开发
   ipcMain.handle('app:piVersion', () => {
     try {

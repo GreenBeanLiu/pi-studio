@@ -24,6 +24,9 @@ declare global {
         version: () => Promise<string>
         piVersion: () => Promise<string>
       }
+      clipboard: {
+        writeText: (value: string) => Promise<void>
+      }
       diagnostics: {
         getLogs: () => Promise<{ ok: true; content: string }>
         save: (payload: {
