@@ -44,31 +44,57 @@ const EXAMPLE_PROMPTS = [
   'cyberpunk city street at night, neon signs, rain reflections',
 ]
 
-const SIZE_OPTIONS: { id: ImageGenSize; label: string; icon: string }[] = [
-  { id: '256x256', label: '256×256', icon: '□' },
-  { id: '512x512', label: '512×512', icon: '□' },
-  { id: '1024x1024', label: '1024×1024', icon: '□' },
-  { id: '1024x1536', label: '1024×1536', icon: '▯' },
-  { id: '1536x1024', label: '1536×1024', icon: '▭' },
-  { id: '1024x1792', label: '1024×1792', icon: '▯' },
-  { id: '1792x1024', label: '1792×1024', icon: '▭' },
-  { id: 'auto', label: 'auto', icon: '↔' },
+const SIZE_OPTIONS: { id: ImageGenSize; label: string }[] = [
+  { id: '256x256', label: '256×256' },
+  { id: '512x512', label: '512×512' },
+  { id: '1024x1024', label: '1024×1024' },
+  { id: '1024x1536', label: '1024×1536' },
+  { id: '1536x1024', label: '1536×1024' },
+  { id: '1024x1792', label: '1024×1792' },
+  { id: '1792x1024', label: '1792×1024' },
+  { id: 'auto', label: 'auto' },
 ]
 
-const GEMINI_ASPECT_OPTIONS: { id: GeminiImageAspectRatio; icon: string }[] = [
-  { id: '1:1', icon: '□' },
-  { id: '2:3', icon: '▯' },
-  { id: '3:2', icon: '▭' },
-  { id: '3:4', icon: '▯' },
-  { id: '4:3', icon: '▭' },
-  { id: '4:5', icon: '▯' },
-  { id: '5:4', icon: '▭' },
-  { id: '9:16', icon: '▯' },
-  { id: '16:9', icon: '▭' },
-  { id: '21:9', icon: '▬' },
+const GEMINI_ASPECT_OPTIONS: { id: GeminiImageAspectRatio }[] = [
+  { id: '1:1' },
+  { id: '2:3' },
+  { id: '3:2' },
+  { id: '3:4' },
+  { id: '4:3' },
+  { id: '4:5' },
+  { id: '5:4' },
+  { id: '9:16' },
+  { id: '16:9' },
+  { id: '21:9' },
 ]
 
 const GEMINI_RESOLUTION_OPTIONS: GeminiImageResolution[] = ['1K', '2K', '4K']
+
+function sizeGlyphDimensions(value: ImageGenSize | GeminiImageAspectRatio) {
+  const separator = value.includes('x') ? 'x' : ':'
+  const [rawWidth, rawHeight] = value.split(separator).map(Number)
+  if (!rawWidth || !rawHeight) return null
+
+  const resolutionScale = value === '256x256' ? 0.7 : value === '512x512' ? 0.85 : 1
+  const maxWidth = 30 * resolutionScale
+  const maxHeight = 24 * resolutionScale
+  const scale = Math.min(maxWidth / rawWidth, maxHeight / rawHeight)
+  return {
+    width: Math.max(8, Math.round(rawWidth * scale)),
+    height: Math.max(8, Math.round(rawHeight * scale)),
+  }
+}
+
+function SizeGlyph({ value }: { value: ImageGenSize | GeminiImageAspectRatio }) {
+  const dimensions = sizeGlyphDimensions(value)
+  return (
+    <span className="sizeGlyph" aria-hidden="true">
+      {dimensions
+        ? <span className="sizeGlyphFrame" style={dimensions} />
+        : <span className="sizeGlyphAuto">↔</span>}
+    </span>
+  )
+}
 
 const QUALITY_OPTIONS: ImageGenQuality[] = ['low', 'medium', 'high', 'auto', 'standard', 'hd']
 
@@ -272,13 +298,32 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 6px;
   `,
   sizeOption: css`
-    height: 76px;
+    height: 58px;
     justify-content: center;
     min-width: 0;
-    padding: 8px 3px;
+    gap: 2px;
+    padding: 5px 3px;
     transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    .sizeGlyph {
+      width: 32px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      color: currentColor;
+    }
+    .sizeGlyphFrame {
+      display: block;
+      box-sizing: border-box;
+      border: 1.5px solid currentColor;
+      border-radius: 2px;
+    }
+    .sizeGlyphAuto {
+      font-size: 22px;
+      font-weight: 400;
+      line-height: 1;
+    }
     &:hover:not(:disabled) {
-      transform: scale(1.05);
+      transform: scale(1.03);
       position: relative;
       z-index: 1;
     }
@@ -1064,7 +1109,7 @@ function ImageGenInner() {
                   className={cx(styles.optionBtn, styles.sizeOption, size === s.id && styles.optionBtnActive)}
                   onClick={() => setSize(s.id)}
                 >
-                  <span className="icon">{s.icon}</span>
+                  <SizeGlyph value={s.id} />
                   {s.label}
                 </button>
               ))}
@@ -1083,7 +1128,7 @@ function ImageGenInner() {
                   className={cx(styles.optionBtn, styles.sizeOption, geminiAspectRatio === option.id && styles.optionBtnActive)}
                   onClick={() => setGeminiAspectRatio(option.id)}
                 >
-                  <span className="icon">{option.icon}</span>
+                  <SizeGlyph value={option.id} />
                   {option.id}
                 </button>
               ))}

@@ -6,7 +6,9 @@ const source = readFileSync(new URL('./ImageGenPage.tsx', import.meta.url), 'utf
 describe('ImageGenPage UI regressions', () => {
   it('keeps GPT image size choices compact instead of filling tall grid rows', () => {
     expect(source).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))')
-    expect(source).toContain('height: 76px')
+    expect(source).toContain('height: 58px')
+    expect(source).toContain('sizeGlyphFrame')
+    expect(source).toContain('maxWidth = 30')
   })
 
   it('offers Gemini aspect ratio and resolution controls instead of disabling GPT sizes', () => {
