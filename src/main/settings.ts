@@ -5,59 +5,18 @@ import {
   buildGatewayProviderConfigs,
   type LlmProviderProfile,
 } from './llm-gateway'
+import {
+  parseFavoriteModelRoutes,
+  type ModelRoute,
+} from '../shared/model-route'
+import type { PiProvider, SettingsForm, Workspace } from '../shared/contracts'
 
-export type PiProvider = 'anthropic' | 'openai'
+export type { PiProvider, Workspace } from '../shared/contracts'
 
-export type Workspace = {
-  path: string
-  name: string
-  lastOpenedAt: string
-}
-
-type SettingsData = {
-  provider: PiProvider
-  apiKey: string
-  model: string
-  baseUrl: string
-  /** Comma/newline-separated model ids to show in the switcher; empty = auto */
-  favoriteModels: string
-  /** Tavily API key enabling the web_search agent tool; empty = disabled */
-  tavilyApiKey: string
-  /** Helicone API key: routes LLM calls through Helicone for logging; empty = off */
-  heliconeApiKey: string
-  /** Blocks dangerous commands and writes to sensitive paths before tools execute */
-  securityGuardEnabled: boolean
-  /** Docker 沙箱模式：通过 RPC shim 在版本绑定的容器镜像内运行 pi。 */
-  sandboxEnabled: boolean
-  /** Enables bundled scout/planner/worker/reviewer subagent workflow prompts */
-  subagentsEnabled: boolean
-  /** 飞书群自定义机器人 webhook;例行任务结果推卡片消息;留空关闭 */
-  feishuWebhookUrl: string
-  /** 飞书机器人「加签」密钥(可选,机器人安全设置里开了加签才需要) */
-  feishuSecret: string
-  /** 飞书开放平台自建应用凭证(应用模式,webhook 留空时用):机器人须加进目标群 */
-  feishuAppId: string
-  feishuAppSecret: string
-  /** 目标群 chat_id;留空自动用机器人所在的第一个群 */
-  feishuChatId: string
-  /**
-   * 模型切换列表里 pi 内置 registry 没有的 id(第三方网关自定义模型)。
-   * 由 ChatPane 检测缺失后经 settings:syncCustomModels 自动维护,不进设置 UI。
-   * 写进 models.json 的 models 数组(merge 语义)后这些 id 才能被选择。
-   */
+export type SettingsData = SettingsForm & {
+  favoriteModelRoutes: ModelRoute[]
+  selectedModelRoute: ModelRoute | null
   customModelIds: string[]
-  /** 生图默认引擎:'comfy' 本地 / 'openai' 云端;空=按可用性自动选 */
-  imageEngine: '' | 'comfy' | 'openai' | 'gemini'
-  /** ComfyUI 安装目录(本地引擎启停用);空=内置默认 D:\Works\ComfyUI */
-  comfyDir: string
-  comfyPythonPath: string
-  comfyLaunchArgs: string
-  /** ComfyUI checkpoint 文件名；空=自动选择第一个可用模型 */
-  comfyCheckpoint: string
-  /** 云端图像中继地址覆盖;空=用构建时烧入的默认 https 地址 */
-  cloudImageRelay: string
-  /** 云端图像 Key;空=未配置（开发环境可用 PI_CLOUD_IMAGE_KEY）。3D 生成也复用此 relay+key */
-  cloudImageKey: string
   recentWorkspaces: Workspace[]
 }
 
@@ -67,6 +26,8 @@ const DEFAULTS: SettingsData = {
   model: '',
   baseUrl: '',
   favoriteModels: '',
+  favoriteModelRoutes: [],
+  selectedModelRoute: null,
   tavilyApiKey: '',
   heliconeApiKey: '',
   securityGuardEnabled: true,
@@ -148,12 +109,26 @@ export function loadSettings(): SettingsData {
   }
   const apiKey = decryptField(raw, 'apiKey', 'apiKeyEncrypted')
 
+  const provider = (raw.provider as PiProvider) ?? DEFAULTS.provider
+  const selectedModelRoute = raw.selectedModelRoute as Partial<ModelRoute> | undefined
+
   return {
-    provider: (raw.provider as PiProvider) ?? DEFAULTS.provider,
+    provider,
     apiKey,
     model: (raw.model as string) ?? DEFAULTS.model,
     baseUrl: (raw.baseUrl as string) ?? DEFAULTS.baseUrl,
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
+    favoriteModelRoutes: parseFavoriteModelRoutes(
+      (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
+      provider,
+    ),
+    selectedModelRoute:
+      typeof selectedModelRoute?.provider === 'string' &&
+      typeof selectedModelRoute?.model === 'string' &&
+      selectedModelRoute.provider.trim() &&
+      selectedModelRoute.model.trim()
+        ? { provider: selectedModelRoute.provider.trim(), model: selectedModelRoute.model.trim() }
+        : null,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
     heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
     securityGuardEnabled:
@@ -188,33 +163,7 @@ export function loadSettings(): SettingsData {
   }
 }
 
-export function saveSettings(
-  settings: Pick<
-    SettingsData,
-    | 'provider'
-    | 'apiKey'
-    | 'model'
-    | 'baseUrl'
-    | 'favoriteModels'
-    | 'tavilyApiKey'
-    | 'heliconeApiKey'
-    | 'securityGuardEnabled'
-    | 'sandboxEnabled'
-    | 'subagentsEnabled'
-    | 'feishuWebhookUrl'
-    | 'feishuSecret'
-    | 'feishuAppId'
-    | 'feishuAppSecret'
-    | 'feishuChatId'
-    | 'imageEngine'
-    | 'comfyDir'
-    | 'comfyPythonPath'
-    | 'comfyLaunchArgs'
-    | 'comfyCheckpoint'
-    | 'cloudImageRelay'
-    | 'cloudImageKey'
-  >,
-): void {
+export function saveSettings(settings: SettingsForm): void {
   const raw = readRaw()
 
   encryptField(raw, 'apiKey', 'apiKeyEncrypted', settings.apiKey)
@@ -259,6 +208,12 @@ export function addRecentWorkspace(path: string): Workspace[] {
 export function saveCustomModelIds(ids: string[]): void {
   const raw = readRaw()
   raw.customModelIds = ids
+  writeRaw(raw)
+}
+
+export function saveSelectedModelRoute(provider: string, model: string): void {
+  const raw = readRaw()
+  raw.selectedModelRoute = { provider: provider.trim(), model: model.trim() }
   writeRaw(raw)
 }
 

@@ -1,7 +1,7 @@
 import { ipcMain, app, BrowserWindow } from 'electron'
 import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
-import { getCloud } from './image-gen'
+import { getCloudConnection } from './cloud-connection'
 import { appendAppLog, normalizeError } from './app-log'
 import { reviewModelRender, type VisionReview } from './vision-review'
 
@@ -84,7 +84,7 @@ type GeneratePayload = {
 }
 
 async function cloudFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
-  const cloud = getCloud()
+  const cloud = getCloudConnection()
   if (!cloud.available) throw new Error(cloud.error ?? '云端 3D 服务未配置(设置 → 生图 → 云端中继)')
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', cloud.key)
@@ -266,7 +266,9 @@ async function saveThumbnail(id: string, dataUrl: string): Promise<Model3DResult
 }
 
 export function registerModel3d(): void {
-  ipcMain.handle('model3d:health', (): Model3DHealth => ({ configured: getCloud().available }))
+  ipcMain.handle('model3d:health', (): Model3DHealth => ({
+    configured: getCloudConnection().available,
+  }))
   ipcMain.handle('model3d:generate', (_e, payload: GeneratePayload) => generate(payload))
   ipcMain.handle('model3d:history', (): Model3DHistoryItem[] => loadHistory())
   ipcMain.handle('model3d:saveThumbnail', (_e, payload: { id: string; dataUrl: string }) =>

@@ -9,6 +9,25 @@ import type {
   ImageContent,
   ToolCall,
 } from '@earendil-works/pi-ai/compat'
+import type {
+  LlmProfileWrite,
+  LlmProviderProfile,
+  ModelCatalogView,
+  PiProvider,
+  SettingsSaveInput,
+  SettingsView,
+  Workspace,
+} from '../../../shared/contracts'
+
+export type {
+  LlmProfileWrite,
+  LlmProviderProfile,
+  ModelCatalogView,
+  PiProvider,
+  SettingsSaveInput,
+  SettingsView,
+  Workspace,
+} from '../../../shared/contracts'
 
 // Type-safe wrapper around window.api (exposed by preload)
 declare global {
@@ -35,55 +54,12 @@ declare global {
         }) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
       }
       settings: {
-        load: () => Promise<{
-          provider: PiProvider
-          apiKey: string
-          model: string
-          baseUrl: string
-          favoriteModels: string
-          tavilyApiKey: string
-          heliconeApiKey: string
-          securityGuardEnabled: boolean
-          sandboxEnabled: boolean
-          subagentsEnabled: boolean
-          feishuWebhookUrl: string
-          feishuSecret: string
-          feishuAppId: string
-          feishuAppSecret: string
-          feishuChatId: string
-          imageEngine: '' | 'comfy' | 'openai' | 'gemini'
-          comfyDir: string
-          comfyPythonPath: string
-          comfyLaunchArgs: string
-          comfyCheckpoint: string
-          cloudImageRelay: string
-          cloudImageKey: string
-          recentWorkspaces: Workspace[]
+        load: () => Promise<SettingsView>
+        save: (s: SettingsSaveInput) => Promise<{
+          ok: boolean
+          sandboxChanged?: boolean
+          workspaceOpen?: boolean
         }>
-        save: (s: {
-          provider: PiProvider
-          apiKey: string
-          model: string
-          baseUrl: string
-          favoriteModels: string
-          tavilyApiKey: string
-          heliconeApiKey: string
-          securityGuardEnabled: boolean
-          sandboxEnabled: boolean
-          subagentsEnabled: boolean
-          feishuWebhookUrl: string
-          feishuSecret: string
-          feishuAppId: string
-          feishuAppSecret: string
-          feishuChatId: string
-          imageEngine: '' | 'comfy' | 'openai' | 'gemini'
-          comfyDir: string
-          comfyPythonPath: string
-          comfyLaunchArgs: string
-          comfyCheckpoint: string
-          cloudImageRelay: string
-          cloudImageKey: string
-        }) => Promise<{ ok: boolean; sandboxChanged?: boolean; workspaceOpen?: boolean }>
         testConnection: (s: {
           provider: PiProvider
           apiKey: string
@@ -112,6 +88,11 @@ declare global {
           id: string,
         ) => Promise<
           { ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }
+        >
+      }
+      modelCatalog: {
+        view: () => Promise<
+          { ok: true; view: ModelCatalogView } | { error: string }
         >
       }
       sandbox: {
@@ -279,30 +260,6 @@ declare global {
       }
     }
   }
-}
-
-export type PiProvider = 'anthropic' | 'openai'
-
-export type LlmProviderProfile = {
-  id: string
-  display_name: string
-  base_url?: string
-  api_type: 'openai-completions'
-  models: string[]
-  enabled: boolean
-  sort_order: number
-  has_key: boolean
-}
-
-export type LlmProfileWrite = {
-  id: string
-  display_name: string
-  base_url: string
-  api_type: 'openai-completions'
-  api_key: string
-  models: string[]
-  enabled: boolean
-  sort_order: number
 }
 
 export type LlmProfileListResult =
@@ -507,12 +464,6 @@ export type SandboxImageStatus = {
   tag: string
   exists: boolean
   daemonRunning: boolean
-}
-
-export type Workspace = {
-  path: string
-  name: string
-  lastOpenedAt: string
 }
 
 export type WorkspaceMemory = {

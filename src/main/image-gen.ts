@@ -2,7 +2,7 @@ import { app, ipcMain } from 'electron'
 import { appendAppLog } from './app-log'
 import { isCompatibleCheckpoint } from './comfy-workflow'
 import { ComfyRuntime, parseLaunchArgs, type ComfyRuntimeHealth } from './comfy-runtime'
-import { resolveCloudImageConfig } from './network-policy'
+import { getCloudConnection } from './cloud-connection'
 import { loadSettings } from './settings'
 import { resolveCloudImageResult } from './image-gen-result'
 
@@ -13,9 +13,6 @@ const COMFY_DIR_DEFAULT = process.env.PI_COMFY_DIR || 'D:\\Works\\ComfyUI'
 const COMFY_CKPT_PREFERRED = process.env.PI_COMFY_CHECKPOINT?.trim() || ''
 const COMFY_TIMEOUT_MS = 150_000
 const CLOUD_TIMEOUT_MS = 320_000
-
-// 构建期注入(见 electron.vite.config.ts);优先级:设置页覆盖 > process.env(dev) > 烧入默认。
-declare const __CLOUD_IMAGE_RELAY__: string
 
 /** ComfyUI 目录:设置页覆盖 > 内置默认。 */
 const comfyDir = (): string => loadSettings().comfyDir?.trim() || COMFY_DIR_DEFAULT
@@ -35,19 +32,6 @@ const comfyRuntime = new ComfyRuntime(
     onLog: (message) => appendAppLog('warn', 'imagegen.comfy', message),
   },
 )
-
-/** 云端中继配置:每次读设置(便于用户改后即时生效,无需重启)。 */
-export const getCloud = (): ReturnType<typeof resolveCloudImageConfig> => {
-  const s = loadSettings()
-  return resolveCloudImageConfig(
-    {
-      PI_CLOUD_IMAGE_KEY: s.cloudImageKey?.trim() || process.env.PI_CLOUD_IMAGE_KEY || '',
-      PI_CLOUD_IMAGE_RELAY:
-        s.cloudImageRelay?.trim() || process.env.PI_CLOUD_IMAGE_RELAY || __CLOUD_IMAGE_RELAY__,
-    },
-    { allowHttpLoopback: !app.isPackaged },
-  )
-}
 
 const NEGATIVE =
   'text, letters, words, watermark, signature, blurry, lowres, jpeg artifacts, frame, border, cropped, deformed'
@@ -268,7 +252,7 @@ async function cloudFetch(
   init: RequestInit = {},
   timeoutMs = 8000,
 ): Promise<Response> {
-  const cloud = getCloud()
+  const cloud = getCloudConnection()
   if (!cloud.available) throw new Error(cloud.error ?? '云端图像服务未配置')
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', cloud.key)
@@ -319,7 +303,7 @@ async function cloudGenerate(
   downloadResult = true,
   model?: CloudImageModel,
 ): Promise<ImageGenResult> {
-  const cloud = getCloud()
+  const cloud = getCloudConnection()
   if (!cloud.available) {
     return { error: cloud.error ?? '云端图像服务未配置' }
   }
@@ -423,7 +407,7 @@ export async function generateImage(payload: {
     if (payload.engine === 'comfy') {
       const r = await comfyGenerate(payload.prompt, payload.referenceUrls?.[0], payload.maskDataUrl)
       // 本地出图自动留档到云端历史(拿到 R2 URL 顺便回填 publicUrl);失败不阻断
-      if ('dataUrl' in r && getCloud().available) {
+      if ('dataUrl' in r && getCloudConnection().available) {
         try {
           const rec = await cloudFetch('/imagegen/history', {
             method: 'POST',
@@ -493,7 +477,7 @@ export function registerImageGenHandlers(): void {
   })
 
   ipcMain.handle('imageGen:health', async (): Promise<ImageGenHealth> => {
-    const cloudConfig = getCloud()
+    const cloudConfig = getCloudConnection()
     const [comfy, cloudRes] = await Promise.all([
       comfyRuntime.health(),
       cloudConfig.available ? probeCloud('/imagegen/health', 3000) : Promise.resolve(null),
@@ -582,7 +566,7 @@ export function registerImageGenHandlers(): void {
     'imageGen:history',
     async (_e, limit?: number): Promise<ImageGenHistoryItem[] | { error: string }> => {
       const n = Math.min(Math.max(limit ?? 60, 1), 500)
-      const cloud = getCloud()
+      const cloud = getCloudConnection()
       if (!cloud.available) {
         return { error: cloud.error ?? '云端图像服务未配置' }
       }
@@ -599,7 +583,7 @@ export function registerImageGenHandlers(): void {
   ipcMain.handle(
     'imageGen:historyDelete',
     async (_e, id: string): Promise<{ ok: boolean }> => {
-      if (!getCloud().available) return { ok: false }
+      if (!getCloudConnection().available) return { ok: false }
       try {
         const r = await cloudFetch(`/imagegen/history/${encodeURIComponent(id)}`, {
           method: 'DELETE',

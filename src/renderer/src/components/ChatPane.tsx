@@ -40,6 +40,7 @@ import {
   type UserMessage,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
+import { favoriteRouteKey, type ModelRoute } from '../../../shared/model-route'
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
 
@@ -1204,7 +1205,8 @@ export default function ChatPane({
   const [autoCompaction, setAutoCompaction] = useState(true)
   const [compacting, setCompacting] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
-  const [favoriteModels, setFavoriteModels] = useState<string[]>([])
+  const [favoriteModels, setFavoriteModels] = useState<ModelRoute[]>([])
+  const [directProvider, setDirectProvider] = useState('')
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({})
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashDismissed, setSlashDismissed] = useState(false)
@@ -1296,22 +1298,16 @@ export default function ChatPane({
     api.pi.getCommands().then(setCommands).catch(() => {})
     api.settings
       .load()
-      .then((s) =>
-        setFavoriteModels(
-          (s.favoriteModels ?? '')
-            .split(/[,，\n]/)
-            .map((t) => t.trim())
-            .filter(Boolean),
-        ),
-      )
+      .then((s) => {
+        setFavoriteModels(s.favoriteModelRoutes ?? [])
+        setDirectProvider(s.provider)
+      })
       .catch(() => {})
-    api.llmProfiles
-      .list()
+    api.modelCatalog
+      .view()
       .then((result) => {
         if ('error' in result) return
-        setProviderLabels(
-          Object.fromEntries(result.profiles.map((profile) => [profile.id, profile.display_name])),
-        )
+        setProviderLabels(result.view.providerLabels)
       })
       .catch(() => {})
     api.pi
@@ -1336,24 +1332,35 @@ export default function ChatPane({
   const syncedCustomModelsRef = useRef<string | null>(null)
   useEffect(() => {
     if (models.length === 0) return
-    const known = new Set(models.map((m) => m.id.toLowerCase()))
-    const missing = favoriteModels.filter((f) => !known.has(f.toLowerCase()))
-    const key = [...missing].sort().join(',')
+    const known = new Set(models.map((m) => favoriteRouteKey(m.provider, m.id)))
+    const missing = favoriteModels.filter(
+      (route) =>
+        route.provider === directProvider &&
+        !known.has(favoriteRouteKey(route.provider, route.model)),
+    )
+    const key = missing
+      .map((route) => favoriteRouteKey(route.provider, route.model))
+      .sort()
+      .join(',')
     if (syncedCustomModelsRef.current === key) return
     syncedCustomModelsRef.current = key
     if (missing.length === 0) return
     api.settings
-      .syncCustomModels(missing)
+      .syncCustomModels(missing.map((route) => route.model))
       .then(async () => {
         const next = await api.pi.getAvailableModels()
         setModels(next)
-        const nextKnown = new Set(next.map((m) => m.id.toLowerCase()))
-        if (missing.some((f) => !nextKnown.has(f.toLowerCase()))) {
+        const nextKnown = new Set(next.map((m) => favoriteRouteKey(m.provider, m.id)))
+        if (
+          missing.some(
+            (route) => !nextKnown.has(favoriteRouteKey(route.provider, route.model)),
+          )
+        ) {
           antdMessage.info('已注册自定义模型,重新打开工作区后可选')
         }
       })
       .catch(() => {})
-  }, [models, favoriteModels])
+  }, [models, favoriteModels, directProvider])
 
   // 设置页保存后即时同步(无需重开工作区):重载模型切换列表 + 可用模型清单,
   // 并让上面的自定义模型注册重新评估(新增的第三方 id 立刻可选)。
@@ -1361,24 +1368,18 @@ export default function ChatPane({
     const off = api.settings.onChanged(() => {
       api.settings
         .load()
-        .then((s) =>
-          setFavoriteModels(
-            (s.favoriteModels ?? '')
-              .split(/[,，\n]/)
-              .map((t) => t.trim())
-              .filter(Boolean),
-          ),
-        )
+        .then((s) => {
+          setFavoriteModels(s.favoriteModelRoutes ?? [])
+          setDirectProvider(s.provider)
+        })
         .catch(() => {})
       syncedCustomModelsRef.current = null
       api.pi.getAvailableModels().then(setModels).catch(() => {})
-      api.llmProfiles
-        .list()
+      api.modelCatalog
+        .view()
         .then((result) => {
           if ('error' in result) return
-          setProviderLabels(
-            Object.fromEntries(result.profiles.map((profile) => [profile.id, profile.display_name])),
-          )
+          setProviderLabels(result.view.providerLabels)
         })
         .catch(() => {})
     })
@@ -2289,7 +2290,9 @@ export default function ChatPane({
 
   // ── Model switcher ───────────────────────────────────────────────
   const modelMenuItems = useMemo(() => {
-    const favSet = new Set(favoriteModels.map((f) => f.toLowerCase()))
+    const favSet = new Set(
+      favoriteModels.map((route) => favoriteRouteKey(route.provider, route.model)),
+    )
     const byProvider = new Map<string, ModelInfo[]>()
     for (const m of models) {
       const list = byProvider.get(m.provider) ?? []
@@ -2300,7 +2303,9 @@ export default function ChatPane({
     // chronologically, so the tail is the newest — show the latest few.
     return [...byProvider.entries()]
       .map(([provider, list]) => {
-        const providerFavorites = list.filter((m) => favSet.has(m.id.toLowerCase()))
+        const providerFavorites = list.filter((m) =>
+          favSet.has(favoriteRouteKey(m.provider, m.id)),
+        )
         const shown = providerFavorites.length > 0 ? providerFavorites : list.slice(-8).reverse()
         return {
           type: 'group' as const,

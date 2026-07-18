@@ -1,12 +1,8 @@
 import { appendAppLog, normalizeError } from './app-log'
-import { getCloud } from './image-gen'
-import { createLlmSessionToken, fetchLlmCatalog, type LlmProviderProfile } from './llm-gateway'
-import {
-  agentConfigDir,
-  apiKeyEnvVar,
-  loadSettings,
-  writeModelsOverride,
-} from './settings'
+import type { LlmProviderProfile } from './llm-gateway'
+import { ModelCatalogCoordinator } from './model-catalog'
+import { agentConfigDir, apiKeyEnvVar, loadSettings } from './settings'
+import { selectRuntimeModelRoute } from '../shared/model-route'
 
 export type AgentRuntimeConfig = {
   provider: string
@@ -23,51 +19,33 @@ export type AgentRuntimeConfig = {
  */
 export async function prepareAgentRuntime(): Promise<AgentRuntimeConfig> {
   const settings = loadSettings()
-  const cloud = getCloud()
-  let gatewayProfiles: LlmProviderProfile[] = []
-  let gatewayChatToken = ''
-
-  if (cloud.available) {
-    try {
-      const [catalog, session] = await Promise.all([
-        fetchLlmCatalog(cloud.relay, cloud.key),
-        createLlmSessionToken(cloud.relay, cloud.key),
-      ])
-      gatewayProfiles = catalog.providers.filter((profile) => profile.models.length > 0)
-      gatewayChatToken = session.token
-      writeModelsOverride(
-        settings.provider,
-        settings.baseUrl,
-        !!settings.heliconeApiKey,
-        settings.customModelIds,
-        cloud.relay,
-        gatewayProfiles,
-      )
-    } catch (err) {
-      appendAppLog('warn', 'llm.catalog', 'Failed to prepare cloud model runtime', normalizeError(err))
-      writeModelsOverride(
-        settings.provider,
-        settings.baseUrl,
-        !!settings.heliconeApiKey,
-        settings.customModelIds,
-      )
-    }
-  } else {
-    writeModelsOverride(
-      settings.provider,
-      settings.baseUrl,
-      !!settings.heliconeApiKey,
-      settings.customModelIds,
+  const catalog = await new ModelCatalogCoordinator().prepareRuntime()
+  const gatewayProfiles = catalog.profiles
+  const gatewayChatToken = catalog.chatToken
+  if (catalog.warning) {
+    appendAppLog(
+      'warn',
+      'llm.catalog',
+      'Failed to prepare cloud model runtime',
+      normalizeError(catalog.warning),
     )
   }
 
-  if (!settings.apiKey && gatewayProfiles.length === 0) {
+  const selectedRoute = selectRuntimeModelRoute({
+    selected: settings.selectedModelRoute,
+    localProvider: settings.provider,
+    localModel: settings.model,
+    localKeyConfigured: !!settings.apiKey,
+    gatewayProfiles,
+  })
+
+  if (!selectedRoute) {
     throw new Error('请先配置本地直连 API Key，或在云端模型线路中添加可用模型')
   }
 
   return {
-    provider: settings.apiKey ? settings.provider : gatewayProfiles[0].id,
-    model: settings.apiKey ? settings.model || undefined : gatewayProfiles[0].models[0] || undefined,
+    provider: selectedRoute.provider,
+    model: selectedRoute.model || undefined,
     env: {
       ...(settings.apiKey ? { [apiKeyEnvVar(settings.provider)]: settings.apiKey } : {}),
       ...(gatewayChatToken ? { PI_STUDIO_LLM_KEY: gatewayChatToken } : {}),

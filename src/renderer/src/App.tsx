@@ -65,7 +65,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     Promise.all([api.workspace.list(), api.settings.load()])
       .then(([workspaces, settings]) => {
         setRecentWorkspaces(workspaces)
-        if (!settings.apiKey) {
+        if (!settings.modelAccessConfigured) {
           setShowWorkspacePicker(false)
           setWorkspaceError('请先配置模型服务 API Key，然后再打开工作区。')
           setShowSettings(true)

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { LlmProfileWrite, SettingsSaveInput } from '../shared/contracts'
 
 const api = {
   // 窗口控制
@@ -27,7 +28,7 @@ const api = {
 
   settings: {
     load: () => ipcRenderer.invoke('settings:load'),
-    save: (s: unknown) => ipcRenderer.invoke('settings:save', s),
+    save: (s: SettingsSaveInput) => ipcRenderer.invoke('settings:save', s),
     testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
     listModels: (s: unknown) => ipcRenderer.invoke('settings:listModels', s),
     syncCustomModels: (ids: string[]) => ipcRenderer.invoke('settings:syncCustomModels', ids),
@@ -40,9 +41,14 @@ const api = {
 
   llmProfiles: {
     list: () => ipcRenderer.invoke('llmProfiles:list'),
-    save: (payload: unknown) => ipcRenderer.invoke('llmProfiles:save', payload),
+    save: (payload: { profile: LlmProfileWrite; create: boolean }) =>
+      ipcRenderer.invoke('llmProfiles:save', payload),
     delete: (id: string) => ipcRenderer.invoke('llmProfiles:delete', id),
     refreshModels: (id: string) => ipcRenderer.invoke('llmProfiles:refreshModels', id),
+  },
+
+  modelCatalog: {
+    view: () => ipcRenderer.invoke('modelCatalog:view'),
   },
 
   sandbox: {

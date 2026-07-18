@@ -14,8 +14,8 @@ import {
   saveSettings,
   addRecentWorkspace,
   removeRecentWorkspace,
-  writeModelsOverride,
   saveCustomModelIds,
+  saveSelectedModelRoute,
   type PiProvider,
 } from './settings'
 import { piClientManager, resolvePiCliPath, type AgentStatusEvent } from './pi-client'
@@ -44,17 +44,10 @@ import {
   type SecurityPolicy,
   type SecurityPolicyRuleTarget,
 } from './security-policy'
-import { getCloud, registerImageGenHandlers } from './image-gen'
-import {
-  createLlmProfile,
-  deleteLlmProfile,
-  fetchLlmCatalog,
-  listLlmProfiles,
-  refreshLlmProfileModels,
-  updateLlmProfile,
-  type LlmProfileWrite,
-  type LlmProviderProfile,
-} from './llm-gateway'
+import { registerImageGenHandlers } from './image-gen'
+import { getCloudConnection } from './cloud-connection'
+import type { LlmProfileWrite } from './llm-gateway'
+import { ModelCatalogCoordinator } from './model-catalog'
 import { prepareAgentRuntime } from './agent-runtime-config'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
@@ -62,6 +55,8 @@ import { registerSandbox } from './sandbox'
 import { registerModel3d } from './model3d'
 import { registerCodeModel } from './code-model'
 import { registerBlenderModel } from './blender-model'
+import type { SettingsSaveInput } from '../shared/contracts'
+import { createSettingsView } from './settings-view'
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
@@ -90,47 +85,13 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  const llmCloud = (): { relay: string; key: string } => {
-    const cloud = getCloud()
-    if (!cloud.available) throw new Error('请先配置 Pi Studio 云服务地址和应用令牌')
-    return { relay: cloud.relay, key: cloud.key }
+  const notifySettingsChanged = (): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('settings:changed')
+    }
   }
 
-  const syncLlmModels = async (): Promise<{ profiles: LlmProviderProfile[]; warning?: string }> => {
-    const settings = loadSettings()
-    const cloud = getCloud()
-    if (!cloud.available) {
-      writeModelsOverride(
-        settings.provider,
-        settings.baseUrl,
-        !!settings.heliconeApiKey,
-        settings.customModelIds,
-      )
-      return { profiles: [] }
-    }
-    try {
-      const catalog = await fetchLlmCatalog(cloud.relay, cloud.key)
-      writeModelsOverride(
-        settings.provider,
-        settings.baseUrl,
-        !!settings.heliconeApiKey,
-        settings.customModelIds,
-        cloud.relay,
-        catalog.providers,
-      )
-      return { profiles: catalog.providers }
-    } catch (err) {
-      writeModelsOverride(
-        settings.provider,
-        settings.baseUrl,
-        !!settings.heliconeApiKey,
-        settings.customModelIds,
-      )
-      const warning = `配置已保存，但模型目录暂未同步：${(err as Error).message ?? String(err)}`
-      appendAppLog('warn', 'llm.catalog', warning, normalizeError(err))
-      return { profiles: [], warning }
-    }
-  }
+  const modelCatalog = new ModelCatalogCoordinator(undefined, notifySettingsChanged)
 
   // ── Window controls ──────────────────────────────────────────────
   ipcMain.on('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
@@ -197,42 +158,26 @@ export function registerIpcHandlers(): void {
   )
 
   // ── Settings ────────────────────────────────────────────────────
-  ipcMain.handle('settings:load', () => loadSettings())
+  ipcMain.handle('settings:load', () => {
+    const settings = loadSettings()
+    return createSettingsView(settings, getCloudConnection().available)
+  })
   ipcMain.handle(
     'settings:save',
     (
       _e,
-      settings: {
-        provider: PiProvider
-        apiKey: string
-        model: string
-        baseUrl: string
-        favoriteModels: string
-        tavilyApiKey: string
-        heliconeApiKey: string
-        securityGuardEnabled: boolean
-        sandboxEnabled: boolean
-        subagentsEnabled: boolean
-        feishuWebhookUrl: string
-        feishuSecret: string
-        feishuAppId: string
-        feishuAppSecret: string
-        feishuChatId: string
-        imageEngine: '' | 'comfy' | 'openai'
-        comfyDir: string
-        comfyPythonPath: string
-        comfyLaunchArgs: string
-        comfyCheckpoint: string
-        cloudImageRelay: string
-        cloudImageKey: string
-      },
+      settings: SettingsSaveInput,
     ) => {
-      const sandboxWas = loadSettings().sandboxEnabled
-      saveSettings(settings)
+      const current = loadSettings()
+      const sandboxWas = current.sandboxEnabled
+      saveSettings({
+        ...settings,
+        cloudImageKey: settings.clearCloudImageKey
+          ? ''
+          : settings.cloudImageKey.trim() || current.cloudImageKey,
+      })
       // 通知所有窗口设置已变,让聊天页模型切换器等即时同步(无需重开工作区)
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) win.webContents.send('settings:changed')
-      }
+      notifySettingsChanged()
       // 沙箱开关变化时旧 agent 子进程还跑在旧模式里——告知渲染进程触发工作区重启
       const sandboxChanged = sandboxWas !== settings.sandboxEnabled
       return {
@@ -247,13 +192,24 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:syncCustomModels', (_e, ids: string[]) => {
     const cleaned = [...new Set((ids ?? []).map((s) => String(s).trim()).filter(Boolean))]
     saveCustomModelIds(cleaned)
-    return syncLlmModels().then((result) => ({ ok: true, warning: result.warning }))
+    return modelCatalog.sync().then((result) => ({
+      ok: true,
+      warning: result.warning
+        ? `配置已保存，但模型目录暂未同步：${result.warning}`
+        : undefined,
+    }))
   })
 
   ipcMain.handle('llmProfiles:list', async () => {
     try {
-      const cloud = llmCloud()
-      return { ok: true, profiles: await listLlmProfiles(cloud.relay, cloud.key) }
+      return { ok: true, profiles: await modelCatalog.listProfiles() }
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
+    }
+  })
+  ipcMain.handle('modelCatalog:view', async () => {
+    try {
+      return { ok: true, view: await modelCatalog.view() }
     } catch (err) {
       return { error: (err as Error).message ?? String(err) }
     }
@@ -262,15 +218,8 @@ export function registerIpcHandlers(): void {
     'llmProfiles:save',
     async (_event, payload: { profile: LlmProfileWrite; create: boolean }) => {
       try {
-        const cloud = llmCloud()
-        const profile = payload.create
-          ? await createLlmProfile(cloud.relay, cloud.key, payload.profile)
-          : await updateLlmProfile(cloud.relay, cloud.key, payload.profile)
-        const sync = await syncLlmModels()
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed()) win.webContents.send('settings:changed')
-        }
-        return { ok: true, profile, warning: sync.warning }
+        const result = await modelCatalog.saveProfile(payload.profile, payload.create)
+        return { ok: true, profile: result.profile, warning: result.warning }
       } catch (err) {
         return { error: (err as Error).message ?? String(err) }
       }
@@ -278,20 +227,15 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle('llmProfiles:delete', async (_event, id: string) => {
     try {
-      const cloud = llmCloud()
-      await deleteLlmProfile(cloud.relay, cloud.key, id)
-      const sync = await syncLlmModels()
-      return { ok: true, warning: sync.warning }
+      return { ok: true, ...(await modelCatalog.deleteProfile(id)) }
     } catch (err) {
       return { error: (err as Error).message ?? String(err) }
     }
   })
   ipcMain.handle('llmProfiles:refreshModels', async (_event, id: string) => {
     try {
-      const cloud = llmCloud()
-      const profile = await refreshLlmProfileModels(cloud.relay, cloud.key, id)
-      const sync = await syncLlmModels()
-      return { ok: true, profile, warning: sync.warning }
+      const result = await modelCatalog.refreshProfileModels(id)
+      return { ok: true, profile: result.profile, warning: result.warning }
     } catch (err) {
       return { error: (err as Error).message ?? String(err) }
     }
@@ -617,9 +561,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
   ipcMain.handle('pi:getCommands', () => piClientManager.getCommands())
-  ipcMain.handle('pi:setModel', (_e, provider: string, modelId: string) =>
-    piClientManager.setModel(provider, modelId),
-  )
+  ipcMain.handle('pi:setModel', async (_e, provider: string, modelId: string) => {
+    const selected = await piClientManager.setModel(provider, modelId)
+    saveSelectedModelRoute(provider, modelId)
+    return selected
+  })
   ipcMain.handle('pi:setThinkingLevel', (_e, level: string) =>
     piClientManager.setThinkingLevel(level as never),
   )

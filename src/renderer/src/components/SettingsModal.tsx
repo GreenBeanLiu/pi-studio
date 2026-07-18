@@ -7,6 +7,7 @@ import {
   type Channel,
   type ChannelType,
   type PiProvider,
+  type SettingsView,
   type LlmProfileWrite,
   type LlmProviderProfile,
   type ProviderConnectionResult,
@@ -16,30 +17,7 @@ import {
   type SecurityPolicy,
 } from '../lib/api'
 
-type Settings = {
-  provider: PiProvider
-  apiKey: string
-  model: string
-  baseUrl: string
-  favoriteModels: string
-  tavilyApiKey: string
-  heliconeApiKey: string
-  securityGuardEnabled: boolean
-  sandboxEnabled: boolean
-  subagentsEnabled: boolean
-  feishuWebhookUrl: string
-  feishuSecret: string
-  feishuAppId: string
-  feishuAppSecret: string
-  feishuChatId: string
-  imageEngine: '' | 'comfy' | 'openai' | 'gemini'
-  comfyDir: string
-  comfyPythonPath: string
-  comfyLaunchArgs: string
-  comfyCheckpoint: string
-  cloudImageRelay: string
-  cloudImageKey: string
-}
+type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
 type Category = 'model' | 'tools' | 'imagegen' | 'security' | 'about'
 
@@ -229,6 +207,8 @@ export default function SettingsModal({
     model: '',
     baseUrl: '',
     favoriteModels: '',
+    favoriteModelRoutes: [],
+    selectedModelRoute: null,
     tavilyApiKey: '',
     heliconeApiKey: '',
     securityGuardEnabled: true,
@@ -246,6 +226,9 @@ export default function SettingsModal({
     comfyCheckpoint: '',
     cloudImageRelay: '',
     cloudImageKey: '',
+    cloudImageKeyConfigured: false,
+    modelAccessConfigured: false,
+    recentWorkspaces: [],
   })
   const [saving, setSaving] = useState(false)
   const [showKey, setShowKey] = useState(false)
@@ -529,7 +512,9 @@ export default function SettingsModal({
       if (result.ok) {
         setSettings((s) => ({
           ...s,
-          favoriteModels: result.models.join(','),
+          favoriteModels: result.models
+            .map((model) => `${settings.provider}::${model}`)
+            .join(','),
           model: s.model || result.models[0] || '',
         }))
       }
@@ -589,9 +574,33 @@ export default function SettingsModal({
                 />
                 <Input.Password
                   value={settings.cloudImageKey}
-                  onChange={(e) => patch({ cloudImageKey: e.target.value })}
-                  placeholder="Pi Studio 应用令牌"
+                  onChange={(e) =>
+                    patch({
+                      cloudImageKey: e.target.value,
+                      clearCloudImageKey: false,
+                    })
+                  }
+                  placeholder={
+                    settings.cloudImageKeyConfigured && !settings.clearCloudImageKey
+                      ? '已配置；输入新令牌可替换'
+                      : 'Pi Studio 应用令牌'
+                  }
                 />
+                {settings.cloudImageKeyConfigured && !settings.clearCloudImageKey && (
+                  <Button
+                    size="small"
+                    danger
+                    onClick={() =>
+                      patch({
+                        cloudImageKey: '',
+                        cloudImageKeyConfigured: false,
+                        clearCloudImageKey: true,
+                      })
+                    }
+                  >
+                    清除已保存令牌
+                  </Button>
+                )}
                 <span className={styles.labelHint}>首次修改地址或令牌后请先保存设置，再管理下方线路。</span>
               </div>
 
@@ -714,7 +723,7 @@ export default function SettingsModal({
               <div className={styles.section}>
                 <span className={styles.label}>
                   模型切换列表
-                  <span className={styles.labelHint}>逗号分隔，聊天页只显示这些；留空显示每家最新 8 个</span>
+                  <span className={styles.labelHint}>使用 provider::model，避免不同线路的同名模型串线；留空显示每家最新 8 个</span>
                 </span>
                 <div className={styles.actionRow}>
                   <Button size="small" onClick={handleFetchModels} loading={fetchingModels}>
@@ -725,7 +734,7 @@ export default function SettingsModal({
                 <Input.TextArea
                   value={settings.favoriteModels}
                   onChange={(e) => patch({ favoriteModels: e.target.value })}
-                  placeholder="gpt-5.4, gpt-5.2, o4-mini"
+                  placeholder="openai::gpt-5.4, three-a-main::gpt-5.5"
                   autoSize={{ minRows: 2, maxRows: 4 }}
                 />
                 {modelFetchResult && (
@@ -1083,27 +1092,6 @@ export default function SettingsModal({
                   onChange={(e) => patch({ comfyLaunchArgs: e.target.value })}
                   placeholder="main.py --port {port} --listen 127.0.0.1"
                 />
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  云端中继（高级）
-                  <span className={styles.labelHint}>地址可留空使用默认中继；Key 不再内置，需在此填写或通过 PI_CLOUD_IMAGE_KEY 提供</span>
-                </span>
-                <Input
-                  value={settings.cloudImageRelay}
-                  onChange={(e) => patch({ cloudImageRelay: e.target.value })}
-                  placeholder="https://trail-api.glanger.xyz（留空=默认中继）"
-                />
-                <Input.Password
-                  value={settings.cloudImageKey}
-                  onChange={(e) => patch({ cloudImageKey: e.target.value })}
-                  placeholder="X-API-Key（留空=未配置）"
-                />
-                <span className={styles.labelHint}>
-                  中继地址必须是 HTTPS（本机回环 http 仅开发用）。改后立即生效，不需重开工作区。
-                  「3D 生成」也复用这套云端中继 + Key。
-                </span>
               </div>
 
             </div>
