@@ -24,6 +24,8 @@ import {
   type ImageGenSize,
   type GeminiImageAspectRatio,
   type GeminiImageResolution,
+  type GrokImageAspectRatio,
+  type GrokImageResolution,
   type ImageGenQuality,
   type ImageGenBackground,
   type ImageGenOutputFormat,
@@ -70,7 +72,16 @@ const GEMINI_ASPECT_OPTIONS: { id: GeminiImageAspectRatio }[] = [
 
 const GEMINI_RESOLUTION_OPTIONS: GeminiImageResolution[] = ['1K', '2K', '4K']
 
-function sizeGlyphDimensions(value: ImageGenSize | GeminiImageAspectRatio) {
+const GROK_ASPECT_OPTIONS: GrokImageAspectRatio[] = [
+  '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
+  '2:1', '1:2', '19.5:9', '9:19.5', '20:9', '9:20', 'auto',
+]
+
+const GROK_RESOLUTION_OPTIONS: GrokImageResolution[] = ['1K', '2K']
+
+type GrokImageModel = 'grok-imagine-image' | 'grok-imagine-image-quality'
+
+function sizeGlyphDimensions(value: ImageGenSize | GeminiImageAspectRatio | GrokImageAspectRatio) {
   const separator = value.includes('x') ? 'x' : ':'
   const [rawWidth, rawHeight] = value.split(separator).map(Number)
   if (!rawWidth || !rawHeight) return null
@@ -85,7 +96,7 @@ function sizeGlyphDimensions(value: ImageGenSize | GeminiImageAspectRatio) {
   }
 }
 
-function SizeGlyph({ value }: { value: ImageGenSize | GeminiImageAspectRatio }) {
+function SizeGlyph({ value }: { value: ImageGenSize | GeminiImageAspectRatio | GrokImageAspectRatio }) {
   const dimensions = sizeGlyphDimensions(value)
   return (
     <span className="sizeGlyph" aria-hidden="true">
@@ -618,6 +629,9 @@ function ImageGenInner() {
   const [size, setSize] = useState<ImageGenSize>('1024x1024')
   const [geminiAspectRatio, setGeminiAspectRatio] = useState<GeminiImageAspectRatio>('1:1')
   const [geminiImageSize, setGeminiImageSize] = useState<GeminiImageResolution>('1K')
+  const [grokImageModel, setGrokImageModel] = useState<GrokImageModel>('grok-imagine-image')
+  const [grokAspectRatio, setGrokAspectRatio] = useState<GrokImageAspectRatio>('1:1')
+  const [grokImageSize, setGrokImageSize] = useState<GrokImageResolution>('1K')
   const [count, setCount] = useState(1)
   const [quality, setQuality] = useState<ImageGenQuality>('auto')
   const [background, setBackground] = useState<ImageGenBackground>('auto')
@@ -657,7 +671,7 @@ function ImageGenInner() {
     const h = await api.imageGen.health()
     setHealth(h)
     setEngine((prev) => {
-      if ((prev === 'openai' || prev === 'gemini') && !h.keyConfigured && h.comfy) return 'comfy'
+      if ((prev === 'openai' || prev === 'gemini' || prev === 'grok') && !h.keyConfigured && h.comfy) return 'comfy'
       return prev
     })
   }
@@ -686,7 +700,7 @@ function ImageGenInner() {
     api.settings
       .load()
       .then((s) => {
-        if (s.imageEngine === 'comfy' || s.imageEngine === 'openai' || s.imageEngine === 'gemini') setEngine(s.imageEngine)
+        if (s.imageEngine === 'comfy' || s.imageEngine === 'openai' || s.imageEngine === 'gemini' || s.imageEngine === 'grok') setEngine(s.imageEngine)
       })
       .catch(() => {})
     refreshHealth()
@@ -746,7 +760,7 @@ function ImageGenInner() {
     const isEdit = !!baseImage
     // 出图数量:改图固定 1 张;并发总量封顶 4
     const n = isEdit ? 1 : Math.min(count, 4 - pending.length)
-    if (engine === 'openai' || engine === 'gemini') {
+    if (engine === 'openai' || engine === 'gemini' || engine === 'grok') {
       void generateOne(text, isEdit, n)
       return
     }
@@ -757,7 +771,7 @@ function ImageGenInner() {
     const full = text
     // 云端引擎优先用已传好的 R2 地址(免每次生成重传 base64);本地 ComfyUI 仍要 dataURL
     const refSource =
-      engine !== 'comfy' && refUpload.status === 'done' ? refUpload.url : baseImage
+      engine !== 'comfy' && engine !== 'grok' && refUpload.status === 'done' ? refUpload.url : baseImage
     const refUrls = baseImage && refSource ? [refSource] : undefined
 
     // 任务进历史区转圈,按钮立即释放,可连续下多个任务
@@ -767,6 +781,8 @@ function ImageGenInner() {
         ? (isEdit ? 'comfy-edit' : 'comfy')
         : engine === 'gemini'
           ? (isEdit ? 'gemini-edit' : 'gemini')
+          : engine === 'grok'
+            ? 'grok'
           : (isEdit ? 'cloud-edit' : 'cloud')
     setPending((p) => [{ key, prompt: text, engine: engineTag }, ...p])
 
@@ -797,6 +813,13 @@ function ImageGenInner() {
                 n,
                 aspectRatio: geminiAspectRatio,
                 imageSize: geminiImageSize,
+              }
+          : engine === 'grok'
+            ? {
+                model: grokImageModel,
+                n,
+                aspectRatio: grokAspectRatio,
+                imageSize: grokImageSize,
               }
           : {}),
         ...(refUrls ? { referenceUrls: refUrls } : {}),
@@ -928,9 +951,9 @@ function ImageGenInner() {
   }
 
   const engineLabel = (e: string) =>
-    e.startsWith('gemini') ? 'Gemini' : e.startsWith('cloud') ? 'GPT' : e.startsWith('comfy') ? 'SDXL' : e
+    e.startsWith('grok') ? 'Grok' : e.startsWith('gemini') ? 'Gemini' : e.startsWith('cloud') ? 'GPT' : e.startsWith('comfy') ? 'SDXL' : e
   const historyTag = (engineName: string, provider: string | null) => {
-    const providerName = provider === 'three-a' ? '3A' : provider === 'tikhub' ? 'TikHub' : provider
+    const providerName = provider === 'three-a-grok' ? '3A Grok' : provider === 'three-a' ? '3A' : provider === 'tikhub' ? 'TikHub' : provider
     return providerName ? `${engineLabel(engineName)} · ${providerName}` : engineLabel(engineName)
   }
   const timeLabel = (ts: number) =>
@@ -976,18 +999,21 @@ function ImageGenInner() {
           activeKey={engine}
           onChange={(value) => {
             const nextEngine = value as ImageGenEngine
-            if (nextEngine === 'gemini') {
+            if (nextEngine === 'gemini' || nextEngine === 'grok') {
               setMaskDataUrl(null)
               setMaskEditorOpen(false)
             }
+            if (nextEngine === 'grok') clearBaseImage()
             setEngine(nextEngine)
           }}
           items={[
             { key: 'openai', label: 'GPT Image 2', disabled: !health?.keyConfigured },
             { key: 'comfy', label: 'SDXL 生图' },
             { key: 'gemini', label: 'Gemini Image', disabled: !health?.keyConfigured },
+            { key: 'grok', label: 'Grok Image', disabled: !health?.keyConfigured },
           ]}
         />
+        {engine !== 'grok' && <>
         <span className={styles.sectionLabel}>上传图片(改图)</span>
         <div
           className={styles.dropzone}
@@ -1053,6 +1079,7 @@ function ImageGenInner() {
         )}
 
         {!baseImage && <div className={styles.orDivider}>or</div>}
+        </>}
 
         <div className={styles.labelRow}>
           <span className={styles.sectionLabel}>
@@ -1146,6 +1173,55 @@ function ImageGenInner() {
                 </button>
               ))}
             </div>
+          </>
+        )}
+
+        {engine === 'grok' && (
+          <>
+            <span className={styles.sectionLabel}>模型</span>
+            <div className={styles.optionGrid}>
+              {([
+                ['grok-imagine-image', '标准'],
+                ['grok-imagine-image-quality', '高质量'],
+              ] as const).map(([model, label]) => (
+                <button
+                  key={model}
+                  type="button"
+                  className={cx(styles.optionBtn, grokImageModel === model && styles.optionBtnActive)}
+                  onClick={() => setGrokImageModel(model)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className={styles.sectionLabel}>画幅比例</span>
+            <div className={cx(styles.optionGrid, styles.sizeOptionGrid)}>
+              {GROK_ASPECT_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={cx(styles.optionBtn, styles.sizeOption, grokAspectRatio === option && styles.optionBtnActive)}
+                  onClick={() => setGrokAspectRatio(option)}
+                >
+                  <SizeGlyph value={option} />
+                  {option}
+                </button>
+              ))}
+            </div>
+            <span className={styles.sectionLabel}>分辨率</span>
+            <div className={styles.optionGrid}>
+              {GROK_RESOLUTION_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={cx(styles.optionBtn, grokImageSize === option && styles.optionBtnActive)}
+                  onClick={() => setGrokImageSize(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <div className={styles.offline}>3A Grok 当前仅开放文生图；改图接口恢复后再启用上传。</div>
           </>
         )}
 
@@ -1398,9 +1474,9 @@ function ImageGenInner() {
                         }}
                       />
                     </Tooltip>
-                    <Tooltip title="以此图修改">
+                    {engine !== 'grok' && <Tooltip title="以此图修改">
                       <Button {...iconBtn} icon={<Brush size={13} />} onClick={() => useAsBase(h.url)} />
-                    </Tooltip>
+                    </Tooltip>}
                     <Popconfirm title="删除这条记录?" onConfirm={() => deleteHistoryItem(h)}>
                       <Button {...iconBtn} danger icon={<Trash2 size={13} />} />
                     </Popconfirm>

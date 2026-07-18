@@ -177,11 +177,11 @@ const api = {
     health: () => ipcRenderer.invoke('imageGen:health'),
     generate: (payload: {
       prompt: string
-      engine: 'openai' | 'comfy' | 'gemini'
+      engine: 'openai' | 'comfy' | 'gemini' | 'grok'
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
-      aspectRatio?: '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
+      aspectRatio?: '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9' | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
       imageSize?: '1K' | '2K' | '4K'
       n?: number
       quality?: 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
@@ -190,7 +190,7 @@ const api = {
       outputCompression?: number
       moderation?: 'auto' | 'low'
       responseFormat?: 'b64_json' | 'url'
-      model?: 'gemini-3-pro-image-preview'
+      model?: 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
       user?: string
     }) =>
       ipcRenderer.invoke('imageGen:generate', payload),

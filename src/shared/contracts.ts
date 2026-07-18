@@ -1,7 +1,7 @@
 import type { ModelRoute } from './model-route'
 
 export type PiProvider = 'anthropic' | 'openai'
-export type ImageEngine = '' | 'comfy' | 'openai' | 'gemini'
+export type ImageEngine = '' | 'comfy' | 'openai' | 'gemini' | 'grok'
 
 export type Workspace = {
   path: string

@@ -1010,12 +1010,13 @@ export default function SettingsModal({
                 </span>
                 <Select
                   value={settings.imageEngine || 'auto'}
-                  onChange={(v) => patch({ imageEngine: v === 'auto' ? '' : (v as 'comfy' | 'openai' | 'gemini') })}
+                  onChange={(v) => patch({ imageEngine: v === 'auto' ? '' : (v as 'comfy' | 'openai' | 'gemini' | 'grok') })}
                   style={{ width: 220 }}
                   options={[
                     { value: 'auto', label: '自动' },
                     { value: 'openai', label: '云端 gpt-image-2' },
                     { value: 'gemini', label: '云端 Gemini Image' },
+                    { value: 'grok', label: '云端 Grok Image' },
                     { value: 'comfy', label: '本地 ComfyUI' },
                   ]}
                 />

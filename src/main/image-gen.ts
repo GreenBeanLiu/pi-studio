@@ -363,13 +363,21 @@ async function cloudGenerate(
 
 /** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
 export type ImageGenSize = '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
-export type CloudImageModel = 'gpt-image-2' | 'gemini-3-pro-image-preview'
+export type CloudImageModel =
+  | 'gpt-image-2'
+  | 'gemini-3-pro-image-preview'
+  | 'grok-imagine-image'
+  | 'grok-imagine-image-quality'
 export type GeminiImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
 export type GeminiImageResolution = '1K' | '2K' | '4K'
+export type GrokImageAspectRatio =
+  | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
+  | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
+export type GrokImageResolution = '1K' | '2K'
 
 export type ImageGenOptions = {
-  aspectRatio?: GeminiImageAspectRatio
-  imageSize?: GeminiImageResolution
+  aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+  imageSize?: GeminiImageResolution | GrokImageResolution
   n?: number
   quality?: 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
   background?: 'auto' | 'transparent' | 'opaque'
@@ -384,13 +392,13 @@ export type ImageGenOptions = {
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
 export async function generateImage(payload: {
   prompt: string
-  engine: 'openai' | 'comfy' | 'gemini'
+  engine: 'openai' | 'comfy' | 'gemini' | 'grok'
   model?: CloudImageModel
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
-  aspectRatio?: GeminiImageAspectRatio
-  imageSize?: GeminiImageResolution
+  aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+  imageSize?: GeminiImageResolution | GrokImageResolution
   n?: number
   quality?: ImageGenOptions['quality']
   background?: ImageGenOptions['background']
@@ -526,13 +534,13 @@ export function registerImageGenHandlers(): void {
       _e,
       payload: {
         prompt: string
-        engine: 'openai' | 'comfy' | 'gemini'
+        engine: 'openai' | 'comfy' | 'gemini' | 'grok'
         model?: CloudImageModel
         referenceUrls?: string[]
         maskDataUrl?: string
         size?: ImageGenSize
-        aspectRatio?: GeminiImageAspectRatio
-        imageSize?: GeminiImageResolution
+        aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+        imageSize?: GeminiImageResolution | GrokImageResolution
         n?: number
         quality?: ImageGenOptions['quality']
         background?: ImageGenOptions['background']

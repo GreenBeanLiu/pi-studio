@@ -19,6 +19,16 @@ describe('ImageGenPage UI regressions', () => {
     expect(source).not.toContain("disabled={engine !== 'openai'}")
   })
 
+  it('offers Grok Image generation with its own model, ratio, and resolution payload', () => {
+    expect(source).toContain("{ key: 'grok', label: 'Grok Image'")
+    expect(source).toContain('model: grokImageModel')
+    expect(source).toContain('aspectRatio: grokAspectRatio')
+    expect(source).toContain('imageSize: grokImageSize')
+    expect(source).toContain("engine !== 'grok'")
+    expect(source).toContain("provider === 'three-a-grok' ? '3A Grok'")
+    expect(source).toContain("engine !== 'grok' && <Tooltip title=\"以此图修改\">")
+  })
+
   it('allows selecting SDXL even before the local runtime is installed', () => {
     expect(source).toContain("key: 'comfy'")
     expect(source).not.toMatch(/\{\s*key:\s*'comfy',\s*label:\s*'SDXL 生图',\s*disabled:/)

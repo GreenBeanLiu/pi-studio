@@ -132,7 +132,7 @@ export function loadSettings(): SettingsData {
       ? (raw.customModelIds as string[])
       : DEFAULTS.customModelIds,
     imageEngine:
-      raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' || raw.imageEngine === 'gemini'
+      raw.imageEngine === 'comfy' || raw.imageEngine === 'openai' || raw.imageEngine === 'gemini' || raw.imageEngine === 'grok'
         ? raw.imageEngine
         : DEFAULTS.imageEngine,
     comfyDir: (raw.comfyDir as string) ?? DEFAULTS.comfyDir,
