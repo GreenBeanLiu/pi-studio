@@ -1,6 +1,6 @@
 import { memo, Fragment, useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
 import { createStyles } from 'antd-style'
-import { Spin, Popover, Segmented, Switch, Button, Tooltip, message as antdMessage, Modal, Tabs, Empty } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button, message as antdMessage, Modal, Tabs, Empty } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -2403,25 +2403,91 @@ export default function ChatPane({
     }
   }
 
+  /** hover 模型行的浮层:规格 + 会话参数控制。
+   *  参数控制只挂在「当前使用的模型」上,且按模型能力裁剪(推理深度只给 reasoning 模型)。 */
+  function modelHoverPanel(m: ModelInfo, active: boolean): ReactNode {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 240 }}>
+        {modelParamsTooltip(m)}
+        {active ? (
+          <>
+            {m.reasoning && (
+              <div>
+                <div className={styles.paramLabel}>推理深度</div>
+                <Segmented
+                  size="small"
+                  block
+                  value={thinking}
+                  onChange={(v) => handleThinkingSelect(v as ThinkingLevel)}
+                  options={THINKING_LEVELS.map((t) => ({ label: t.label, value: t.key }))}
+                />
+              </div>
+            )}
+            <div className={styles.paramGrid}>
+              <div style={{ flex: 1 }}>
+                <div className={styles.paramLabel}>插话模式</div>
+                <Segmented
+                  size="small"
+                  block
+                  value={steeringMode}
+                  onChange={(v) => handleSteering(v as QueueMode)}
+                  options={[
+                    { label: '全部', value: 'all' },
+                    { label: '逐条', value: 'one-at-a-time' },
+                  ]}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div className={styles.paramLabel}>排队模式</div>
+                <Segmented
+                  size="small"
+                  block
+                  value={followUpMode}
+                  onChange={(v) => handleFollowUp(v as QueueMode)}
+                  options={[
+                    { label: '全部', value: 'all' },
+                    { label: '逐条', value: 'one-at-a-time' },
+                  ]}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className={styles.paramLabel} style={{ marginBottom: 0 }}>自动压缩上下文</span>
+              <Switch size="small" checked={autoCompaction} onChange={handleAutoCompaction} />
+            </div>
+            <Button size="small" block loading={compacting} onClick={handleCompact}>
+              立即压缩上下文
+            </Button>
+          </>
+        ) : (
+          <div className={styles.paramHint}>点击切换到此模型{m.reasoning ? ',可调推理深度' : ''}</div>
+        )}
+      </div>
+    )
+  }
+
   const paramsPanel = (
     <div className={styles.paramsPanel}>
       <div>
         <div className={styles.paramLabel}>模型</div>
         <div className={styles.modelList}>
           {modelMenuItems.length === 0 && <div className={styles.paramHint}>暂无可选模型</div>}
-          {/* 服务商 → 模型 两级展示:同名模型(不同网关)靠分组区分;hover 行出参数卡 */}
+          {/* 服务商 → 模型 两级展示:同名模型(不同网关)靠分组区分;
+              hover 行 → 规格 + 会话参数(当前模型才有,且按能力裁剪) */}
           {modelMenuItems.map((group) => (
             <div key={group.provider}>
               <div className={styles.modelGroupLabel}>{group.label}</div>
               {group.children.map((m) => {
-                const active =
+                const active = !!(
                   currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
+                )
                 return (
-                  <Tooltip
+                  <Popover
                     key={m.key}
-                    title={modelParamsTooltip(m.info)}
+                    content={modelHoverPanel(m.info, active)}
                     placement="right"
-                    mouseEnterDelay={0.35}
+                    trigger="hover"
+                    mouseEnterDelay={0.3}
                   >
                     <button
                       className={cx(styles.modelRow, active && styles.modelRowActive)}
@@ -2431,62 +2497,13 @@ export default function ChatPane({
                       <span style={{ marginLeft: active ? 0 : 18 }}>{m.label}</span>
                       {m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
                     </button>
-                  </Tooltip>
+                  </Popover>
                 )
               })}
             </div>
           ))}
         </div>
       </div>
-
-      <div>
-        <div className={styles.paramLabel}>推理深度</div>
-        <Segmented
-          size="small"
-          block
-          value={thinking}
-          onChange={(v) => handleThinkingSelect(v as ThinkingLevel)}
-          options={THINKING_LEVELS.map((t) => ({ label: t.label, value: t.key }))}
-        />
-      </div>
-
-      <div className={styles.paramGrid}>
-        <div style={{ flex: 1 }}>
-          <div className={styles.paramLabel}>插话模式</div>
-          <Segmented
-            size="small"
-            block
-            value={steeringMode}
-            onChange={(v) => handleSteering(v as QueueMode)}
-            options={[
-              { label: '全部', value: 'all' },
-              { label: '逐条', value: 'one-at-a-time' },
-            ]}
-          />
-        </div>
-        <div style={{ flex: 1 }}>
-          <div className={styles.paramLabel}>排队模式</div>
-          <Segmented
-            size="small"
-            block
-            value={followUpMode}
-            onChange={(v) => handleFollowUp(v as QueueMode)}
-            options={[
-              { label: '全部', value: 'all' },
-              { label: '逐条', value: 'one-at-a-time' },
-            ]}
-          />
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span className={styles.paramLabel} style={{ marginBottom: 0 }}>自动压缩上下文</span>
-        <Switch size="small" checked={autoCompaction} onChange={handleAutoCompaction} />
-      </div>
-
-      <Button size="small" block loading={compacting} onClick={handleCompact}>
-        立即压缩上下文
-      </Button>
     </div>
   )
 
