@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.3.86",
+  "version": "0.3.87",
   "description": "Windows desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
