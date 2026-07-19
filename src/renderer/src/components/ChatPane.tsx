@@ -2286,14 +2286,20 @@ export default function ChatPane({
       list.push(m)
       byProvider.set(m.provider, list)
     }
-    // User-configured favorites win; otherwise the registry appends models
-    // chronologically, so the tail is the newest — show the latest few.
+    // 配了「模型切换列表」就只显示列表里的模型——没被点名的 provider 组整组消失
+    // (registry 里的历史注册/本地直连残留不再刷屏);完全没配时才回退每组最新 8 个。
+    const anyFavorites = favSet.size > 0
     return [...byProvider.entries()]
       .map(([provider, list]) => {
         const providerFavorites = list.filter((m) =>
           favSet.has(favoriteRouteKey(m.provider, m.id)),
         )
-        const shown = providerFavorites.length > 0 ? providerFavorites : list.slice(-8).reverse()
+        let shown = anyFavorites ? providerFavorites : list.slice(-8).reverse()
+        // 当前在用的模型不在列表里也要能看见(否则不知道自己用的什么)
+        if (anyFavorites && currentModel && currentModel.provider === provider) {
+          const cur = list.find((m) => m.id === currentModel.id)
+          if (cur && !shown.includes(cur)) shown = [cur, ...shown]
+        }
         return {
           type: 'group' as const,
           label: providerLabels[provider] ?? provider,
@@ -2306,7 +2312,7 @@ export default function ChatPane({
         }
       })
       .filter((g) => g.children.length > 0)
-  }, [models, favoriteModels, providerLabels])
+  }, [models, favoriteModels, providerLabels, currentModel])
 
   /** hover 模型行时展示的参数卡:字段来自 pi registry,缺啥就不显示啥。 */
   function modelParamsTooltip(m: ModelInfo): ReactNode {
