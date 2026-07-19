@@ -19,6 +19,11 @@ import { createDefaultSettingsView } from '../../../shared/contracts'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
+// 云端线路管理 + 本地直连(备用)配置暂不展示(2026-07-19 用户定):
+// 云端能用即可,线路/权限开通后台化;私有直连的配置形态未定(且不能叫 OpenAI)。
+// 已存的 apiKey/provider/线路继续生效,只是 UI 收起;置 true 可恢复完整管理界面。
+const SHOW_ADVANCED_MODEL_CONFIG: boolean = false
+
 // 安全策略分类已移除(2026-07-17):隔离职责交给沙箱(WSL2+bubblewrap),
 // 规则式软拦截(securityGuard/策略编辑器)不再暴露,后端代码保留但不启用。
 type Category = 'model' | 'tools' | 'imagegen' | 'about'
@@ -516,9 +521,10 @@ export default function SettingsModal({
                     清除已保存令牌
                   </Button>
                 )}
-                <span className={styles.labelHint}>首次修改地址或令牌后请先保存设置，再管理下方线路。</span>
+                <span className={styles.labelHint}>模型线路由云端统一下发，无需在本地配置。</span>
               </div>
 
+              {SHOW_ADVANCED_MODEL_CONFIG && (<>
               <div className={styles.section}>
                 <span className={styles.label}>
                   云端模型线路
@@ -634,6 +640,7 @@ export default function SettingsModal({
                   placeholder={settings.provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o'}
                 />
               </div>
+              </>)}
 
               <div className={styles.section}>
                 <span className={styles.label}>
