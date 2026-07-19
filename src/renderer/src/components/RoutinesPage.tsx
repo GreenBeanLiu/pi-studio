@@ -1281,7 +1281,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         open={!!reviewRequest}
         title={reviewRequest ? `人工审核 · ${reviewRequest.stepName}` : '人工审核'}
         closable={false}
-        maskClosable={false}
+        mask={{ closable: false }}
         onCancel={() => respondToReview('reject')}
         okText="通过并继续"
         cancelText="拒绝并停止"

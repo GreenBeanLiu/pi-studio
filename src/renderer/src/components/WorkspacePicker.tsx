@@ -166,7 +166,7 @@ export default function WorkspacePicker({
       open
       onCancel={onClose}
       closable={!!onClose}
-      maskClosable={!!onClose}
+      mask={{ closable: !!onClose }}
       title="打开工作区"
       footer={null}
       width={520}
