@@ -1253,6 +1253,38 @@ export default function ChatPane({
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
+
+  // 工具结果的结构化 details(如 subagent 的子代理运行信息)权威地存在 toolResult 消息里,
+  // tool_execution_end 事件的 result 不一定带上 —— 从 messages 兜底合并进 toolExecutions,
+  // 保证 SubagentCard 等能拿到完整 details(历史会话加载后也有)。
+  useEffect(() => {
+    setToolExecutions((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const m of messages) {
+        if (m.role !== 'toolResult') continue
+        const tr = m as unknown as {
+          toolCallId?: string
+          toolName?: string
+          content?: unknown
+          details?: unknown
+          isError?: boolean
+        }
+        if (!tr.toolCallId || tr.details === undefined) continue
+        const existing = next[tr.toolCallId]
+        if (existing?.details === tr.details) continue
+        next[tr.toolCallId] = {
+          toolName: tr.toolName ?? existing?.toolName ?? '',
+          args: existing?.args,
+          status: tr.isError ? 'error' : 'done',
+          result: tr.content ?? existing?.result,
+          details: tr.details,
+        }
+        changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [messages])
   const [input, setInput] = useState('')
   const [images, setImages] = useState<ImageContent[]>([])
   const [sending, setSending] = useState(false)
@@ -1733,6 +1765,7 @@ export default function ChatPane({
             [event.toolCallId]: {
               ...(prev[event.toolCallId] ?? { toolName: event.toolName, args: event.args, status: 'running' }),
               result: event.partialResult,
+              details: (event.partialResult as { details?: unknown } | undefined)?.details,
             },
           }))
           break
@@ -1780,6 +1813,7 @@ export default function ChatPane({
               args: prev[event.toolCallId]?.args,
               status: event.isError ? 'error' : 'done',
               result: event.result,
+              details: (event.result as { details?: unknown } | undefined)?.details,
             },
           }))
           break
