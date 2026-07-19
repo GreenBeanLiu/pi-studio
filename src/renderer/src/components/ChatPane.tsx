@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Activity,
+  Wrench,
 } from 'lucide-react'
 import {
   api,
@@ -38,6 +39,7 @@ import {
   type SessionExportFormat,
   type AgentStatusEvent,
   type UserMessage,
+  type ToolCall,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 import { favoriteRouteKey, type ModelRoute } from '../../../shared/model-route'
@@ -371,6 +373,43 @@ const useStyles = createStyles(({ token, css }) => ({
     color: ${token.colorTextTertiary};
     padding: 4px 0 4px 15px;
     white-space: pre-wrap;
+  `,
+
+  toolGroup: css`
+    margin: 2px 0;
+  `,
+
+  toolGroupHead: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    padding: 3px 0;
+    cursor: pointer;
+    user-select: none;
+    width: fit-content;
+
+    &:hover {
+      color: ${token.colorTextSecondary};
+    }
+  `,
+
+  toolGroupLabel: css`
+    font-variant-numeric: tabular-nums;
+  `,
+
+  toolGroupError: css`
+    color: ${token.colorError};
+    font-size: 11px;
+  `,
+
+  toolGroupBody: css`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-left: 15px;
+    margin-top: 2px;
   `,
 
   errorText: css`
@@ -2920,15 +2959,25 @@ export default function ChatPane({
                 <p className={styles.emptyHint}>向 agent 描述你想做的事，它可以读文件、跑命令、改代码。</p>
               </div>
             ) : (
-              messages.map((msg, i) => (
-                <MessageBubble
-                  key={i}
-                  msg={msg}
-                  toolExecutions={toolExecutions}
-                  styles={styles}
-                  cx={cx}
-                />
-              ))
+              segmentMessages(messages).map((seg) =>
+                seg.kind === 'toolSteps' ? (
+                  <ToolStepsGroup
+                    key={`ts-${seg.steps[0].index}`}
+                    steps={seg.steps}
+                    toolExecutions={toolExecutions}
+                    styles={styles}
+                    cx={cx}
+                  />
+                ) : (
+                  <MessageBubble
+                    key={seg.index}
+                    msg={seg.msg}
+                    toolExecutions={toolExecutions}
+                    styles={styles}
+                    cx={cx}
+                  />
+                ),
+              )
             )}
 
           </div>
@@ -3191,7 +3240,8 @@ type CxType = ReturnType<typeof useStyles>['cx']
 // Thinking is collapsed by default — it's the model's scratch reasoning,
 // useful on demand but noise in the normal read.
 function ThinkingBlock({ text, styles, cx }: { text: string; styles: StylesType; cx: CxType }) {
-  const [open, setOpen] = useState(false)
+  // 思考过程默认展开(用户要看推理);嫌长可点标题收起
+  const [open, setOpen] = useState(true)
   return (
     <div>
       <div className={styles.thinkingToggle} onClick={() => setOpen((v) => !v)}>
@@ -3202,6 +3252,49 @@ function ThinkingBlock({ text, styles, cx }: { text: string; styles: StylesType;
         思考过程
       </div>
       {open && <div className={styles.thinkingBlock}>{text}</div>}
+    </div>
+  )
+}
+
+/** 把 assistant 一轮里连续的工具调用归成一组,默认折叠成一条,避免一堆卡片刷屏。 */
+function ToolCallGroup({
+  calls,
+  toolExecutions,
+  styles,
+  cx,
+}: {
+  calls: ToolCall[]
+  toolExecutions: Record<string, ToolExecutionState>
+  styles: StylesType
+  cx: CxType
+}) {
+  const [open, setOpen] = useState(false)
+  const statusOf = (id: string): string => toolExecutions[id]?.status ?? 'running'
+  const done = calls.filter((c) => statusOf(c.id) === 'done').length
+  const errors = calls.filter((c) => statusOf(c.id) === 'error').length
+  const running = calls.length - done - errors
+  const label =
+    running > 0
+      ? `执行中 · ${done + errors}/${calls.length}`
+      : `执行了 ${calls.length} 个操作`
+  return (
+    <div className={styles.toolGroup}>
+      <div className={styles.toolGroupHead} onClick={() => setOpen((v) => !v)}>
+        <ChevronRight
+          size={12}
+          className={cx(styles.thinkingChevron, open && styles.thinkingChevronOpen)}
+        />
+        <Wrench size={12} />
+        <span className={styles.toolGroupLabel}>{label}</span>
+        {errors > 0 && <span className={styles.toolGroupError}>{errors} 失败</span>}
+      </div>
+      {open && (
+        <div className={styles.toolGroupBody}>
+          {calls.map((c) => (
+            <ToolCallCard key={c.id} call={c} execution={toolExecutions[c.id]} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -3251,24 +3344,47 @@ const MessageBubble = memo(function MessageBubble({
           </div>
         ) : (
           <div className={cx(styles.msgBubble, styles.msgBubbleAssistant)}>
-            {msg.content.map((block, i) => {
-              if (block.type === 'text') {
-                return block.text ? (
-                  <Markdown key={i} variant="chat" fontSize={15} style={{ margin: 0 }} enableLatex={false} enableMermaid={false} enableImageGallery={false}>
-                    {block.text}
-                  </Markdown>
-                ) : null
+            {(() => {
+              // 连续的工具调用归组:>=2 折叠成一条,单个保留卡片,避免一堆卡刷屏
+              const items: React.ReactNode[] = []
+              let toolRun: ToolCall[] = []
+              const flushTools = (): void => {
+                if (toolRun.length === 0) return
+                if (toolRun.length === 1) {
+                  const c = toolRun[0]
+                  items.push(<ToolCallCard key={c.id} call={c} execution={toolExecutions[c.id]} />)
+                } else {
+                  items.push(
+                    <ToolCallGroup
+                      key={`tg-${toolRun[0].id}`}
+                      calls={toolRun}
+                      toolExecutions={toolExecutions}
+                      styles={styles}
+                      cx={cx}
+                    />,
+                  )
+                }
+                toolRun = []
               }
-              if (block.type === 'thinking') {
-                return block.thinking ? (
-                  <ThinkingBlock key={i} text={block.thinking} styles={styles} cx={cx} />
-                ) : null
-              }
-              if (block.type === 'toolCall') {
-                return <ToolCallCard key={block.id} call={block} execution={toolExecutions[block.id]} />
-              }
-              return null
-            })}
+              msg.content.forEach((block, i) => {
+                if (block.type === 'toolCall') {
+                  toolRun.push(block)
+                  return
+                }
+                flushTools()
+                if (block.type === 'text' && block.text) {
+                  items.push(
+                    <Markdown key={i} variant="chat" fontSize={15} style={{ margin: 0 }} enableLatex={false} enableMermaid={false} enableImageGallery={false}>
+                      {block.text}
+                    </Markdown>,
+                  )
+                } else if (block.type === 'thinking' && block.thinking) {
+                  items.push(<ThinkingBlock key={i} text={block.thinking} styles={styles} cx={cx} />)
+                }
+              })
+              flushTools()
+              return items
+            })()}
             {msg.role === 'assistant' && msg.errorMessage && (
               <div className={styles.errorText}>{msg.errorMessage}</div>
             )}
@@ -3278,3 +3394,93 @@ const MessageBubble = memo(function MessageBubble({
     </div>
   )
 })
+
+/** agent 的一步"工具步骤"= 只有 thinking+toolCall、没有最终文本回复的 assistant 消息。 */
+function isToolStepMessage(msg: AgentMessage): boolean {
+  if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return false
+  const blocks = msg.content as Array<{ type: string; text?: string }>
+  const hasTool = blocks.some((b) => b.type === 'toolCall')
+  const hasText = blocks.some((b) => b.type === 'text' && !!b.text)
+  return hasTool && !hasText
+}
+
+type RenderSegment =
+  | { kind: 'message'; msg: AgentMessage; index: number }
+  | { kind: 'toolSteps'; steps: Array<{ msg: AgentMessage; index: number }> }
+
+/** 把连续的工具步骤消息(>=2)归成一段,供列表层折叠;其余消息各自成段。 */
+function segmentMessages(messages: AgentMessage[]): RenderSegment[] {
+  const segments: RenderSegment[] = []
+  let run: Array<{ msg: AgentMessage; index: number }> = []
+  const flush = (): void => {
+    if (run.length === 0) return
+    if (run.length === 1) segments.push({ kind: 'message', msg: run[0].msg, index: run[0].index })
+    else segments.push({ kind: 'toolSteps', steps: run })
+    run = []
+  }
+  messages.forEach((msg, index) => {
+    // toolResult 等消息在 UI 上不渲染(MessageBubble 返回 null),不能让它们
+    // 打断连续的工具步骤分组 —— 每个工具步骤后都跟一条 toolResult。
+    if (msg.role !== 'user' && msg.role !== 'assistant') return
+    if (isToolStepMessage(msg)) {
+      run.push({ msg, index })
+      return
+    }
+    flush()
+    segments.push({ kind: 'message', msg, index })
+  })
+  flush()
+  return segments
+}
+
+/** 连续工具步骤折叠成一条"执行了 N 步",点开逐条展开(每步含各自思考+工具卡)。 */
+function ToolStepsGroup({
+  steps,
+  toolExecutions,
+  styles,
+  cx,
+}: {
+  steps: Array<{ msg: AgentMessage; index: number }>
+  toolExecutions: Record<string, ToolExecutionState>
+  styles: StylesType
+  cx: CxType
+}) {
+  const [open, setOpen] = useState(false)
+  const calls = steps.flatMap((s) =>
+    ((s.msg as { content?: Array<{ type: string; id?: string }> }).content ?? []).filter(
+      (b) => b.type === 'toolCall',
+    ),
+  )
+  const statusOf = (id?: string): string => (id ? toolExecutions[id]?.status ?? 'running' : 'running')
+  const done = calls.filter((c) => statusOf(c.id) === 'done').length
+  const errors = calls.filter((c) => statusOf(c.id) === 'error').length
+  const running = calls.length - done - errors
+  const label =
+    running > 0 ? `执行中 · ${done + errors}/${calls.length}` : `执行了 ${calls.length} 步`
+  return (
+    <div className={styles.toolGroup}>
+      <div className={styles.toolGroupHead} onClick={() => setOpen((v) => !v)}>
+        <ChevronRight
+          size={12}
+          className={cx(styles.thinkingChevron, open && styles.thinkingChevronOpen)}
+        />
+        <Wrench size={12} />
+        <span className={styles.toolGroupLabel}>{label}</span>
+        {errors > 0 && <span className={styles.toolGroupError}>{errors} 失败</span>}
+      </div>
+      {open && (
+        <div className={styles.toolGroupBody}>
+          {steps.map((s) => (
+            <MessageBubble
+              key={s.index}
+              msg={s.msg}
+              toolExecutions={toolExecutions}
+              styles={styles}
+              cx={cx}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
