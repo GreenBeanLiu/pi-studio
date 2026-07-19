@@ -4,11 +4,30 @@ export type { LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
 
 export type LlmCatalog = { providers: LlmProviderProfile[] }
 
+export type PiCustomModelConfig = {
+  id: string
+  name: string
+  reasoning?: boolean
+  compat?: { supportsReasoningEffort?: boolean }
+}
+
 export type PiCustomProviderConfig = {
   baseUrl: string
   api: 'openai-completions'
   apiKey: '$PI_STUDIO_LLM_KEY'
-  models: { id: string; name: string }[]
+  models: PiCustomModelConfig[]
+}
+
+/**
+ * 网关模型是自定义 provider id(three-a-*),pi 内置 registry 没有它们的元数据,
+ * getAvailableModels 里 reasoning 全默认成 false —— 于是聊天页 hover 不显示推理深度、
+ * pi 也不给上游带 reasoning_effort。这里按 id 补判断,让推理类模型标 reasoning:true +
+ * supportsReasoningEffort。宁可给非推理模型多带个被忽略的参数,也别漏掉真推理模型。
+ */
+export function isGatewayReasoningModel(id: string): boolean {
+  const s = id.toLowerCase()
+  if (/non-reasoning|composer|fast|build|image|embed|whisper|tts/.test(s)) return false
+  return /grok-4|grok-[5-9]|gpt-5|gpt-[6-9]|^o[1-9]|reasoning|deepseek-r|glm.*think|qwq/.test(s)
 }
 
 export function buildGatewayProviderConfigs(
@@ -26,7 +45,11 @@ export function buildGatewayProviderConfigs(
           baseUrl: `${root}/llm/v1/${encodeURIComponent(profile.id)}`,
           api: 'openai-completions' as const,
           apiKey: '$PI_STUDIO_LLM_KEY' as const,
-          models: profile.models.map((id) => ({ id, name: id })),
+          models: profile.models.map((id) =>
+            isGatewayReasoningModel(id)
+              ? { id, name: id, reasoning: true, compat: { supportsReasoningEffort: true } }
+              : { id, name: id },
+          ),
         },
       ]),
   )

@@ -38,6 +38,11 @@ describe('LLM gateway model registration', () => {
       baseUrl: 'https://trail-api.glanger.xyz/llm/v1/three-a-grok',
       models: [{ id: 'grok-4', name: 'grok-4' }],
     })
+    // 推理类模型(grok-4/gpt-5)补上 reasoning 元数据,否则 UI 调不了推理深度
+    expect(providers['three-a-grok'].models[0]).toMatchObject({
+      reasoning: true,
+      compat: { supportsReasoningEffort: true },
+    })
   })
 
   it('never writes an upstream or desktop key into the model config', () => {
