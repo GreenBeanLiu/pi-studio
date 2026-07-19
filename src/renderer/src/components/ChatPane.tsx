@@ -1611,6 +1611,10 @@ export default function ChatPane({
             )
           }
           setSending(false)
+          // 子代理等工具的完整 details 只权威存在持久化的 toolResult 里,实时
+          // tool_execution_end / message 事件不一定带上 —— 整轮结束刷新一次 messages,
+          // 让 SubagentCard 从 details 拿到最终状态(否则卡在"运行中")。
+          api.pi.getMessages().then(setMessages).catch(() => {})
           api.git
             .diff()
             .then((result) => {
