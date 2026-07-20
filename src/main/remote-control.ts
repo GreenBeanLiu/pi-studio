@@ -1,4 +1,6 @@
+import { dirname } from 'path'
 import { piClientManager } from './pi-client'
+import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog } from './app-log'
 import type { ImageContent } from '@earendil-works/pi-ai'
@@ -189,6 +191,17 @@ class RemoteControlManager {
         case 'switchSession':
           this.reply(msg.id, await piClientManager.switchSession(String(msg.path ?? '')))
           break
+        // 会话列表只能由桌面提供:RpcClient 没有 list API,是扫 sessions 目录扫出来的
+        // (同 ipc.ts 的 'sessions:list')。列表按当前工作区 cwd 过滤。
+        case 'listSessions': {
+          const cwd = piClientManager.getWorkspacePath()
+          const state = await piClientManager.getState()
+          this.reply(
+            msg.id,
+            cwd && state.sessionFile ? await listSessions(dirname(state.sessionFile), cwd) : [],
+          )
+          break
+        }
         default:
           this.reply(msg.id, { error: `unknown command: ${type}` })
           break
