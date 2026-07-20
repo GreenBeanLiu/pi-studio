@@ -15,6 +15,7 @@ const settings: SettingsData = {
   securityGuardEnabled: true,
   sandboxEnabled: false,
   subagentsEnabled: true,
+  remoteEnabled: false,
   feishuWebhookUrl: '',
   feishuSecret: '',
   feishuAppId: '',

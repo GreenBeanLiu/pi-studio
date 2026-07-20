@@ -14,6 +14,7 @@ import {
   type ProviderModelListResult,
   type SandboxDetect,
   type SandboxImageStatus,
+  type RemoteControlSnapshot,
 } from '../lib/api'
 import { createDefaultSettingsView } from '../../../shared/contracts'
 
@@ -197,6 +198,9 @@ export default function SettingsModal({
   const [sandboxDetect, setSandboxDetect] = useState<SandboxDetect | null>(null)
   const [sandboxDetecting, setSandboxDetecting] = useState(false)
   const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
+  const [remoteSnap, setRemoteSnap] = useState<RemoteControlSnapshot | null>(null)
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: number } | null>(null)
+  const [pairingLoading, setPairingLoading] = useState(false)
   const [sandboxBuilding, setSandboxBuilding] = useState(false)
   const [sandboxBuildLog, setSandboxBuildLog] = useState('')
   const [llmProfiles, setLlmProfiles] = useState<LlmProviderProfile[]>([])
@@ -244,6 +248,32 @@ export default function SettingsModal({
     api.app.piVersion().then(setPiVersion).catch(() => {})
     void loadLlmProfiles()
   }, [])
+
+  useEffect(() => {
+    api.remote.getStatus().then(setRemoteSnap).catch(() => {})
+    return api.remote.onStatus(setRemoteSnap)
+  }, [])
+
+  async function toggleRemote(enabled: boolean) {
+    patch({ remoteEnabled: enabled })
+    if (!enabled) setPairing(null)
+    try {
+      setRemoteSnap(await api.remote.setEnabled(enabled))
+    } catch {
+      /* 状态会通过 onStatus 更新 */
+    }
+  }
+
+  async function generatePairingCode() {
+    setPairingLoading(true)
+    try {
+      const r = await api.remote.generatePairingCode()
+      if ('error' in r) setPairing(null)
+      else setPairing(r)
+    } finally {
+      setPairingLoading(false)
+    }
+  }
 
   async function loadLlmProfiles() {
     setLlmProfilesLoading(true)
@@ -848,6 +878,68 @@ export default function SettingsModal({
                   修改后需重新打开工作区生效。默认提供 /implement、/scout-and-plan、/implement-and-review，用独立
                   pi 子进程分担代码侦察、规划、实现和审查。
                 </span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  远程控制（手机）
+                  <Tag color="orange" style={{ marginLeft: 8 }}>
+                    实验性
+                  </Tag>
+                  <span className={styles.labelHint}>
+                    手机经中转连上这台 app,远程发指令让 agent 写代码/跑命令
+                  </span>
+                </span>
+                <div className={styles.actionRow}>
+                  <Switch
+                    size="small"
+                    checked={settings.remoteEnabled}
+                    onChange={(checked) => void toggleRemote(checked)}
+                  />
+                  <span className={styles.labelHint}>
+                    {!settings.remoteEnabled
+                      ? '已关闭'
+                      : remoteSnap?.status === 'connected'
+                        ? `已连接中转${remoteSnap.controllers > 0 ? ` · ${remoteSnap.controllers} 部手机在线` : ''}`
+                        : remoteSnap?.status === 'connecting'
+                          ? '连接中转中…'
+                          : remoteSnap?.status === 'error'
+                            ? `连接失败:${remoteSnap.lastError}`
+                            : '已开启'}
+                  </span>
+                </div>
+                {settings.remoteEnabled && remoteSnap?.status === 'connected' && (
+                  <div className={styles.actionRow}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={pairingLoading}
+                      onClick={() => void generatePairingCode()}
+                    >
+                      生成配对码
+                    </Button>
+                    {pairing && (
+                      <>
+                        <span
+                          style={{
+                            fontSize: 22,
+                            fontWeight: 700,
+                            letterSpacing: 4,
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {pairing.code}
+                        </span>
+                        <span className={styles.labelHint}>5 分钟内在手机端输入</span>
+                      </>
+                    )}
+                  </div>
+                )}
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="手机端稍后上线;现在开启后 app 会连上中转等待配对。远程控制能在这台机器上跑 agent、改代码、执行命令 —— 只在信任环境开启,配对码勿外传。"
+                />
               </div>
 
               <div className={styles.section}>

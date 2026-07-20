@@ -152,7 +152,10 @@ async function cloudRequest(
   })
 }
 
-async function ensureCredential(): Promise<InstallationCredential> {
+export type { InstallationCredential }
+
+/** 注册/复用装机凭据(installation token)。remote-control 也用它连中转 WS。 */
+export async function ensureCredential(): Promise<InstallationCredential> {
   const existing = loadCredential()
   if (existing) return existing
   const response = await cloudRequest('/pi/installations', {

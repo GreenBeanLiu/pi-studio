@@ -101,6 +101,14 @@ declare global {
         buildImage: () => Promise<{ ok: true } | { error: string }>
         onBuildProgress: (cb: (line: string) => void) => () => void
       }
+      remote: {
+        getStatus: () => Promise<RemoteControlSnapshot>
+        setEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>
+        generatePairingCode: () => Promise<
+          { code: string; expiresAt: number } | { error: string }
+        >
+        onStatus: (cb: (snap: RemoteControlSnapshot) => void) => () => void
+      }
       securityPolicy: {
         load: () => Promise<SecurityPolicyLoadResult>
         save: (
@@ -457,6 +465,13 @@ export type SandboxImageStatus = {
   tag: string
   exists: boolean
   daemonRunning: boolean
+}
+
+export type RemoteControlSnapshot = {
+  enabled: boolean
+  status: 'disabled' | 'connecting' | 'connected' | 'error'
+  controllers: number
+  lastError: string
 }
 
 export type WorkspaceMemory = {

@@ -12,6 +12,7 @@ import { syncWebSearchExtension } from './web-search-extension'
 import {
   loadSettings,
   saveSettings,
+  saveRemoteEnabled,
   addRecentWorkspace,
   removeRecentWorkspace,
   saveSelectedModelRoute,
@@ -54,6 +55,7 @@ import { registerSandbox } from './sandbox'
 import { registerModel3d } from './model3d'
 import { registerCodeModel } from './code-model'
 import { registerBlenderModel } from './blender-model'
+import { remoteControl } from './remote-control'
 import type { SettingsSaveInput } from '../shared/contracts'
 import { createSettingsView } from './settings-view'
 
@@ -65,6 +67,21 @@ export function registerIpcHandlers(): void {
   registerModel3d()
   registerCodeModel()
   registerBlenderModel()
+
+  // 远程控制:状态变化广播给所有窗口(设置页实时更新)
+  remoteControl.setStatusListener((snap) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('remote:status', snap)
+    }
+  })
+  ipcMain.handle('remote:getStatus', () => remoteControl.snapshot())
+  ipcMain.handle('remote:setEnabled', async (_e, enabled: boolean) => {
+    saveRemoteEnabled(enabled)
+    if (enabled) await remoteControl.enable()
+    else remoteControl.disable()
+    return remoteControl.snapshot()
+  })
+  ipcMain.handle('remote:generatePairingCode', () => remoteControl.generatePairingCode())
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return
@@ -342,6 +359,8 @@ export function registerIpcHandlers(): void {
             await sealRunChanges(workspacePath, 'agent ended')
           }
           if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
+          // 远程控制开启时,把 agent 事件也转发给手机(controller)
+          remoteControl.forwardEvent(agentEvent)
         },
         (statusEvent) => {
           if (statusEvent.status === 'started') {

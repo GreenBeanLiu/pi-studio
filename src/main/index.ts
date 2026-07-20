@@ -7,6 +7,8 @@ const { autoUpdater } = electronUpdater
 import { registerIpcHandlers } from './ipc'
 import { clearAllGitRunChanges } from './git-diff'
 import { piClientManager } from './pi-client'
+import { remoteControl } from './remote-control'
+import { loadSettings } from './settings'
 import { appendAppLog, attachWindowLoggers, installProcessLoggers, normalizeError } from './app-log'
 import {
   isAllowedExternalUrl,
@@ -240,6 +242,8 @@ app.whenReady().then(() => {
   registerIpcHandlers()
   syncBundledSkills()
   piClientManager.warmup()
+  // 上次开着远程控制就自动重连中转
+  if (loadSettings().remoteEnabled) void remoteControl.enable()
   if (!is.dev) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       if (details.resourceType !== 'mainFrame') {

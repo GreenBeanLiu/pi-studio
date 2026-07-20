@@ -62,6 +62,17 @@ const api = {
     },
   },
 
+  remote: {
+    getStatus: () => ipcRenderer.invoke('remote:getStatus'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:setEnabled', enabled),
+    generatePairingCode: () => ipcRenderer.invoke('remote:generatePairingCode'),
+    onStatus: (cb: (snap: unknown) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, snap: unknown): void => cb(snap)
+      ipcRenderer.on('remote:status', handler)
+      return () => ipcRenderer.off('remote:status', handler)
+    },
+  },
+
   securityPolicy: {
     load: () => ipcRenderer.invoke('securityPolicy:load'),
     save: (policy: unknown) => ipcRenderer.invoke('securityPolicy:save', policy),

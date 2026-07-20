@@ -46,6 +46,7 @@ export type SettingsForm = {
   securityGuardEnabled: boolean
   sandboxEnabled: boolean
   subagentsEnabled: boolean
+  remoteEnabled: boolean
   feishuWebhookUrl: string
   feishuSecret: string
   feishuAppId: string
@@ -84,6 +85,7 @@ export function createDefaultSettingsForm(): SettingsForm {
     securityGuardEnabled: true,
     sandboxEnabled: false,
     subagentsEnabled: true,
+    remoteEnabled: false,
     feishuWebhookUrl: '',
     feishuSecret: '',
     feishuAppId: '',

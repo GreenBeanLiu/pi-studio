@@ -123,6 +123,8 @@ export function loadSettings(): SettingsData {
       typeof raw.sandboxEnabled === 'boolean' ? raw.sandboxEnabled : DEFAULTS.sandboxEnabled,
     subagentsEnabled:
       typeof raw.subagentsEnabled === 'boolean' ? raw.subagentsEnabled : DEFAULTS.subagentsEnabled,
+    remoteEnabled:
+      typeof raw.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULTS.remoteEnabled,
     feishuWebhookUrl: (raw.feishuWebhookUrl as string) ?? DEFAULTS.feishuWebhookUrl,
     feishuSecret: decryptField(raw, 'feishuSecret', 'feishuSecretEncrypted'),
     feishuAppId: (raw.feishuAppId as string) ?? DEFAULTS.feishuAppId,
@@ -159,12 +161,20 @@ export function saveSettings(settings: SettingsForm): void {
   raw.securityGuardEnabled = settings.securityGuardEnabled
   raw.sandboxEnabled = settings.sandboxEnabled
   raw.subagentsEnabled = settings.subagentsEnabled
+  raw.remoteEnabled = settings.remoteEnabled
   raw.feishuWebhookUrl = settings.feishuWebhookUrl
   raw.feishuAppId = settings.feishuAppId
   raw.feishuChatId = settings.feishuChatId
   raw.imageEngine = settings.imageEngine
   raw.cloudImageRelay = settings.cloudImageRelay
 
+  writeRaw(raw)
+}
+
+/** 远程控制开关即时持久化(设置页开关一键生效,不必等整体保存)。 */
+export function saveRemoteEnabled(enabled: boolean): void {
+  const raw = readRaw()
+  raw.remoteEnabled = enabled
   writeRaw(raw)
 }
 
