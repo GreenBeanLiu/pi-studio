@@ -225,7 +225,11 @@ imageGen: {
     responseFormat?: ImageGenResponseFormat
     providerStyle?: ImageGenProviderStyle
     user?: string
-    model?: 'gpt-image-2' | 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
+    model?: | 'gpt-image-2'
+      | 'gemini-3.1-flash-image-preview'
+      | 'gemini-3-pro-image-preview'
+      | 'grok-imagine-image'
+      | 'grok-imagine-image-quality'
   }) => Promise<{ dataUrl: string; publicUrl: string | null; urls?: string[] } | { error: string }>
   history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
   historyDelete: (id: string) => Promise<{ ok: boolean }>

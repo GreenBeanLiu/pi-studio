@@ -163,6 +163,7 @@ async function cloudGenerate(
 export type ImageGenSize = '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
 export type CloudImageModel =
   | 'gpt-image-2'
+  | 'gemini-3.1-flash-image-preview'
   | 'gemini-3-pro-image-preview'
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'

@@ -223,7 +223,11 @@ const api = {
       outputCompression?: number
       moderation?: 'auto' | 'low'
       responseFormat?: 'b64_json' | 'url'
-      model?: 'gpt-image-2' | 'gemini-3-pro-image-preview' | 'grok-imagine-image' | 'grok-imagine-image-quality'
+      model?: | 'gpt-image-2'
+      | 'gemini-3.1-flash-image-preview'
+      | 'gemini-3-pro-image-preview'
+      | 'grok-imagine-image'
+      | 'grok-imagine-image-quality'
       user?: string
     }) =>
       ipcRenderer.invoke('imageGen:generate', payload),

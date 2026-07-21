@@ -15,6 +15,7 @@ import type {
 // 本地 ComfyUI 引擎已移除(2026-07-17):生图全走服务端
 export type ImageModelKey =
   | 'gpt-image-2'
+  | 'gemini-3.1-flash-image-preview'
   | 'gemini-3-pro-image-preview'
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'
@@ -43,9 +44,20 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
     acceptsMask: true,
   },
   {
+    key: 'gemini-3.1-flash-image-preview',
+    label: 'Gemini 3.1 Flash',
+    description: '文生图 / 参考图改图 · 更快更便宜',
+    group: '云端模型',
+    engine: 'gemini',
+    cloudModel: 'gemini-3.1-flash-image-preview',
+    parameters: 'gemini',
+    acceptsImage: true,
+    acceptsMask: false,
+  },
+  {
     key: 'gemini-3-pro-image-preview',
-    label: 'Gemini Image',
-    description: '文生图 / 参考图改图',
+    label: 'Gemini 3 Pro',
+    description: '文生图 / 参考图改图 · 质量优先',
     group: '云端模型',
     engine: 'gemini',
     cloudModel: 'gemini-3-pro-image-preview',
@@ -86,7 +98,7 @@ export function imageModel(key: ImageModelKey): ImageModelDefinition {
 }
 
 export function defaultImageModel(engine: string | undefined): ImageModelKey {
-  if (engine === 'gemini') return 'gemini-3-pro-image-preview'
+  if (engine === 'gemini') return 'gemini-3.1-flash-image-preview'
   if (engine === 'grok') return 'grok-imagine-image'
   return 'gpt-image-2'
 }
