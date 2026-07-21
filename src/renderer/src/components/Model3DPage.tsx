@@ -306,6 +306,14 @@ function Model3DPageInner(): React.JSX.Element {
 
   const activeProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
   // 只有云端模式(文生/图生)依赖服务商密钥;代码建模/Blender 走本地 agent
+  // 建模方式:云端(文生/图生,走服务商)vs 本地(代码/Blender,内嵌 agent 驱动本机)。
+  // 服务商和模型版本只对云端有意义,不该在本地建模时还杵在上面。
+  const kind: 'cloud' | 'local' = mode === 'code' || mode === 'blender' ? 'local' : 'cloud'
+  function onSwitchKind(next: 'cloud' | 'local'): void {
+    if (next === kind) return
+    setMode(next === 'local' ? 'code' : activeProvider.supportsText ? 'text' : 'image')
+  }
+
   const cloudProviderMissing =
     (mode === 'text' || mode === 'image') && providerReady?.[provider] === false
   const versionOptions = activeProvider.versions
@@ -463,37 +471,51 @@ function Model3DPageInner(): React.JSX.Element {
           </div>
         )}
 
-        <div className={styles.field}>
-          <span className={styles.label}>服务商</span>
-          <Segmented
-            block
-            value={provider}
-            onChange={(v) => onSwitchProvider(v as Model3DProvider)}
-            options={PROVIDERS.map((p) => ({
-              label: providerReady && providerReady[p.value] === false ? `${p.label}(未配置)` : p.label,
-              value: p.value,
-            }))}
-          />
-        </div>
+        <Segmented
+          block
+          value={kind}
+          onChange={(v) => onSwitchKind(v as 'cloud' | 'local')}
+          options={[
+            { label: '云端生成', value: 'cloud' },
+            { label: '本地建模', value: 'local' },
+          ]}
+        />
+
+        {kind === 'cloud' && (
+          <div className={styles.field}>
+            <span className={styles.label}>服务商</span>
+            <Segmented
+              block
+              value={provider}
+              onChange={(v) => onSwitchProvider(v as Model3DProvider)}
+              options={PROVIDERS.map((p) => ({
+                label:
+                  providerReady && providerReady[p.value] === false ? `${p.label}(未配置)` : p.label,
+                value: p.value,
+              }))}
+            />
+          </div>
+        )}
 
         <Segmented
           block
           value={mode}
           onChange={(v) => setMode(v as 'text' | 'image' | 'code' | 'blender')}
-          options={[
-            {
-              label: '文生 3D',
-              value: 'text',
-              // Hi3D 是纯 image-to-3D 服务
-              disabled: !activeProvider.supportsText,
-            },
-            { label: '图生 3D', value: 'image' },
-            { label: '代码建模', value: 'code' },
-            { label: 'Blender', value: 'blender' },
-          ]}
+          options={
+            kind === 'cloud'
+              ? [
+                  // Hi3D 是纯 image-to-3D 服务
+                  { label: '文生 3D', value: 'text', disabled: !activeProvider.supportsText },
+                  { label: '图生 3D', value: 'image' },
+                ]
+              : [
+                  { label: '代码建模', value: 'code' },
+                  { label: 'Blender', value: 'blender' },
+                ]
+          }
         />
 
-        {!activeProvider.supportsText && (
+        {kind === 'cloud' && !activeProvider.supportsText && (
           <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
             {activeProvider.label} 只支持图生 3D。要用文字直接生成,请切到 Tripo。
           </div>
