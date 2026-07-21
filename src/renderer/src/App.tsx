@@ -73,6 +73,25 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       })
       .catch(() => {})
 
+    // renderer reload / 重挂载后,main 里的 agent 可能还活着 —— 先取权威快照
+    // 恢复工作区与沙箱状态,而不是让用户回到选工作区、agent 却在后台空转。
+    api.pi
+      .getRuntimeSnapshot()
+      .then((snap) => {
+        if (!snap.workspacePath) return
+        if (snap.phase === 'idle' || snap.phase === 'running' || snap.phase === 'awaiting_approval') {
+          const name = snap.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? snap.workspacePath
+          setWorkspace((current) =>
+            current ?? { path: snap.workspacePath!, name, lastOpenedAt: new Date().toISOString() },
+          )
+          setShowWorkspacePicker(false)
+          setSandboxMode(snap.sandbox)
+        } else if (snap.phase === 'error' && snap.error) {
+          setWorkspaceError(snap.error.message)
+        }
+      })
+      .catch(() => {})
+
     const offAvail = api.update.onAvailable(({ version }) =>
       setUpdate({ status: 'available', version }),
     )

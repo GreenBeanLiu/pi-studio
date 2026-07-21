@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { LlmProfileSavePayload, SettingsSaveInput } from '../shared/contracts'
 import type {
+  AgentRuntimeSnapshot,
   AgentStatusEvent,
   DesktopApi,
   Model3DOptions,
@@ -155,6 +156,12 @@ const api = {
       const handler = (_e: Electron.IpcRendererEvent, data: AgentStatusEvent) => cb(data)
       ipcRenderer.on('agent:status', handler)
       return () => ipcRenderer.off('agent:status', handler)
+    },
+    getRuntimeSnapshot: () => ipcRenderer.invoke('pi:getRuntimeSnapshot'),
+    onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: AgentRuntimeSnapshot) => cb(data)
+      ipcRenderer.on('agent:runtime', handler)
+      return () => ipcRenderer.off('agent:runtime', handler)
     },
   },
 

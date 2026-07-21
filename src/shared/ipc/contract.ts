@@ -177,6 +177,8 @@ pi: {
   compact: () => Promise<unknown>
   onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
   onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
+  getRuntimeSnapshot: () => Promise<AgentRuntimeSnapshot>
+  onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => () => void
 }
 routines: {
   list: () => Promise<{ routines: Routine[]; runs: RoutineRun[] }>
@@ -606,6 +608,26 @@ export type ExtensionUiResponse =
   | { type: 'extension_ui_response'; id: string; cancelled: true }
 
 export type PiRuntimeEvent = AgentSessionEvent | ExtensionUiRequest
+
+export type AgentRuntimePhase =
+  | 'closed'
+  | 'starting'
+  | 'idle'
+  | 'running'
+  | 'awaiting_approval'
+  | 'stopping'
+  | 'error'
+
+/** main 维护的 Agent 生命周期权威快照;revision 单调递增,乱序事件可弃 */
+export type AgentRuntimeSnapshot = {
+  revision: number
+  phase: AgentRuntimePhase
+  workspacePath: string | null
+  sessionFile: string | null
+  sandbox: 'wsl' | 'docker' | null
+  activeRun: { startedAt: number } | null
+  error: { message: string } | null
+}
 
 export type AgentStatusEvent =
   | {

@@ -61,6 +61,14 @@ import { registerCodeModel } from './code-model'
 import { registerBlenderModel } from './blender-model'
 import { remoteControl } from './remote-control'
 import { createSettingsView } from './settings-view'
+import { AgentRuntimeTracker } from './agent-runtime'
+
+// Agent Runtime 权威快照:renderer 重挂载/reload 后先取快照,再订阅变化
+const agentRuntime = new AgentRuntimeTracker((snapshot) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('agent:runtime', snapshot)
+  }
+})
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
@@ -354,6 +362,7 @@ export function registerIpcHandlers(): void {
       console.warn('Failed to sync pi-studio subagent workflow:', err)
     }
 
+    agentRuntime.starting(workspacePath)
     try {
       await piClientManager.startWorkspace(
         workspacePath,
@@ -361,6 +370,7 @@ export function registerIpcHandlers(): void {
         runtime.provider,
         runtime.model,
         async (agentEvent) => {
+          agentRuntime.agentEvent(agentEvent)
           if (agentEvent.type === 'agent_end') {
             await sealRunChanges(workspacePath, 'agent ended')
           }
@@ -369,6 +379,7 @@ export function registerIpcHandlers(): void {
           remoteControl.forwardEvent(agentEvent)
         },
         (statusEvent) => {
+          agentRuntime.status(statusEvent)
           if (statusEvent.status === 'started') {
             sendAgentStatus(win, statusEvent)
             return
@@ -382,6 +393,7 @@ export function registerIpcHandlers(): void {
         },
       )
     } catch (err) {
+      agentRuntime.startFailed((err as Error).message ?? '启动工作区失败')
       appendAppLog('error', 'workspace.open', 'Failed to start workspace', {
         workspacePath,
         error: normalizeError(err),
@@ -594,9 +606,13 @@ export function registerIpcHandlers(): void {
         confirmed?: boolean
         cancelled?: true
       },
-    ) => piClientManager.respondExtensionUi(response),
+    ) => {
+      agentRuntime.uiResponded()
+      return piClientManager.respondExtensionUi(response)
+    },
   )
   ipcMain.handle('pi:newSession', () => piClientManager.newSession())
+  ipcMain.handle('pi:getRuntimeSnapshot', () => agentRuntime.snapshot())
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
