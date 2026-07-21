@@ -48,6 +48,10 @@ import { registerImageGenHandlers } from './image-gen'
 import { getCloudConnection } from './cloud-connection'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { parseLlmProfileSavePayload } from './ipc-contracts'
+import { oneOf, parseSessionPath, requiredString } from '../shared/ipc/validators'
+
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+const QUEUE_MODES = ['all', 'one-at-a-time'] as const
 import { prepareAgentRuntime } from './agent-runtime-config'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
@@ -424,15 +428,36 @@ export function registerIpcHandlers(): void {
     if (!state.sessionFile) return []
     return listSessions(dirname(state.sessionFile), cwd)
   })
-  ipcMain.handle('sessions:switch', (_e, sessionPath: string) =>
-    piClientManager.switchSession(sessionPath),
-  )
-  ipcMain.handle('sessions:rename', (_e, name: string) => piClientManager.setSessionName(name))
-  ipcMain.handle('sessions:delete', async (_e, sessionPath: string) => {
-    // Never delete the file the running agent is writing to
+  ipcMain.handle('sessions:switch', async (_e, sessionPath: unknown) => {
     const state = await piClientManager.getState()
-    if (state.sessionFile === sessionPath) return { error: '不能删除当前会话' }
-    deleteSession(sessionPath)
+    if (!state.sessionFile) return { cancelled: true }
+    try {
+      return await piClientManager.switchSession(
+        parseSessionPath(sessionPath, dirname(state.sessionFile)),
+      )
+    } catch (err) {
+      appendAppLog('warn', 'ipc.contract', 'Rejected sessions:switch', normalizeError(err))
+      return { cancelled: true }
+    }
+  })
+  ipcMain.handle('sessions:rename', (_e, name: unknown) =>
+    piClientManager.setSessionName(requiredString(name, '会话名称')),
+  )
+  ipcMain.handle('sessions:delete', async (_e, sessionPath: unknown) => {
+    const state = await piClientManager.getState()
+    if (!state.sessionFile) return { error: '当前没有会话' }
+    // 路径由 main 判定:必须是本工作区会话目录下的 .jsonl,
+    // 否则这个接口等于把 unlinkSync 暴露给了 renderer。
+    let target: string
+    try {
+      target = parseSessionPath(sessionPath, dirname(state.sessionFile))
+    } catch (err) {
+      appendAppLog('warn', 'ipc.contract', 'Rejected sessions:delete', normalizeError(err))
+      return { error: (err as Error).message }
+    }
+    // Never delete the file the running agent is writing to
+    if (resolve(state.sessionFile) === target) return { error: '不能删除当前会话' }
+    deleteSession(target)
     return { ok: true }
   })
   ipcMain.handle('sessions:exportCurrent', async (event, format: SessionExportFormat) => {
@@ -579,17 +604,19 @@ export function registerIpcHandlers(): void {
     saveSelectedModelRoute(provider, modelId)
     return selected
   })
-  ipcMain.handle('pi:setThinkingLevel', (_e, level: string) =>
-    piClientManager.setThinkingLevel(level as never),
+  // 这几个值原样透传给 agent,必须先确认落在枚举内(原来是 `level as never`)
+  ipcMain.handle('pi:setThinkingLevel', (_e, level: unknown) =>
+    piClientManager.setThinkingLevel(oneOf(level, THINKING_LEVELS, '推理等级') as never),
   )
-  ipcMain.handle('pi:setSteeringMode', (_e, mode: 'all' | 'one-at-a-time') =>
-    piClientManager.setSteeringMode(mode),
+  ipcMain.handle('pi:setSteeringMode', (_e, mode: unknown) =>
+    piClientManager.setSteeringMode(oneOf(mode, QUEUE_MODES, '插话模式')),
   )
-  ipcMain.handle('pi:setFollowUpMode', (_e, mode: 'all' | 'one-at-a-time') =>
-    piClientManager.setFollowUpMode(mode),
+  ipcMain.handle('pi:setFollowUpMode', (_e, mode: unknown) =>
+    piClientManager.setFollowUpMode(oneOf(mode, QUEUE_MODES, '排队模式')),
   )
-  ipcMain.handle('pi:setAutoCompaction', (_e, enabled: boolean) =>
-    piClientManager.setAutoCompaction(enabled),
-  )
+  ipcMain.handle('pi:setAutoCompaction', (_e, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') throw new TypeError('自动压缩开关无效')
+    return piClientManager.setAutoCompaction(enabled)
+  })
   ipcMain.handle('pi:compact', () => piClientManager.compact())
 }
