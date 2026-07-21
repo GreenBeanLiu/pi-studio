@@ -7,6 +7,7 @@ import RoutinesPage from './components/RoutinesPage'
 import ImageGenPage from './components/ImageGenPage'
 import Model3DPage from './components/Model3DPage'
 import SessionSidebar from './components/SessionSidebar'
+import { useAppShortcuts } from './keyboard/use-app-shortcuts'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
 import WorkspacePicker from './components/WorkspacePicker'
@@ -60,6 +61,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [sandboxMode, setSandboxMode] = useState<'wsl' | 'docker' | null>(null)
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)
+  const [agentRunning, setAgentRunning] = useState(false)
 
   useEffect(() => {
     Promise.all([api.workspace.list(), api.settings.load()])
@@ -92,6 +94,11 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       })
       .catch(() => {})
 
+    // agent 是否在跑以 main 的权威快照为准,快捷键条件(Ctrl+.)据此启用
+    const offRuntime = api.pi.onRuntime((snap) => {
+      setAgentRunning(snap.phase === 'running' || snap.phase === 'awaiting_approval')
+    })
+
     const offAvail = api.update.onAvailable(({ version }) =>
       setUpdate({ status: 'available', version }),
     )
@@ -103,6 +110,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     )
 
     return () => {
+      offRuntime()
       offAvail()
       offDone()
       offErr()
@@ -179,6 +187,32 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     setShowSettings(false)
     if (!workspace && !opening) setShowWorkspacePicker(true)
   }
+
+  // 动作全部复用页面已有的 command,不另写一套业务逻辑
+  useAppShortcuts(
+    {
+      view: activeView,
+      workspace: !!workspace,
+      agentRunning,
+      modalOpen: showSettings || showWorkspacePicker,
+    },
+    {
+      'view.chat': () => setActiveView('chat'),
+      'view.routines': () => setActiveView('routines'),
+      'view.imagegen': () => setActiveView('imagegen'),
+      'view.model3d': () => setActiveView('model3d'),
+      'workspace.open': () => setShowWorkspacePicker(true),
+      'settings.toggle': () => setShowSettings((v) => !v),
+      'theme.toggle': onToggleTheme,
+      'agent.stop': () => void api.pi.abort(),
+      'composer.focus': () => {
+        const el = document.querySelector<HTMLTextAreaElement>(
+          '[data-shortcut-scope="composer"] textarea',
+        )
+        el?.focus()
+      },
+    },
+  )
 
   return (
     <div className={styles.shell}>

@@ -3140,7 +3140,10 @@ export default function ChatPane({
               })}
             </div>
           )}
-          <div className={cx(styles.inputBox, inputFocused && styles.inputBoxFocused)}>
+          <div
+            className={cx(styles.inputBox, inputFocused && styles.inputBoxFocused)}
+            data-shortcut-scope="composer"
+          >
             {images.length > 0 && (
               <div className={styles.imageStrip}>
                 {images.map((img, i) => (
