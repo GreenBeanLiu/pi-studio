@@ -48,7 +48,7 @@ import { registerImageGenHandlers } from './image-gen'
 import { getCloudConnection } from './cloud-connection'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { parseLlmProfileSavePayload } from './ipc-contracts'
-import { oneOf, parseSessionPath, requiredString } from '../shared/ipc/validators'
+import { oneOf, parseSessionPath, parseSettingsSave, requiredString } from '../shared/ipc/validators'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const QUEUE_MODES = ['all', 'one-at-a-time'] as const
@@ -60,7 +60,6 @@ import { registerModel3d } from './model3d'
 import { registerCodeModel } from './code-model'
 import { registerBlenderModel } from './blender-model'
 import { remoteControl } from './remote-control'
-import type { SettingsSaveInput } from '../shared/contracts'
 import { createSettingsView } from './settings-view'
 
 export function registerIpcHandlers(): void {
@@ -186,8 +185,11 @@ export function registerIpcHandlers(): void {
     'settings:save',
     (
       _e,
-      settings: SettingsSaveInput,
+      payload: unknown,
     ) => {
+      // 原来直接 ...settings 落盘:多余字段被持久化,非字符串的
+      // cloudImageKey 会在 .trim() 上崩掉 handler
+      const settings = parseSettingsSave(payload)
       const current = loadSettings()
       const sandboxWas = current.sandboxEnabled
       saveSettings({

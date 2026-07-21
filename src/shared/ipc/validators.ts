@@ -141,3 +141,74 @@ export function parseRoutineSave(value: unknown): ParsedRoutineSave {
   }
   return out
 }
+
+// ── Settings 写入对象 ────────────────────────────────────────────────
+// settings:save 原来直接 `...settings` 落盘:多余字段跟着持久化,
+// cloudImageKey 不是字符串时 `.trim()` 直接抛 TypeError 崩掉 handler。
+
+const PI_PROVIDERS = ['anthropic', 'openai'] as const
+const IMAGE_ENGINES = ['', 'openai', 'gemini', 'grok'] as const
+
+function stringField(value: unknown, label: string): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') throw new TypeError(`${label}必须是字符串`)
+  return value
+}
+
+function boolField(value: unknown, fallback: boolean, label: string): boolean {
+  if (value === undefined || value === null) return fallback
+  if (typeof value !== 'boolean') throw new TypeError(`${label}无效`)
+  return value
+}
+
+export type ParsedSettingsSave = {
+  provider: (typeof PI_PROVIDERS)[number]
+  apiKey: string
+  model: string
+  baseUrl: string
+  favoriteModels: string
+  tavilyApiKey: string
+  heliconeApiKey: string
+  securityGuardEnabled: boolean
+  sandboxEnabled: boolean
+  subagentsEnabled: boolean
+  remoteEnabled: boolean
+  feishuWebhookUrl: string
+  feishuSecret: string
+  feishuAppId: string
+  feishuAppSecret: string
+  feishuChatId: string
+  imageEngine: (typeof IMAGE_ENGINES)[number]
+  cloudImageRelay: string
+  cloudImageKey: string
+  clearCloudImageKey?: boolean
+}
+
+export function parseSettingsSave(value: unknown): ParsedSettingsSave {
+  if (!isRecord(value)) throw new TypeError('设置参数无效')
+  const out: ParsedSettingsSave = {
+    provider: oneOf(value.provider, PI_PROVIDERS, 'Provider'),
+    apiKey: stringField(value.apiKey, 'API Key'),
+    model: stringField(value.model, '模型'),
+    baseUrl: stringField(value.baseUrl, 'Base URL'),
+    favoriteModels: stringField(value.favoriteModels, '常用模型'),
+    tavilyApiKey: stringField(value.tavilyApiKey, 'Tavily Key'),
+    heliconeApiKey: stringField(value.heliconeApiKey, 'Helicone Key'),
+    securityGuardEnabled: boolField(value.securityGuardEnabled, true, '安全守卫开关'),
+    sandboxEnabled: boolField(value.sandboxEnabled, false, '沙箱开关'),
+    subagentsEnabled: boolField(value.subagentsEnabled, false, '子代理开关'),
+    remoteEnabled: boolField(value.remoteEnabled, false, '远程控制开关'),
+    feishuWebhookUrl: stringField(value.feishuWebhookUrl, '飞书 Webhook'),
+    feishuSecret: stringField(value.feishuSecret, '飞书签名'),
+    feishuAppId: stringField(value.feishuAppId, '飞书 AppId'),
+    feishuAppSecret: stringField(value.feishuAppSecret, '飞书 AppSecret'),
+    feishuChatId: stringField(value.feishuChatId, '飞书 ChatId'),
+    imageEngine: oneOf(stringField(value.imageEngine, '生图引擎') as string, IMAGE_ENGINES, '生图引擎'),
+    cloudImageRelay: stringField(value.cloudImageRelay, '云端中继'),
+    cloudImageKey: stringField(value.cloudImageKey, '云端 Key'),
+  }
+  if (value.clearCloudImageKey !== undefined) {
+    out.clearCloudImageKey = boolField(value.clearCloudImageKey, false, '清除云端 Key')
+  }
+  return out
+}

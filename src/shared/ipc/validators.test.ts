@@ -6,6 +6,7 @@ import {
   parseContainedPath,
   parseRoutineSave,
   parseRoutineSchedule,
+  parseSettingsSave,
   parseSessionPath,
   requiredString,
 } from './validators'
@@ -141,5 +142,47 @@ describe('parseRoutineSave', () => {
 
   it('rejects a bad notify value', () => {
     expect(() => parseRoutineSave({ ...base, notify: 'sometimes' })).toThrow('通知策略')
+  })
+})
+
+describe('parseSettingsSave', () => {
+  const base = {
+    provider: 'openai',
+    apiKey: 'k',
+    model: 'gpt-5.5',
+    baseUrl: '',
+    favoriteModels: '',
+    tavilyApiKey: '',
+    heliconeApiKey: '',
+    securityGuardEnabled: true,
+    sandboxEnabled: false,
+    subagentsEnabled: true,
+    remoteEnabled: true,
+    feishuWebhookUrl: '',
+    feishuSecret: '',
+    feishuAppId: '',
+    feishuAppSecret: '',
+    feishuChatId: '',
+    imageEngine: '',
+    cloudImageRelay: '',
+    cloudImageKey: '',
+  }
+
+  it('round-trips a valid form', () => {
+    expect(parseSettingsSave({ ...base, clearCloudImageKey: true }).clearCloudImageKey).toBe(true)
+  })
+
+  // used to reach saveSettings and blow up on .trim()
+  it('rejects a non-string cloudImageKey instead of crashing later', () => {
+    expect(() => parseSettingsSave({ ...base, cloudImageKey: 42 })).toThrow('云端 Key')
+  })
+
+  it('rejects an unknown provider', () => {
+    expect(() => parseSettingsSave({ ...base, provider: 'gemini' })).toThrow('Provider')
+  })
+
+  it('drops unknown fields instead of persisting them', () => {
+    const parsed = parseSettingsSave({ ...base, injected: 'x' })
+    expect('injected' in parsed).toBe(false)
   })
 })
