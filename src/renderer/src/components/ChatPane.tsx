@@ -235,9 +235,9 @@ const useStyles = createStyles(({ token, css }) => ({
 
   messagesInner: css`
     width: 100%;
-    max-width: 1120px;
+    max-width: 920px;
     margin: 0 auto;
-    padding: 16px 24px 88px;
+    padding: 16px 28px 88px;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -249,15 +249,15 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 16px;
+    gap: 10px;
     text-align: center;
     padding: 0 24px;
     color: ${token.colorTextSecondary};
   `,
 
   emptyTitle: css`
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 500;
     color: ${token.colorText};
     margin: 0;
   `,
@@ -274,7 +274,7 @@ const useStyles = createStyles(({ token, css }) => ({
     display: flex;
     gap: 12px;
     align-items: flex-start;
-    padding: 8px 24px 6px;
+    padding: 8px 0 6px;
     animation: msg-in 0.2s ease-out both;
   `,
 
@@ -298,9 +298,9 @@ const useStyles = createStyles(({ token, css }) => ({
 
   avatarBox: css`
     flex-shrink: 0;
-    width: 32px;
-    height: 32px;
-    border-radius: 9px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -442,29 +442,28 @@ const useStyles = createStyles(({ token, css }) => ({
     animation: typing-dot 1.4s ease-in-out infinite;
   `,
 
+  /* 用主内容背景色,不再做模糊浮层 */
   inputArea: css`
     flex-shrink: 0;
-    padding: 16px 20px 20px;
-    background: color-mix(in srgb, ${token.colorBgBase} 88%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    padding: 16px 28px 20px;
+    background: ${token.colorBgBase};
   `,
 
   inputAreaInner: css`
     width: 100%;
-    max-width: 1120px;
+    max-width: 920px;
     margin: 0 auto;
   `,
 
+  /* 输入框是高频工具,保持稳定清楚即可,不做浮动卡片 */
   inputBox: css`
     display: flex;
     flex-direction: column;
     gap: 6px;
-    border-radius: 16px;
+    border-radius: 8px;
     padding: 12px 14px 8px;
     background: ${token.colorBgElevated};
     border: 1px solid ${token.colorBorder};
-    box-shadow: ${token.boxShadowSecondary};
     transition: border-color ${token.motionDurationFast}, box-shadow ${token.motionDurationFast};
   `,
 
@@ -476,7 +475,7 @@ const useStyles = createStyles(({ token, css }) => ({
 
   inputBoxFocused: css`
     border-color: ${token.colorPrimaryBorder};
-    box-shadow: ${token.boxShadowSecondary}, 0 0 0 2px ${token.colorPrimary}18;
+    box-shadow: 0 0 0 2px ${token.colorPrimary}14;
   `,
 
   inputTextarea: css`
@@ -507,7 +506,7 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-shrink: 0;
     width: 32px;
     height: 32px;
-    border-radius: 10px;
+    border-radius: 6px;
     border: none;
     display: flex;
     align-items: center;
