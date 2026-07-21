@@ -34,16 +34,36 @@ const PROVIDERS: Array<{
   versions: Array<{ value: string; label: string }>
   /** 每个模型版本各自的合法分辨率枚举(Hi3D 传错会被拒) */
   resolutions?: Record<string, string[]>
+  /** 每个模型版本的面数上限(Tripo) */
+  faceMax?: Record<string, number>
+  /** 支持 geometry_quality(Ultra 模式)的版本 */
+  geometryQuality?: string[]
 }> = [
   {
     value: 'tripo',
     label: 'Tripo',
     supportsText: true,
+    // 不放 v1.4/v1.3:face_limit/texture/pbr 这组参数只对 >=v2.0 有效,
+    // 放进来会让下面的参数面板对它们失效(v1.3 官方也已标废弃)。
     versions: [
-      { value: '', label: '默认(最新)' },
+      { value: 'P1-20260311', label: 'P1(最新)' },
+      { value: 'Turbo-v1.0-20250506', label: 'Turbo v1.0' },
+      { value: 'v3.1-20260211', label: 'v3.1' },
+      { value: 'v3.0-20250812', label: 'v3.0' },
       { value: 'v2.5-20250123', label: 'v2.5' },
       { value: 'v2.0-20240919', label: 'v2.0' },
     ],
+    // 面数上限随版本变(文档 Generation 的表格);未列出的版本按保守值。
+    faceMax: {
+      'P1-20260311': 500_000,
+      'Turbo-v1.0-20250506': 500_000,
+      'v3.1-20260211': 2_000_000,
+      'v3.0-20250812': 2_000_000,
+      'v2.5-20250123': 500_000,
+      'v2.0-20240919': 500_000,
+    },
+    // geometry_quality 只对 >=v3.0 有效,且 P1 明确不支持(质量已预调优)
+    geometryQuality: ['v3.1-20260211', 'v3.0-20250812'],
   },
   {
     value: 'hi3d',
@@ -57,6 +77,15 @@ const PROVIDERS: Array<{
       { value: 'scene-portraitv2.0', label: '人像 v2.0' },
       { value: 'scene-portraitv1.5', label: '人像 v1.5' },
     ],
+    // Hi3D 的 face 合法区间是 100000~2000000(10031002)
+    faceMax: {
+      'hitem3dv1.5': 2_000_000,
+      'hitem3dv2.0': 2_000_000,
+      'hitem3dv2.1': 2_000_000,
+      'scene-portraitv1.5': 2_000_000,
+      'scene-portraitv2.0': 2_000_000,
+      'scene-portraitv2.1': 2_000_000,
+    },
     resolutions: {
       'hitem3dv1.5': ['512', '1024', '1536', '1536pro'],
       'hitem3dv2.0': ['512', '1024', '1536', '1536pro'],
@@ -264,7 +293,11 @@ function Model3DPageInner(): React.JSX.Element {
   const [blenderSetupLoading, setBlenderSetupLoading] = useState(false)
   const [refineText, setRefineText] = useState('')
   const [provider, setProvider] = useState<Model3DProvider>('tripo')
-  const [opts, setOpts] = useState<Model3DOptions>({ texture: true, pbr: false })
+  const [opts, setOpts] = useState<Model3DOptions>({
+    texture: true,
+    pbr: false,
+    modelVersion: PROVIDERS[0].versions[0].value,
+  })
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState<{ status: string; progress: number } | null>(null)
   const [history, setHistory] = useState<Model3DHistoryItem[]>([])
@@ -279,6 +312,9 @@ function Model3DPageInner(): React.JSX.Element {
   /** Hi3D 每个模型版本的合法分辨率不同,换版本要跟着换 */
   const resolutionOptions =
     activeProvider.resolutions?.[opts.modelVersion ?? versionOptions[0].value] ?? []
+  const currentVersion = opts.modelVersion ?? versionOptions[0].value
+  const faceMax = activeProvider.faceMax?.[currentVersion] ?? 50_000
+  const supportsGeometryQuality = activeProvider.geometryQuality?.includes(currentVersion) ?? false
 
   /** 切服务商时重置成该服务商的默认版本/分辨率,并把不支持的模式拨回图生 3D。 */
   function onSwitchProvider(next: Model3DProvider): void {
@@ -572,11 +608,20 @@ function Model3DPageInner(): React.JSX.Element {
               <Select
                 value={opts.modelVersion ?? versionOptions[0].value}
                 onChange={(v) =>
-                  setOpts((o) => ({
-                    ...o,
-                    modelVersion: v || undefined,
-                    resolution: activeProvider.resolutions?.[v]?.[0],
-                  }))
+                  setOpts((o) => {
+                    const nextMax = activeProvider.faceMax?.[v] ?? 50_000
+                    return {
+                      ...o,
+                      modelVersion: v || undefined,
+                      resolution: activeProvider.resolutions?.[v]?.[0],
+                      // 换到上限更低的版本时收回超限值,否则会被 API 拒
+                      faceLimit: o.faceLimit ? Math.min(o.faceLimit, nextMax) : undefined,
+                      // P1 等版本不接受 geometry_quality,别把它带过去
+                      geometryQuality: activeProvider.geometryQuality?.includes(v)
+                        ? o.geometryQuality
+                        : undefined,
+                    }
+                  })
                 }
                 options={versionOptions}
               />
@@ -589,6 +634,20 @@ function Model3DPageInner(): React.JSX.Element {
                   value={opts.resolution ?? resolutionOptions[0]}
                   onChange={(v) => setOpts((o) => ({ ...o, resolution: v }))}
                   options={resolutionOptions.map((r) => ({ value: r, label: r }))}
+                />
+              </div>
+            )}
+
+            {supportsGeometryQuality && (
+              <div className={styles.field}>
+                <span className={styles.label}>几何质量</span>
+                <Select
+                  value={opts.geometryQuality ?? 'standard'}
+                  onChange={(v) => setOpts((o) => ({ ...o, geometryQuality: v }))}
+                  options={[
+                    { value: 'standard', label: '标准(速度与细节平衡)' },
+                    { value: 'detailed', label: 'Ultra(最高细节)' },
+                  ]}
                 />
               </div>
             )}
@@ -606,9 +665,9 @@ function Model3DPageInner(): React.JSX.Element {
               <span className={styles.label}>面数上限(0 = 自动)：{opts.faceLimit ?? 0}</span>
               <Slider
                 min={0}
-                max={50000}
-                step={1000}
-                value={opts.faceLimit ?? 0}
+                max={faceMax}
+                step={Math.max(1000, Math.round(faceMax / 100))}
+                value={Math.min(opts.faceLimit ?? 0, faceMax)}
                 onChange={(v) => setOpts((o) => ({ ...o, faceLimit: v || undefined }))}
               />
             </div>

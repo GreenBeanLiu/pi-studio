@@ -41,6 +41,8 @@ export type Model3DOptions = {
   style?: string
   /** Hi3D 专有:分辨率档位,合法值随 modelVersion 变化 */
   resolution?: string
+  /** Tripo 专有:几何质量,仅 v3.0/v3.1 支持(P1 已预调优、不接受该参数) */
+  geometryQuality?: string
 }
 
 export type Model3DHistoryItem = {
