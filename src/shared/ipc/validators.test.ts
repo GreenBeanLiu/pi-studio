@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { resolve, sep } from 'path'
-import { isContainedPath, oneOf, parseContainedPath, parseSessionPath, requiredString } from './validators'
+import {
+  isContainedPath,
+  oneOf,
+  parseContainedPath,
+  parseRoutineSave,
+  parseRoutineSchedule,
+  parseSessionPath,
+  requiredString,
+} from './validators'
 
 const ROOT = resolve('/tmp/agent/sessions/ws-abc')
 
@@ -75,5 +83,63 @@ describe('requiredString', () => {
 
   it('rejects whitespace-only input', () => {
     expect(() => requiredString('   ', '会话名称')).toThrow('会话名称不能为空')
+  })
+})
+
+describe('parseRoutineSchedule', () => {
+  it('accepts each schedule kind', () => {
+    expect(parseRoutineSchedule({ type: 'manual' })).toEqual({ type: 'manual' })
+    expect(parseRoutineSchedule({ type: 'interval', minutes: 30 })).toEqual({
+      type: 'interval',
+      minutes: 30,
+    })
+    expect(parseRoutineSchedule({ type: 'weekly', day: 0, time: '09:00' })).toEqual({
+      type: 'weekly',
+      day: 0,
+      time: '09:00',
+    })
+  })
+
+  it('rejects a zero-minute interval that would spin the scheduler', () => {
+    expect(() => parseRoutineSchedule({ type: 'interval', minutes: 0 })).toThrow('间隔分钟')
+  })
+
+  it('rejects a malformed time', () => {
+    expect(() => parseRoutineSchedule({ type: 'daily', time: '25:99' })).toThrow('HH:mm')
+  })
+
+  it('rejects an unknown type', () => {
+    expect(() => parseRoutineSchedule({ type: 'cron', expr: '* * * * *' })).toThrow('调度类型')
+  })
+})
+
+describe('parseRoutineSave', () => {
+  const base = {
+    name: '晨报',
+    steps: [{ name: '抓取', type: 'agent', prompt: 'x' }],
+    workspacePath: 'D:/Works/blog',
+    schedule: { type: 'daily', time: '09:00' },
+    notify: 'error',
+  }
+
+  it('keeps known fields and passes steps through untouched', () => {
+    const parsed = parseRoutineSave({ ...base, id: 'r1', pushEachStep: true })
+    expect(parsed.id).toBe('r1')
+    expect(parsed.pushEachStep).toBe(true)
+    expect(parsed.steps).toBe(base.steps)
+  })
+
+  // Object.assign(existing, routine) used to persist and cloud-sync any extra key
+  it('drops unknown fields', () => {
+    const parsed = parseRoutineSave({ ...base, __proto__pollution: 'x', extra: 1 })
+    expect('extra' in parsed).toBe(false)
+  })
+
+  it('rejects a missing name', () => {
+    expect(() => parseRoutineSave({ ...base, name: ' ' })).toThrow('工作流名称')
+  })
+
+  it('rejects a bad notify value', () => {
+    expect(() => parseRoutineSave({ ...base, notify: 'sometimes' })).toThrow('通知策略')
   })
 })

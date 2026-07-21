@@ -13,6 +13,7 @@ import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
+import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
 import { readRoutineMaterialFolder } from './routine-material-folder'
 import {
@@ -834,8 +835,11 @@ export function registerRoutines(): void {
 
   ipcMain.handle(
     'routines:save',
-    (_e, routine: Partial<Routine> & Pick<Routine, 'name' | 'steps' | 'workspacePath' | 'schedule' | 'notify'>) => {
-      const steps = (routine.steps ?? []).map(normalizeStep).filter(stepIsComplete)
+    (_e, payload: unknown) => {
+      // 只放行已知字段:原来直接 Object.assign(existing, routine),
+      // renderer 传什么并什么,未知字段会被持久化并同步上云
+      const routine = parseRoutineSave(payload)
+      const steps = (routine.steps as Partial<RoutineStep>[]).map(normalizeStep).filter(stepIsComplete)
       if (steps.length === 0) throw new Error('Workflow needs at least one complete step')
       const existing = routine.id ? store.routines.find((r) => r.id === routine.id) : undefined
       if (existing) {

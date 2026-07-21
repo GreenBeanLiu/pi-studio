@@ -60,3 +60,84 @@ export function parseSessionPath(value: unknown, sessionDir: string, label = '�
   if (!target.toLowerCase().endsWith('.jsonl')) throw new TypeError(`${label}必须是会话文件`)
   return target
 }
+
+// ── Routine 写入对象 ─────────────────────────────────────────────────
+// routines:save 原来直接 Object.assign(existing, routine),renderer 传什么并什么。
+// 这里只放行已知字段,并把 schedule 逐种校验 —— 一个 {type:'interval',minutes:0}
+// 会让调度器空转,一个未知字段会被原样持久化并同步上云。
+
+export type ParsedRoutineSchedule =
+  | { type: 'manual' }
+  | { type: 'interval'; minutes: number }
+  | { type: 'hourly'; minute: number }
+  | { type: 'daily'; time: string }
+  | { type: 'weekly'; day: number; time: string }
+
+const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
+
+function boundedInt(value: unknown, min: number, max: number, label: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    throw new TypeError(`${label}无效`)
+  }
+  return value
+}
+
+export function parseRoutineSchedule(value: unknown): ParsedRoutineSchedule {
+  if (!isRecord(value)) throw new TypeError('调度配置无效')
+  switch (value.type) {
+    case 'manual':
+      return { type: 'manual' }
+    case 'interval':
+      return { type: 'interval', minutes: boundedInt(value.minutes, 1, 7 * 24 * 60, '间隔分钟') }
+    case 'hourly':
+      return { type: 'hourly', minute: boundedInt(value.minute, 0, 59, '触发分钟') }
+    case 'daily': {
+      const time = requiredString(value.time, '触发时间')
+      if (!TIME_RE.test(time)) throw new TypeError('触发时间必须是 HH:mm')
+      return { type: 'daily', time }
+    }
+    case 'weekly': {
+      const time = requiredString(value.time, '触发时间')
+      if (!TIME_RE.test(time)) throw new TypeError('触发时间必须是 HH:mm')
+      return { type: 'weekly', day: boundedInt(value.day, 0, 6, '星期'), time }
+    }
+    default:
+      throw new TypeError('调度类型无效')
+  }
+}
+
+export type ParsedRoutineSave = {
+  id?: string
+  name: string
+  input?: string
+  steps: unknown[]
+  workspacePath: string
+  schedule: ParsedRoutineSchedule
+  notify: 'always' | 'error' | 'never'
+  notifyChannelId?: string
+  pushEachStep?: boolean
+}
+
+/** 只放行已知字段;steps 的逐项归一化仍由 routines.ts 的 normalizeStep 负责。 */
+export function parseRoutineSave(value: unknown): ParsedRoutineSave {
+  if (!isRecord(value)) throw new TypeError('工作流参数无效')
+  if (!Array.isArray(value.steps)) throw new TypeError('步骤列表无效')
+  const out: ParsedRoutineSave = {
+    name: requiredString(value.name, '工作流名称'),
+    steps: value.steps,
+    workspacePath: requiredString(value.workspacePath, '工作区路径'),
+    schedule: parseRoutineSchedule(value.schedule),
+    notify: oneOf(value.notify, ['always', 'error', 'never'] as const, '通知策略'),
+  }
+  const id = optionalString(value.id, '工作流 ID')
+  if (id) out.id = id
+  const input = optionalString(value.input, '输入')
+  if (input !== undefined) out.input = input
+  const channel = optionalString(value.notifyChannelId, '通知渠道')
+  if (channel !== undefined) out.notifyChannelId = channel
+  if (value.pushEachStep !== undefined) {
+    if (typeof value.pushEachStep !== 'boolean') throw new TypeError('逐步推送开关无效')
+    out.pushEachStep = value.pushEachStep
+  }
+  return out
+}
