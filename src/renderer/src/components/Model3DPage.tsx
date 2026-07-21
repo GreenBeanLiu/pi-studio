@@ -45,7 +45,7 @@ const useStyles = createStyles(({ token, css }) => ({
     min-width: 0;
     min-height: 0;
     display: grid;
-    grid-template-columns: 30fr 70fr;
+    grid-template-columns: minmax(340px, 35fr) minmax(0, 65fr);
     gap: 16px;
     padding: 16px;
     background: ${token.colorBgLayout};
@@ -56,14 +56,18 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 14px;
     min-height: 0;
     overflow-y: auto;
-    padding-right: 4px;
+    padding: 16px;
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorBgContainer};
+    border: 1px solid ${token.colorBorderSecondary};
   `,
   title: css`
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 500;
     color: ${token.colorText};
   `,
   field: css`
@@ -342,7 +346,7 @@ function Model3DPageInner(): React.JSX.Element {
     <div className={styles.page}>
       <div className={styles.panel}>
         <div className={styles.title}>
-          <Box size={18} /> 3D 生成
+          <Box size={16} /> 3D 生成
         </div>
 
         {!configured && (
@@ -537,10 +541,9 @@ function Model3DPageInner(): React.JSX.Element {
                     </Button>
                   </Tooltip>
                 )}
+                {/* 次级动作:页面唯一的主要强调点留给「生成 3D 模型」 */}
                 <Button
                   size="small"
-                  type="primary"
-                  ghost
                   icon={<Wrench size={13} />}
                   loading={generating}
                   disabled={generating || !refineText.trim()}

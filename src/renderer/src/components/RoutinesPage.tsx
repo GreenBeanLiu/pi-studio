@@ -242,7 +242,8 @@ const useStyles = createStyles(({ token, css }) => ({
     align-items: center;
     gap: 8px;
     font-size: 15px;
-    font-weight: 600;
+    line-height: 22px;
+    font-weight: 500;
     color: ${token.colorText};
   `,
   label: css`

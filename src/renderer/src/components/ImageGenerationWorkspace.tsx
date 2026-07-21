@@ -75,7 +75,8 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
   sectionTitle: css`
     font-size: 12px;
-    font-weight: 600;
+    line-height: 18px;
+    font-weight: 500;
     color: ${token.colorTextSecondary};
   `,
   modelHint: css`
@@ -104,8 +105,9 @@ const useStyles = createStyles(({ token, css }) => ({
     align-items: center;
     gap: 10px;
     margin-bottom: 12px;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 500;
     .sub { font-size: 11px; font-weight: 400; color: ${token.colorTextTertiary}; }
   `,
   rows: css`
