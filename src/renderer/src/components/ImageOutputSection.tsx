@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { createStyles } from 'antd-style'
 
 import type {
   GeminiImageAspectRatio,
@@ -23,24 +23,97 @@ const GROK_RATIOS: GrokImageAspectRatio[] = [
 const GROK_SIZES: GrokImageResolution[] = ['1K', '2K']
 const QUALITIES: ImageGenQuality[] = ['low', 'medium', 'high', 'auto', 'standard', 'hd']
 
-const gridStyle: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6 }
-const buttonStyle: CSSProperties = {
-  minWidth: 0,
-  minHeight: 38,
-  border: '1px solid rgba(0,0,0,.12)',
-  borderRadius: 6,
-  background: 'rgba(0,0,0,.025)',
-  color: 'rgba(0,0,0,.65)',
-  cursor: 'pointer',
-}
-const activeStyle: CSSProperties = { borderColor: '#1677ff', background: '#e6f4ff', color: '#1677ff' }
-const labelStyle: CSSProperties = { fontSize: 11, fontWeight: 600, color: 'rgba(0,0,0,.45)', marginTop: 2 }
+// 全部走主题 token,不再硬编码浅色 —— 之前 rgba(0,0,0,…) 在暗色下几乎不可见
+const useStyles = createStyles(({ token, css }) => ({
+  grid: css`
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  `,
+  option: css`
+    min-width: 0;
+    min-height: 38px;
+    border: 1px solid ${token.colorBorder};
+    border-radius: 6px;
+    background: ${token.colorFillQuaternary};
+    color: ${token.colorText};
+    cursor: pointer;
+    transition: all ${token.motionDurationFast};
+    &:hover:not(:disabled) {
+      border-color: ${token.colorPrimaryBorder};
+    }
+    &:disabled {
+      cursor: not-allowed;
+    }
+  `,
+  optionActive: css`
+    border-color: ${token.colorPrimary};
+    background: ${token.colorPrimaryBg};
+    color: ${token.colorPrimary};
+  `,
+  sectionTitle: css`
+    font-size: 12px;
+    font-weight: 500;
+    color: ${token.colorTextSecondary};
+  `,
+  label: css`
+    font-size: 11px;
+    font-weight: 500;
+    color: ${token.colorTextTertiary};
+    margin-top: 2px;
+  `,
+  advancedToggle: css`
+    border: 0;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    color: ${token.colorTextTertiary};
+    &:hover {
+      color: ${token.colorText};
+    }
+  `,
+  advancedGrid: css`
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    color: ${token.colorTextSecondary};
+    font-size: 12px;
+    & select,
+    & input {
+      width: 100%;
+      background: ${token.colorFillQuaternary};
+      color: ${token.colorText};
+      border: 1px solid ${token.colorBorder};
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+  `,
+  maskHint: css`
+    font-size: 11px;
+    color: ${token.colorWarning};
+  `,
+}))
 
-function Options<T extends string>({ values, value, onChange }: { values: readonly T[]; value: T; onChange: (value: T) => void }) {
+function Options<T extends string>({
+  values,
+  value,
+  onChange,
+}: {
+  values: readonly T[]
+  value: T
+  onChange: (value: T) => void
+}) {
+  const { styles, cx } = useStyles()
   return (
-    <div style={gridStyle}>
+    <div className={styles.grid}>
       {values.map((option) => (
-        <button key={option} type="button" style={{ ...buttonStyle, ...(option === value ? activeStyle : {}) }} onClick={() => onChange(option)}>
+        <button
+          key={option}
+          type="button"
+          className={cx(styles.option, option === value && styles.optionActive)}
+          onClick={() => onChange(option)}
+        >
           {option.replace('x', '×')}
         </button>
       ))}
@@ -59,60 +132,79 @@ export default function ImageOutputSection({
   hasMask: boolean
   onChange: (patch: Partial<ImageOutputSettings>) => void
 }) {
+  const { styles, cx } = useStyles()
   const model = imageModel(modelKey)
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(0,0,0,0.55)' }}>输出参数</div>
+      <div className={styles.sectionTitle}>输出参数</div>
 
-      {model.parameters === 'gpt' && <>
-        <span style={labelStyle}>尺寸</span>
-        <Options values={GPT_SIZES} value={value.size} onChange={(size) => onChange({ size })} />
-        <span style={labelStyle}>质量</span>
-        <Options values={QUALITIES} value={value.quality} onChange={(quality) => onChange({ quality })} />
-        <button type="button" style={{ border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'rgba(0,0,0,.45)' }} onClick={() => onChange({ advanced: !value.advanced })}>
-          GPT Image 2 高级参数 {value.advanced ? '▴' : '▾'}
-        </button>
-        {value.advanced && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 8 }}>
-            <label>背景<select value={value.background} onChange={(event) => onChange({ background: event.target.value as ImageOutputSettings['background'] })}><option>auto</option><option>transparent</option><option>opaque</option></select></label>
-            <label>格式<select value={value.outputFormat} onChange={(event) => onChange({ outputFormat: event.target.value as ImageOutputSettings['outputFormat'] })}><option>png</option><option>jpeg</option><option>webp</option></select></label>
-            <label>压缩<input type="number" min={0} max={100} disabled={value.outputFormat === 'png'} value={value.outputCompression} onChange={(event) => onChange({ outputCompression: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></label>
-            <label>审核<select value={value.moderation} onChange={(event) => onChange({ moderation: event.target.value as ImageOutputSettings['moderation'] })}><option>auto</option><option>low</option></select></label>
-            <label>响应<select value={value.responseFormat} onChange={(event) => onChange({ responseFormat: event.target.value as ImageOutputSettings['responseFormat'] })}><option>b64_json</option><option>url</option></select></label>
-            <label>用户<input maxLength={64} value={value.requestUser} onChange={(event) => onChange({ requestUser: event.target.value })} /></label>
-          </div>
-        )}
-      </>}
+      {model.parameters === 'gpt' && (
+        <>
+          <span className={styles.label}>尺寸</span>
+          <Options values={GPT_SIZES} value={value.size} onChange={(size) => onChange({ size })} />
+          <span className={styles.label}>质量</span>
+          <Options
+            values={QUALITIES}
+            value={value.quality}
+            onChange={(quality) => onChange({ quality })}
+          />
+          <button
+            type="button"
+            className={styles.advancedToggle}
+            onClick={() => onChange({ advanced: !value.advanced })}
+          >
+            GPT Image 2 高级参数 {value.advanced ? '▴' : '▾'}
+          </button>
+          {value.advanced && (
+            <div className={styles.advancedGrid}>
+              <label>背景<select value={value.background} onChange={(event) => onChange({ background: event.target.value as ImageOutputSettings['background'] })}><option>auto</option><option>transparent</option><option>opaque</option></select></label>
+              <label>格式<select value={value.outputFormat} onChange={(event) => onChange({ outputFormat: event.target.value as ImageOutputSettings['outputFormat'] })}><option>png</option><option>jpeg</option><option>webp</option></select></label>
+              <label>压缩<input type="number" min={0} max={100} disabled={value.outputFormat === 'png'} value={value.outputCompression} onChange={(event) => onChange({ outputCompression: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></label>
+              <label>审核<select value={value.moderation} onChange={(event) => onChange({ moderation: event.target.value as ImageOutputSettings['moderation'] })}><option>auto</option><option>low</option></select></label>
+              <label>响应<select value={value.responseFormat} onChange={(event) => onChange({ responseFormat: event.target.value as ImageOutputSettings['responseFormat'] })}><option>b64_json</option><option>url</option></select></label>
+              <label>用户<input maxLength={64} value={value.requestUser} onChange={(event) => onChange({ requestUser: event.target.value })} /></label>
+            </div>
+          )}
+        </>
+      )}
 
-      {model.parameters === 'gemini' && <>
-        <span style={labelStyle}>画幅比例</span>
-        <Options values={GEMINI_RATIOS} value={value.geminiAspectRatio} onChange={(geminiAspectRatio) => onChange({ geminiAspectRatio })} />
-        <span style={labelStyle}>分辨率</span>
-        <Options values={GEMINI_SIZES} value={value.geminiImageSize} onChange={(geminiImageSize) => onChange({ geminiImageSize })} />
-      </>}
+      {model.parameters === 'gemini' && (
+        <>
+          <span className={styles.label}>画幅比例</span>
+          <Options values={GEMINI_RATIOS} value={value.geminiAspectRatio} onChange={(geminiAspectRatio) => onChange({ geminiAspectRatio })} />
+          <span className={styles.label}>分辨率</span>
+          <Options values={GEMINI_SIZES} value={value.geminiImageSize} onChange={(geminiImageSize) => onChange({ geminiImageSize })} />
+        </>
+      )}
 
-      {model.parameters === 'grok' && <>
-        <span style={labelStyle}>画幅比例</span>
-        <Options values={GROK_RATIOS} value={value.grokAspectRatio} onChange={(grokAspectRatio) => onChange({ grokAspectRatio })} />
-        <span style={labelStyle}>分辨率</span>
-        <Options values={GROK_SIZES} value={value.grokImageSize} onChange={(grokImageSize) => onChange({ grokImageSize })} />
-      </>}
+      {model.parameters === 'grok' && (
+        <>
+          <span className={styles.label}>画幅比例</span>
+          <Options values={GROK_RATIOS} value={value.grokAspectRatio} onChange={(grokAspectRatio) => onChange({ grokAspectRatio })} />
+          <span className={styles.label}>分辨率</span>
+          <Options values={GROK_SIZES} value={value.grokImageSize} onChange={(grokImageSize) => onChange({ grokImageSize })} />
+        </>
+      )}
 
-      <span style={labelStyle}>一次生成</span>
-      <div style={gridStyle}>
+      <span className={styles.label}>一次生成</span>
+      <div className={styles.grid}>
         {[1, 2, 3, 4].map((count) => (
           <button
             key={count}
             type="button"
             disabled={hasMask && count !== 1}
-            style={{ ...buttonStyle, ...(count === (hasMask ? 1 : value.count) ? activeStyle : {}), opacity: hasMask && count !== 1 ? 0.4 : 1 }}
+            className={cx(
+              styles.option,
+              count === (hasMask ? 1 : value.count) && styles.optionActive,
+            )}
+            style={hasMask && count !== 1 ? { opacity: 0.4 } : undefined}
             onClick={() => onChange({ count })}
           >
             {count} 张
           </button>
         ))}
       </div>
-      {hasMask && <span style={{ fontSize: 11, color: '#d48806' }}>蒙版局部重绘固定输出 1 张</span>}
+      {hasMask && <span className={styles.maskHint}>蒙版局部重绘固定输出 1 张</span>}
     </section>
   )
 }
