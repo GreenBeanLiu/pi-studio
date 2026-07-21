@@ -16,14 +16,56 @@ import {
   Tooltip,
 } from 'antd'
 import { Box, Sparkles, Trash2, ImagePlus, X, Wrench } from 'lucide-react'
-import { api, type BlenderSetupStatus, type Model3DHistoryItem, type Model3DOptions } from '../lib/api'
+import {
+  api,
+  type BlenderSetupStatus,
+  type Model3DHistoryItem,
+  type Model3DOptions,
+  type Model3DProvider,
+} from '../lib/api'
 import { assessReferenceImage, normalizeReferenceImage } from '../lib/reference-check'
 import ModelViewer from './ModelViewer'
 
-const MODEL_VERSIONS = [
-  { value: '', label: '默认(最新)' },
-  { value: 'v2.5-20250123', label: 'v2.5' },
-  { value: 'v2.0-20240919', label: 'v2.0' },
+/** 云端 3D 服务商。Hi3D(hitem3d)只做图生 3D,没有文生 3D 接口。 */
+const PROVIDERS: Array<{
+  value: Model3DProvider
+  label: string
+  supportsText: boolean
+  versions: Array<{ value: string; label: string }>
+  /** 每个模型版本各自的合法分辨率枚举(Hi3D 传错会被拒) */
+  resolutions?: Record<string, string[]>
+}> = [
+  {
+    value: 'tripo',
+    label: 'Tripo',
+    supportsText: true,
+    versions: [
+      { value: '', label: '默认(最新)' },
+      { value: 'v2.5-20250123', label: 'v2.5' },
+      { value: 'v2.0-20240919', label: 'v2.0' },
+    ],
+  },
+  {
+    value: 'hi3d',
+    label: 'Hi3D',
+    supportsText: false,
+    versions: [
+      { value: 'hitem3dv2.1', label: '通用 v2.1' },
+      { value: 'hitem3dv2.0', label: '通用 v2.0' },
+      { value: 'hitem3dv1.5', label: '通用 v1.5' },
+      { value: 'scene-portraitv2.1', label: '人像 v2.1' },
+      { value: 'scene-portraitv2.0', label: '人像 v2.0' },
+      { value: 'scene-portraitv1.5', label: '人像 v1.5' },
+    ],
+    resolutions: {
+      'hitem3dv1.5': ['512', '1024', '1536', '1536pro'],
+      'hitem3dv2.0': ['512', '1024', '1536', '1536pro'],
+      'hitem3dv2.1': ['1536fast', '1536pro'],
+      'scene-portraitv1.5': ['1536'],
+      'scene-portraitv2.0': ['1536pro'],
+      'scene-portraitv2.1': ['1536profast', '1536pro'],
+    },
+  },
 ]
 
 const STATUS_TEXT: Record<string, string> = {
@@ -213,6 +255,7 @@ function Model3DPageInner(): React.JSX.Element {
   const { message } = AntApp.useApp()
 
   const [configured, setConfigured] = useState(true)
+  const [providerReady, setProviderReady] = useState<Record<string, boolean> | null>(null)
   const [mode, setMode] = useState<'text' | 'image' | 'code' | 'blender'>('text')
   const [prompt, setPrompt] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
@@ -220,6 +263,7 @@ function Model3DPageInner(): React.JSX.Element {
   const [blenderStatus, setBlenderStatus] = useState<BlenderSetupStatus | null>(null)
   const [blenderSetupLoading, setBlenderSetupLoading] = useState(false)
   const [refineText, setRefineText] = useState('')
+  const [provider, setProvider] = useState<Model3DProvider>('tripo')
   const [opts, setOpts] = useState<Model3DOptions>({ texture: true, pbr: false })
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState<{ status: string; progress: number } | null>(null)
@@ -227,8 +271,35 @@ function Model3DPageInner(): React.JSX.Element {
   const [selected, setSelected] = useState<Model3DHistoryItem | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const activeProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
+  // 只有云端模式(文生/图生)依赖服务商密钥;代码建模/Blender 走本地 agent
+  const cloudProviderMissing =
+    (mode === 'text' || mode === 'image') && providerReady?.[provider] === false
+  const versionOptions = activeProvider.versions
+  /** Hi3D 每个模型版本的合法分辨率不同,换版本要跟着换 */
+  const resolutionOptions =
+    activeProvider.resolutions?.[opts.modelVersion ?? versionOptions[0].value] ?? []
+
+  /** 切服务商时重置成该服务商的默认版本/分辨率,并把不支持的模式拨回图生 3D。 */
+  function onSwitchProvider(next: Model3DProvider): void {
+    setProvider(next)
+    const target = PROVIDERS.find((p) => p.value === next)
+    if (!target) return
+    const firstVersion = target.versions[0].value
+    const firstRes = target.resolutions?.[firstVersion]?.[0]
+    setOpts((o) => ({
+      ...o,
+      modelVersion: firstVersion || undefined,
+      resolution: firstRes,
+    }))
+    if (!target.supportsText && mode === 'text') setMode('image')
+  }
+
   useEffect(() => {
-    void api.model3d.health().then((h) => setConfigured(h.configured))
+    void api.model3d.health().then((h) => {
+      setConfigured(h.configured)
+      setProviderReady(h.providers ?? null)
+    })
     void api.model3d.history().then((items) => {
       setHistory(items)
       if (items[0]) setSelected(items[0])
@@ -292,6 +363,7 @@ function Model3DPageInner(): React.JSX.Element {
               mode,
               prompt,
               ...(mode === 'image' && imageDataUrl ? { imageDataUrl } : {}),
+              provider,
               options: opts,
             })
       if ('error' in res) {
@@ -355,17 +427,41 @@ function Model3DPageInner(): React.JSX.Element {
           </div>
         )}
 
+        <div className={styles.field}>
+          <span className={styles.label}>服务商</span>
+          <Segmented
+            block
+            value={provider}
+            onChange={(v) => onSwitchProvider(v as Model3DProvider)}
+            options={PROVIDERS.map((p) => ({
+              label: providerReady && providerReady[p.value] === false ? `${p.label}(未配置)` : p.label,
+              value: p.value,
+            }))}
+          />
+        </div>
+
         <Segmented
           block
           value={mode}
           onChange={(v) => setMode(v as 'text' | 'image' | 'code' | 'blender')}
           options={[
-            { label: '文生 3D', value: 'text' },
+            {
+              label: '文生 3D',
+              value: 'text',
+              // Hi3D 是纯 image-to-3D 服务
+              disabled: !activeProvider.supportsText,
+            },
             { label: '图生 3D', value: 'image' },
             { label: '代码建模', value: 'code' },
             { label: 'Blender', value: 'blender' },
           ]}
         />
+
+        {!activeProvider.supportsText && (
+          <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
+            {activeProvider.label} 只支持图生 3D。要用文字直接生成,请切到 Tripo。
+          </div>
+        )}
 
         {mode === 'blender' && (
           <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
@@ -474,11 +570,28 @@ function Model3DPageInner(): React.JSX.Element {
             <div className={styles.field}>
               <span className={styles.label}>模型版本</span>
               <Select
-                value={opts.modelVersion ?? ''}
-                onChange={(v) => setOpts((o) => ({ ...o, modelVersion: v || undefined }))}
-                options={MODEL_VERSIONS}
+                value={opts.modelVersion ?? versionOptions[0].value}
+                onChange={(v) =>
+                  setOpts((o) => ({
+                    ...o,
+                    modelVersion: v || undefined,
+                    resolution: activeProvider.resolutions?.[v]?.[0],
+                  }))
+                }
+                options={versionOptions}
               />
             </div>
+
+            {resolutionOptions.length > 0 && (
+              <div className={styles.field}>
+                <span className={styles.label}>分辨率</span>
+                <Select
+                  value={opts.resolution ?? resolutionOptions[0]}
+                  onChange={(v) => setOpts((o) => ({ ...o, resolution: v }))}
+                  options={resolutionOptions.map((r) => ({ value: r, label: r }))}
+                />
+              </div>
+            )}
 
             <div className={styles.row}>
               <span className={styles.label}>贴图纹理</span>
@@ -502,11 +615,25 @@ function Model3DPageInner(): React.JSX.Element {
           </>
         )}
 
+        {/* 云端服务商未配置密钥时直接拦住,不让用户点了才拿到一个服务端错误 */}
+        {cloudProviderMissing && (
+          <Alert
+            type="warning"
+            showIcon
+            message={`${activeProvider.label} 尚未配置密钥`}
+            description={
+              activeProvider.value === 'hi3d'
+                ? '在服务端 .env 里填 HI3D_CLIENT_ID / HI3D_CLIENT_SECRET 后重启 worker。'
+                : '在服务端 .env 里填 TRIPO_SECRET 后重启 worker。'
+            }
+          />
+        )}
+
         <Button
           type="primary"
           icon={<Sparkles size={15} />}
           loading={generating}
-          disabled={generating}
+          disabled={generating || cloudProviderMissing}
           onClick={onGenerate}
           block
         >

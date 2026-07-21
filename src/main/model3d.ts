@@ -24,7 +24,14 @@ function indexPath(): string {
   return join(modelsDir(), 'index.json')
 }
 
-export type Model3DHealth = { configured: boolean }
+export type Model3DHealth = {
+  configured: boolean
+  /** 各 3D 服务商密钥是否就绪;探测失败时缺失 */
+  providers?: Record<Model3DProvider, boolean>
+}
+
+/** 云端 3D 服务商。Hi3D 是纯 image-to-3D,没有文生 3D 接口。 */
+export type Model3DProvider = 'tripo' | 'hi3d'
 
 export type Model3DOptions = {
   modelVersion?: string
@@ -32,6 +39,8 @@ export type Model3DOptions = {
   texture?: boolean
   pbr?: boolean
   style?: string
+  /** Hi3D 专有:分辨率档位,合法值随 modelVersion 变化 */
+  resolution?: string
 }
 
 export type Model3DHistoryItem = {
@@ -80,6 +89,7 @@ type GeneratePayload = {
   mode: 'text' | 'image'
   prompt: string
   imageDataUrl?: string
+  provider?: Model3DProvider
   options?: Model3DOptions
 }
 
@@ -151,6 +161,7 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
         body: JSON.stringify({
           ...(imageUrl ? { imageUrl } : {}),
           ...(payload.prompt ? { prompt: payload.prompt } : {}),
+          provider: payload.provider ?? 'tripo',
           options: payload.options ?? {},
         }),
       },
@@ -266,9 +277,30 @@ async function saveThumbnail(id: string, dataUrl: string): Promise<Model3DResult
 }
 
 export function registerModel3d(): void {
-  ipcMain.handle('model3d:health', (): Model3DHealth => ({
-    configured: getCloudConnection().available,
-  }))
+  ipcMain.handle('model3d:health', async (): Promise<Model3DHealth> => {
+    const configured = getCloudConnection().available
+    // 各服务商的密钥在服务端(worker 与 API 共用 .env),本地看不到,问一次云端。
+    let providers: Model3DHealth['providers']
+    if (configured) {
+      try {
+        const resp = await cloudFetch('/imagegen/health', {}, 3_000)
+        if (resp.ok) {
+          const body = (await resp.json()) as {
+            model3dProviders?: Record<string, boolean>
+          }
+          if (body.model3dProviders) {
+            providers = {
+              tripo: !!body.model3dProviders.tripo,
+              hi3d: !!body.model3dProviders.hi3d,
+            }
+          }
+        }
+      } catch {
+        // 探测失败就不报告服务商状态,前端按"未知"处理(不拦生成)
+      }
+    }
+    return { configured, ...(providers ? { providers } : {}) }
+  })
   ipcMain.handle('model3d:generate', (_e, payload: GeneratePayload) => generate(payload))
   ipcMain.handle('model3d:history', (): Model3DHistoryItem[] => loadHistory())
   ipcMain.handle('model3d:saveThumbnail', (_e, payload: { id: string; dataUrl: string }) =>

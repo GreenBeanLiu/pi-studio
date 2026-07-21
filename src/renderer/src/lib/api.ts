@@ -227,6 +227,7 @@ declare global {
           mode: 'text' | 'image' | 'code' | 'blender'
           prompt: string
           imageDataUrl?: string
+          provider?: Model3DProvider
           options?: Model3DOptions
         }) => Promise<Model3DHistoryItem | { error: string }>
         generateBlender: (payload: {
@@ -281,7 +282,11 @@ export type GrokImageAspectRatio =
   | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
 export type GrokImageResolution = '1K' | '2K'
 
-export type Model3DHealth = { configured: boolean }
+export type Model3DHealth = {
+  configured: boolean
+  /** 各 3D 服务商密钥是否就绪;探测失败时缺失 */
+  providers?: Record<Model3DProvider, boolean>
+}
 
 export type BlenderSetupStatus = {
   connected: boolean
@@ -293,12 +298,17 @@ export type BlenderSetupStatus = {
   error?: string
 }
 
+/** 云端 3D 服务商。Hi3D 是纯 image-to-3D,没有文生 3D 接口。 */
+export type Model3DProvider = 'tripo' | 'hi3d'
+
 export type Model3DOptions = {
   modelVersion?: string
   faceLimit?: number
   texture?: boolean
   pbr?: boolean
   style?: string
+  /** Hi3D 专有:分辨率档位,合法值随 modelVersion 变化 */
+  resolution?: string
 }
 
 export type Model3DFidelity = { score: number; notes: string; model: string }

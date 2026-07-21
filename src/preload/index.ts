@@ -218,6 +218,7 @@ const api = {
       mode: 'text' | 'image'
       prompt: string
       imageDataUrl?: string
+      provider?: 'tripo' | 'hi3d'
       options?: Record<string, unknown>
     }) => ipcRenderer.invoke('model3d:generate', payload),
     generateCode: (payload: { prompt: string; sourceId?: string }) =>
