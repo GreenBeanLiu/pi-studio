@@ -2299,6 +2299,10 @@ export default function ChatPane({
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // 输入法组字期间不拦任何键:此时 Enter 是"确认候选词"、方向键是"翻候选",
+    // 都不该触发发送或驱动 slash 面板。否则中文输入按回车选词会把半截消息发出去。
+    if (e.nativeEvent.isComposing) return
+
     // Slash palette captures navigation keys while open
     if (slashMatches.length > 0) {
       if (e.key === 'ArrowDown') {

@@ -316,6 +316,8 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
                     onChange={(e) => setRenameValue(e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => {
+                      // 组字期间的 Enter 是确认候选词,不是提交重命名
+                      if (e.nativeEvent.isComposing) return
                       if (e.key === 'Enter') commitRename()
                       if (e.key === 'Escape') setRenaming(false)
                     }}
