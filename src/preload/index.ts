@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { LlmProfileSavePayload, SettingsSaveInput } from '../shared/contracts'
+import type {
+  AgentStatusEvent,
+  DesktopApi,
+  Model3DOptions,
+  Model3DProvider,
+  PiRuntimeEvent,
+  RemoteControlSnapshot,
+  RoutineReviewRequest,
+  RoutineRun,
+  RoutineStepProgress,
+} from '../shared/ipc/contract'
 
 const api = {
   // 窗口控制
@@ -66,8 +77,8 @@ const api = {
     getStatus: () => ipcRenderer.invoke('remote:getStatus'),
     setEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:setEnabled', enabled),
     generatePairingCode: () => ipcRenderer.invoke('remote:generatePairingCode'),
-    onStatus: (cb: (snap: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, snap: unknown): void => cb(snap)
+    onStatus: (cb: (snap: RemoteControlSnapshot) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, snap: RemoteControlSnapshot): void => cb(snap)
       ipcRenderer.on('remote:status', handler)
       return () => ipcRenderer.off('remote:status', handler)
     },
@@ -135,13 +146,13 @@ const api = {
     setFollowUpMode: (mode: string) => ipcRenderer.invoke('pi:setFollowUpMode', mode),
     setAutoCompaction: (enabled: boolean) => ipcRenderer.invoke('pi:setAutoCompaction', enabled),
     compact: () => ipcRenderer.invoke('pi:compact'),
-    onEvent: (cb: (event: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+    onEvent: (cb: (event: PiRuntimeEvent) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: PiRuntimeEvent) => cb(data)
       ipcRenderer.on('pi:event', handler)
       return () => ipcRenderer.off('pi:event', handler)
     },
-    onStatus: (cb: (event: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+    onStatus: (cb: (event: AgentStatusEvent) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: AgentStatusEvent) => cb(data)
       ipcRenderer.on('agent:status', handler)
       return () => ipcRenderer.off('agent:status', handler)
     },
@@ -154,25 +165,28 @@ const api = {
     toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('routines:toggle', id, enabled),
     runNow: (id: string) => ipcRenderer.invoke('routines:runNow', id),
     state: () => ipcRenderer.invoke('routines:state'),
-    onRunFinished: (cb: (run: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+    onRunFinished: (cb: (run: RoutineRun) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: RoutineRun) => cb(data)
       ipcRenderer.on('routines:runFinished', handler)
       return () => ipcRenderer.off('routines:runFinished', handler)
     },
-    onStepProgress: (cb: (progress: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+    onStepProgress: (cb: (progress: RoutineStepProgress) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: RoutineStepProgress) => cb(data)
       ipcRenderer.on('routines:stepProgress', handler)
       return () => ipcRenderer.off('routines:stepProgress', handler)
     },
     reviewRespond: (reviewId: string, decision: 'approve' | 'reject', comment?: string) =>
       ipcRenderer.invoke('routines:reviewRespond', reviewId, decision, comment),
-    onReviewRequested: (cb: (request: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+    onReviewRequested: (cb: (request: RoutineReviewRequest) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: RoutineReviewRequest) => cb(data)
       ipcRenderer.on('routines:reviewRequested', handler)
       return () => ipcRenderer.off('routines:reviewRequested', handler)
     },
-    onReviewCancelled: (cb: (payload: unknown) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data)
+    onReviewCancelled: (cb: (payload: { reviewId: string; reason: string }) => void) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        data: { reviewId: string; reason: string },
+      ) => cb(data)
       ipcRenderer.on('routines:reviewCancelled', handler)
       return () => ipcRenderer.off('routines:reviewCancelled', handler)
     },
@@ -215,11 +229,11 @@ const api = {
   model3d: {
     health: () => ipcRenderer.invoke('model3d:health'),
     generate: (payload: {
-      mode: 'text' | 'image'
+      mode: 'text' | 'image' | 'code' | 'blender'
       prompt: string
       imageDataUrl?: string
-      provider?: 'tripo' | 'hi3d'
-      options?: Record<string, unknown>
+      provider?: Model3DProvider
+      options?: Model3DOptions
     }) => ipcRenderer.invoke('model3d:generate', payload),
     generateCode: (payload: { prompt: string; sourceId?: string }) =>
       ipcRenderer.invoke('model3d:generateCode', payload),
@@ -272,7 +286,7 @@ const api = {
     },
     install: () => ipcRenderer.send('update:install'),
   },
-}
+} satisfies DesktopApi
 
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('electron', electronAPI)
