@@ -11,9 +11,8 @@ type Props = {
 
 const useStyles = createStyles(({ token, css }) => ({
   sidebar: css`
-    /* 与 Routines/生图/3D 页的比例布局对齐:随窗口缩放,但会话列表不需要 35% 那么宽。
-       1480 默认窗口下 20% ≈ 296px,聊天区剩 1120px = ChatPane 内容 max-width,正好占满。 */
-    width: clamp(232px, 20%, 340px);
+    /* 与标题栏品牌区同宽,两者左右边界必须精确对齐(见 TitleBar 的 brand)。 */
+    width: clamp(240px, 19vw, 312px);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -23,20 +22,27 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
 
   header: css`
-    height: 40px;
+    height: 44px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 6px;
     padding: 0 10px 0 14px;
     border-bottom: 1px solid ${token.colorBorderSecondary};
   `,
 
   headerTitle: css`
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     color: ${token.colorTextSecondary};
     user-select: none;
+  `,
+
+  headerCount: css`
+    font-size: 11px;
+    color: ${token.colorTextQuaternary};
+    user-select: none;
+    margin-right: auto;
   `,
 
   iconBtn: css`
@@ -73,12 +79,15 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 2px;
   `,
 
+  /* 选中态只用一层背景,不再叠边框 —— 行本身就是页面内容,不需要卡片化。 */
   item: css`
     position: relative;
+    display: flex;
+    gap: 8px;
+    min-height: 50px;
     padding: 8px 10px;
     border-radius: ${token.borderRadius}px;
     cursor: pointer;
-    border: 1px solid transparent;
     transition: background ${token.motionDurationFast};
 
     &:hover {
@@ -92,16 +101,38 @@ const useStyles = createStyles(({ token, css }) => ({
 
   itemActive: css`
     background: ${token.colorFillSecondary} !important;
-    border-color: ${token.colorBorderSecondary};
+  `,
+
+  /* 6px 状态点:当前会话蓝色,其他弱灰 */
+  dot: css`
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-top: 7px;
+    background: ${token.colorTextQuaternary};
+  `,
+
+  dotActive: css`
+    background: ${token.colorPrimary};
+  `,
+
+  itemBody: css`
+    flex: 1;
+    min-width: 0;
   `,
 
   itemTitle: css`
     font-size: 13px;
-    color: ${token.colorText};
+    color: ${token.colorTextSecondary};
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.5;
+  `,
+
+  itemTitleActive: css`
+    color: ${token.colorText};
   `,
 
   itemMeta: css`
@@ -111,6 +142,7 @@ const useStyles = createStyles(({ token, css }) => ({
     user-select: none;
   `,
 
+  /* 操作区背景跟随所在行,不再自带一块独立底色 */
   actions: css`
     position: absolute;
     top: 6px;
@@ -119,7 +151,7 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 2px;
     opacity: 0;
     transition: opacity ${token.motionDurationFast};
-    background: ${token.colorBgLayout};
+    background: inherit;
     border-radius: ${token.borderRadiusSM}px;
   `,
 
@@ -257,6 +289,7 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
     <div className={styles.sidebar}>
       <div className={styles.header}>
         <span className={styles.headerTitle}>会话</span>
+        <span className={styles.headerCount}>{sessions.length > 0 ? sessions.length : ''}</span>
         <button className={styles.iconBtn} onClick={handleNewSession} disabled={busy} title="新建会话">
           <SquarePen size={14} />
         </button>
@@ -272,25 +305,30 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
               className={cx(styles.item, isActive && styles.itemActive)}
               onClick={() => handleSwitch(s)}
             >
-              {isActive && renaming ? (
-                <input
-                  ref={renameInputRef}
-                  className={styles.renameInput}
-                  value={renameValue}
-                  placeholder="会话名称"
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename()
-                    if (e.key === 'Escape') setRenaming(false)
-                  }}
-                  onBlur={() => setRenaming(false)}
-                />
-              ) : (
-                <div className={styles.itemTitle}>{s.name || s.firstMessage}</div>
-              )}
-              <div className={styles.itemMeta}>
-                {relativeTime(s.modified)} · {s.messageCount} 条
+              <div className={cx(styles.dot, isActive && styles.dotActive)} />
+              <div className={styles.itemBody}>
+                {isActive && renaming ? (
+                  <input
+                    ref={renameInputRef}
+                    className={styles.renameInput}
+                    value={renameValue}
+                    placeholder="会话名称"
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename()
+                      if (e.key === 'Escape') setRenaming(false)
+                    }}
+                    onBlur={() => setRenaming(false)}
+                  />
+                ) : (
+                  <div className={cx(styles.itemTitle, isActive && styles.itemTitleActive)}>
+                    {s.name || s.firstMessage}
+                  </div>
+                )}
+                <div className={styles.itemMeta}>
+                  {relativeTime(s.modified)} · {s.messageCount} 条消息
+                </div>
               </div>
 
               <div className={cx(styles.actions, 'session-actions')}>

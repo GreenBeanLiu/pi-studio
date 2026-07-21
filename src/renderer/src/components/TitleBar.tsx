@@ -23,7 +23,7 @@ type Props = {
 
 const useStyles = createStyles(({ token, css }) => ({
   bar: css`
-    height: 44px;
+    height: 40px;
     display: flex;
     align-items: center;
     flex-shrink: 0;
@@ -33,17 +33,51 @@ const useStyles = createStyles(({ token, css }) => ({
     user-select: none;
   `,
 
+  /* 与 NavRail 同宽 */
   railOffset: css`
-    width: 64px;
+    width: 56px;
     flex-shrink: 0;
+  `,
+
+  /* 与 SessionSidebar 同宽,两者左右边界必须精确对齐 */
+  brand: css`
+    width: clamp(240px, 19vw, 312px);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 14px;
+    min-width: 0;
+  `,
+
+  appLabel: css`
+    font-size: 13px;
+    font-weight: 500;
+    color: ${token.colorText};
+    letter-spacing: 0.01em;
+  `,
+
+  appVersion: css`
+    font-size: 11px;
+    color: ${token.colorTextQuaternary};
+  `,
+
+  /* 工作区上下文:主内容区上方,不再居中放应用名 */
+  ctxZone: css`
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    min-width: 0;
   `,
 
   workspaceCtx: css`
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 12px 0 4px;
-    height: 100%;
+    gap: 7px;
+    padding: 4px 8px;
+    max-width: 100%;
     cursor: pointer;
     -webkit-app-region: no-drag;
     border-radius: ${token.borderRadiusSM}px;
@@ -61,23 +95,7 @@ const useStyles = createStyles(({ token, css }) => ({
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 240px;
-  `,
-
-  centerZone: css`
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 16px;
-    min-width: 0;
-  `,
-
-  appLabel: css`
-    font-size: 13px;
-    font-weight: 400;
-    color: ${token.colorTextSecondary};
-    letter-spacing: 0.01em;
+    max-width: 260px;
   `,
 
   rightZone: css`
@@ -157,6 +175,7 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  /* 保留绿色语义,去掉边框 */
   sandboxBadge: css`
     display: inline-flex;
     align-items: center;
@@ -167,7 +186,6 @@ const useStyles = createStyles(({ token, css }) => ({
     line-height: 1.4;
     color: ${token.colorSuccess};
     background: ${token.colorSuccessBg};
-    border: 1px solid ${token.colorSuccessBorder};
     -webkit-app-region: no-drag;
     flex-shrink: 0;
   `,
@@ -189,44 +207,42 @@ export default function TitleBar({ workspace, sandboxMode, update, onInstall, on
     <div className={styles.bar}>
       <div className={styles.railOffset} />
 
-      {workspace && (
-        <Tooltip title={workspace.path} placement="bottom">
-          <div className={styles.workspaceCtx} onClick={onSwitchWorkspace}>
-            <FolderOpen size={14} color={token.colorTextSecondary} />
-            <span className={styles.workspaceName}>{workspace.name}</span>
-          </div>
-        </Tooltip>
-      )}
-      {workspace && sandboxMode && (
-        <Tooltip
-          title={
-            sandboxMode === 'wsl'
-              ? 'agent 运行在 WSL2 + bubblewrap 沙箱里:整盘只读、仅工作区可写,出站经主机白名单代理'
-              : 'agent 运行在 Docker 沙箱里(回退方案)'
-          }
-          placement="bottom"
-        >
-          <span className={styles.sandboxBadge}>
-            <ShieldCheck size={12} />
-            沙箱
-          </span>
-        </Tooltip>
-      )}
+      <div className={styles.brand}>
+        <img
+          src={appIcon}
+          alt=""
+          width={16}
+          height={16}
+          style={{ borderRadius: 4, display: 'block', flexShrink: 0 }}
+        />
+        <span className={styles.appLabel}>pi-studio</span>
+        {version && <span className={styles.appVersion}>v{version}</span>}
+      </div>
 
-      <div className={styles.centerZone}>
-        <span className={styles.appLabel} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <img
-            src={appIcon}
-            alt=""
-            width={16}
-            height={16}
-            style={{ borderRadius: 4, display: 'block' }}
-          />
-          pi-studio
-          {version && (
-            <span style={{ opacity: 0.55, fontSize: 11 }}>v{version}</span>
-          )}
-        </span>
+      <div className={styles.ctxZone}>
+        {workspace && (
+          <Tooltip title={workspace.path} placement="bottom">
+            <div className={styles.workspaceCtx} onClick={onSwitchWorkspace}>
+              <FolderOpen size={14} color={token.colorTextSecondary} />
+              <span className={styles.workspaceName}>{workspace.name}</span>
+            </div>
+          </Tooltip>
+        )}
+        {workspace && sandboxMode && (
+          <Tooltip
+            title={
+              sandboxMode === 'wsl'
+                ? 'agent 运行在 WSL2 + bubblewrap 沙箱里:整盘只读、仅工作区可写,出站经主机白名单代理'
+                : 'agent 运行在 Docker 沙箱里(回退方案)'
+            }
+            placement="bottom"
+          >
+            <span className={styles.sandboxBadge}>
+              <ShieldCheck size={12} />
+              沙箱
+            </span>
+          </Tooltip>
+        )}
       </div>
 
       <div className={styles.rightZone}>

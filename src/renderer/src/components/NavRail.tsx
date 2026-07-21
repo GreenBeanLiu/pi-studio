@@ -6,72 +6,75 @@ import type { Workspace } from '../lib/api'
 
 const useStyles = createStyles(({ token, css }) => ({
   rail: css`
-    width: 64px;
+    width: 56px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     background: ${token.colorBgLayout};
     border-right: 1px solid ${token.colorBorderSecondary};
-    padding: 6px 0 8px;
+    padding: 8px 0 10px;
     gap: 0;
   `,
 
   iconBtn: css`
     flex-shrink: 0;
     margin-bottom: 4px;
-    color: ${token.colorTextSecondary};
+    color: ${token.colorTextTertiary};
+
+    &:hover {
+      color: ${token.colorText};
+    }
   `,
 
+  // 选中态用中性填充,蓝色留给运行状态/当前会话/主要动作
   iconBtnActive: css`
-    color: ${token.colorPrimary};
-    background: ${token.colorPrimaryBg};
+    color: ${token.colorText};
+    background: ${token.colorFillSecondary};
   `,
 
   spacer: css`
     flex: 1;
   `,
 
-  wsBtnWrap: css`
-    position: relative;
-    width: 44px;
-    height: 44px;
+  // 工作区按钮与功能入口之间的短分隔线
+  railDivider: css`
+    width: 24px;
+    height: 1px;
     flex-shrink: 0;
-    margin-bottom: 12px;
+    background: ${token.colorBorderSecondary};
+    margin: 0 0 10px;
+  `,
+
+  wsBtnWrap: css`
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    margin-bottom: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
   `,
 
-  wsGlow: css`
-    position: absolute;
-    inset: -6px;
-    border-radius: 14px;
-    pointer-events: none;
-    background: radial-gradient(circle, ${token.colorPrimary}30 0%, transparent 72%);
-  `,
-
   wsBtn: css`
-    position: relative;
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: transform ${token.motionDurationFast} ${token.motionEaseOut};
     flex-shrink: 0;
     outline: none;
-    border: 1px solid ${token.colorPrimaryBorder};
-    background: ${token.colorPrimaryBg};
-    box-shadow: 0 0 0 4px ${token.colorPrimary}0a;
-    color: ${token.colorPrimary};
-    font-size: 16px;
+    border: 1px solid ${token.colorBorderSecondary};
+    background: ${token.colorFillQuaternary};
+    color: ${token.colorText};
+    font-size: 14px;
     font-weight: 600;
+    transition: background ${token.motionDurationFast} ${token.motionEaseOut};
 
     &:hover {
-      transform: scale(1.05);
+      background: ${token.colorFillSecondary};
     }
   `,
 }))
@@ -109,12 +112,13 @@ export default function NavRail({
     <nav className={styles.rail}>
       <Tooltip title={workspace ? `切换工作区 · ${workspace.name}` : '打开工作区'} placement="right">
         <div className={styles.wsBtnWrap}>
-          <div className={styles.wsGlow} />
           <button className={styles.wsBtn} onClick={onSwitchWorkspace}>
-            {workspace ? initial : <FolderOpen size={18} />}
+            {workspace ? initial : <FolderOpen size={16} />}
           </button>
         </div>
       </Tooltip>
+
+      <div className={styles.railDivider} />
 
       <ActionIcon
         className={cx(styles.iconBtn, activeView === 'chat' && styles.iconBtnActive)}
