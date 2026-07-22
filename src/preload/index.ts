@@ -279,6 +279,27 @@ const api = {
     },
   },
 
+  dressup: {
+    health: () => ipcRenderer.invoke('dressup:health'),
+    generate: (payload: {
+      firstFrameDataUrl: string
+      tailFrameDataUrl: string
+      prompt?: string
+      mode?: 'std' | 'pro'
+      duration?: '5' | '10'
+      model?: string
+    }) => ipcRenderer.invoke('dressup:generate', payload),
+    history: () => ipcRenderer.invoke('dressup:history'),
+    historyDelete: (id: string) => ipcRenderer.invoke('dressup:historyDelete', id),
+    onProgress: (
+      cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void,
+    ) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
+      ipcRenderer.on('dressup:progress', handler)
+      return () => ipcRenderer.off('dressup:progress', handler)
+    },
+  },
+
   update: {
     onAvailable: (cb: (data: { version: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)

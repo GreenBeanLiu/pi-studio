@@ -28,7 +28,7 @@ export type FocusScope =
   | 'session-list'
   | 'other'
 
-export type ShortcutView = 'chat' | 'routines' | 'imagegen' | 'model3d'
+export type ShortcutView = 'chat' | 'routines' | 'imagegen' | 'model3d' | 'dressup'
 
 export type ShortcutContext = {
   view: ShortcutView

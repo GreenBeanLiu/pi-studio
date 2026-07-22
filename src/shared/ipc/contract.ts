@@ -273,6 +273,22 @@ model3d: {
   ) => () => void
   onScored: (cb: (data: { id: string; fidelity: Model3DFidelity }) => void) => () => void
 }
+dressup: {
+  health: () => Promise<DressupHealth>
+  generate: (payload: {
+    firstFrameDataUrl: string
+    tailFrameDataUrl: string
+    prompt?: string
+    mode?: 'std' | 'pro'
+    duration?: '5' | '10'
+    model?: string
+  }) => Promise<DressupHistoryItem | { error: string }>
+  history: () => Promise<DressupHistoryItem[]>
+  historyDelete: (id: string) => Promise<{ ok: boolean }>
+  onProgress: (
+    cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void,
+  ) => () => void
+}
 update: {
   onAvailable: (cb: (data: { version: string }) => void) => () => void
   onDownloaded: (cb: (data: { version: string }) => void) => () => void
@@ -327,6 +343,22 @@ export type Model3DOptions = {
 }
 
 export type Model3DFidelity = { score: number; notes: string; model: string }
+
+export type DressupHealth = {
+  configured: boolean
+  /** 服务端 Kling 密钥是否就绪;探测失败时缺失 */
+  klingReady?: boolean
+}
+
+export type DressupHistoryItem = {
+  id: string
+  prompt: string
+  mode: 'std' | 'pro'
+  duration: '5' | '10'
+  videoUrl: string
+  cloudVideoUrl?: string
+  createdAt: number
+}
 
 export type Model3DHistoryItem = {
   id: string

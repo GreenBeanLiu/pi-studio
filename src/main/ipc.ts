@@ -57,6 +57,7 @@ import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
 import { registerModel3d } from './model3d'
+import { registerDressup } from './dressup'
 import { registerCodeModel } from './code-model'
 import { registerBlenderModel } from './blender-model'
 import { remoteControl } from './remote-control'
@@ -76,6 +77,7 @@ export function registerIpcHandlers(): void {
   registerChannels()
   registerSandbox()
   registerModel3d()
+  registerDressup()
   registerCodeModel()
   registerBlenderModel()
 
