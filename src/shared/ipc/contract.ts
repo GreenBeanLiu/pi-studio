@@ -283,6 +283,14 @@ dressup: {
     duration?: '5' | '10'
     model?: string
   }) => Promise<DressupHistoryItem | { error: string }>
+  // AI 试衣工作流:人物 + 衣服 → gpt-image-2 试衣 → Kling 换装视频。
+  // firstFrameDataUrl 由渲染进程用 canvas 合成(人物 + 左上角衣服)。
+  workflow: (payload: {
+    personDataUrl: string
+    garmentDataUrl: string
+    firstFrameDataUrl: string
+    prompt?: string
+  }) => Promise<DressupHistoryItem | { error: string }>
   history: () => Promise<DressupHistoryItem[]>
   historyDelete: (id: string) => Promise<{ ok: boolean }>
   onProgress: (

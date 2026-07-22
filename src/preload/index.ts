@@ -289,6 +289,12 @@ const api = {
       duration?: '5' | '10'
       model?: string
     }) => ipcRenderer.invoke('dressup:generate', payload),
+    workflow: (payload: {
+      personDataUrl: string
+      garmentDataUrl: string
+      firstFrameDataUrl: string
+      prompt?: string
+    }) => ipcRenderer.invoke('dressup:workflow', payload),
     history: () => ipcRenderer.invoke('dressup:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('dressup:historyDelete', id),
     onProgress: (
