@@ -258,6 +258,8 @@ const api = {
     historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
     saveThumbnail: (payload: { id: string; dataUrl: string }) =>
       ipcRenderer.invoke('model3d:saveThumbnail', payload),
+    reviewRound: (payload: { id: string; dataUrl: string; prompt: string }) =>
+      ipcRenderer.invoke('model3d:reviewRound', payload),
     onProgress: (
       cb: (data: {
         id: string

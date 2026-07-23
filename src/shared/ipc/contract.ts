@@ -264,6 +264,12 @@ model3d: {
     id: string
     dataUrl: string
   }) => Promise<Model3DHistoryItem | { error: string }>
+  /** 视觉闭环:存渲染截图 + 同步 AI 评审 + 返回分数 */
+  reviewRound: (payload: {
+    id: string
+    dataUrl: string
+    prompt: string
+  }) => Promise<Model3DFidelity | { error: string }>
   onProgress: (
     cb: (data: {
       id: string

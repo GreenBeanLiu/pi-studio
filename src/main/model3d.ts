@@ -347,6 +347,28 @@ async function saveThumbnail(id: string, dataUrl: string): Promise<Model3DResult
   return updated
 }
 
+/** 视觉闭环用:存这一轮渲染截图为缩略图 + 同步 AI 评审 + 返回分数(渲染进程据此决定是否继续改码)。 */
+async function reviewRound(
+  id: string,
+  dataUrl: string,
+  prompt: string,
+): Promise<VisionReview | { error: string }> {
+  const m = /^data:image\/png;base64,(.+)$/s.exec(dataUrl)
+  if (!m) return { error: '截图数据无法解析' }
+  const thumbPath = join(modelsDir(), `${id}.png`)
+  writeFileSync(thumbPath, Buffer.from(m[1], 'base64'))
+  saveHistory(loadHistory().map((it) => (it.id === id ? { ...it, thumbnailUrl: localFileUrl(thumbPath) } : it)))
+  try {
+    const fidelity = await reviewModelRender({ mode: 'text', prompt, renderDataUrl: dataUrl })
+    saveHistory(loadHistory().map((it) => (it.id === id ? { ...it, fidelity } : it)))
+    broadcast('model3d:scored', { id, fidelity })
+    return fidelity
+  } catch (err) {
+    appendAppLog('warn', 'model3d.reviewRound', 'AI 评审失败', normalizeError(err))
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export function registerModel3d(): void {
   ipcMain.handle('model3d:health', async (): Promise<Model3DHealth> => {
     const configured = getCloudConnection().available
@@ -376,6 +398,9 @@ export function registerModel3d(): void {
   ipcMain.handle('model3d:history', (): Model3DHistoryItem[] => loadHistory())
   ipcMain.handle('model3d:saveThumbnail', (_e, payload: { id: string; dataUrl: string }) =>
     saveThumbnail(payload.id, payload.dataUrl),
+  )
+  ipcMain.handle('model3d:reviewRound', (_e, payload: { id: string; dataUrl: string; prompt: string }) =>
+    reviewRound(payload.id, payload.dataUrl, payload.prompt),
   )
   ipcMain.handle('model3d:historyDelete', (_e, id: string) => {
     saveHistory(loadHistory().filter((it) => it.id !== id))

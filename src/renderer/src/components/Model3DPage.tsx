@@ -97,6 +97,10 @@ const PROVIDERS: Array<{
   },
 ]
 
+// 视觉闭环阈值:达到 LOOP_THRESHOLD 分或跑满 LOOP_MAX_ROUNDS 轮即停
+const LOOP_THRESHOLD = 85
+const LOOP_MAX_ROUNDS = 5
+
 const STATUS_TEXT: Record<string, string> = {
   'generating-image': 'AI 生图中…',
   uploading: '上传参考图…',
@@ -306,6 +310,11 @@ function Model3DPageInner(): React.JSX.Element {
   const [history, setHistory] = useState<Model3DHistoryItem[]>([])
   const [selected, setSelected] = useState<Model3DHistoryItem | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // 代码模式「视觉闭环」:渲染→AI 评审→自动改码→再渲染,到分/到轮数停
+  const [autoLoop, setAutoLoop] = useState(true)
+  const [loopInfo, setLoopInfo] = useState('')
+  const snapshotResolve = useRef<((d: string) => void) | null>(null)
+  const loopAbort = useRef(false)
 
   const activeProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
   // 只有云端模式(文生/图生)依赖服务商密钥;代码建模/Blender 走本地 agent
@@ -394,6 +403,61 @@ function Model3DPageInner(): React.JSX.Element {
     reader.readAsDataURL(file)
   }
 
+  // 让 ModelViewer 渲染某个模型并回传一帧截图(供评审)
+  const captureRender = (item: Model3DHistoryItem): Promise<string> =>
+    new Promise((resolve) => {
+      snapshotResolve.current = resolve
+      setSelected(item) // ModelViewer 渲染它 → onSnapshot 触发 → resolve
+    })
+
+  // 代码模式视觉闭环:出码→渲染→评审→按点评改码…直到 ≥阈值 / 到轮数 / 叫停
+  const runVisualLoop = async (basePrompt: string): Promise<void> => {
+    loopAbort.current = false
+    setGenerating(true)
+    setLoopInfo('第 1 轮 · 生成中')
+    setProgress({ status: 'building', progress: 0 })
+    try {
+      const first = await api.model3d.generateCode({ prompt: basePrompt })
+      if ('error' in first) return void message.error(first.error)
+      let item: Model3DHistoryItem = first
+      setHistory((prev) => [item, ...prev])
+      let best: Model3DHistoryItem = item
+      let bestScore = -1
+      for (let round = 1; round <= LOOP_MAX_ROUNDS; round++) {
+        setLoopInfo(`第 ${round} 轮 · 渲染评审中`)
+        const shot = await captureRender(item)
+        const review = await api.model3d.reviewRound({ id: item.id, dataUrl: shot, prompt: basePrompt })
+        const score = 'error' in review ? 0 : review.score
+        if (score > bestScore) {
+          bestScore = score
+          best = item
+        }
+        setLoopInfo(`第 ${round} 轮 · 还原度 ${score} 分`)
+        if (score >= LOOP_THRESHOLD || round === LOOP_MAX_ROUNDS || loopAbort.current) break
+        setLoopInfo(`第 ${round + 1} 轮 · 按点评改码中`)
+        const notes = 'error' in review ? '' : review.notes
+        const instruction = `当前还原度约 ${score} 分。主要差异:${notes}。请据此改进模型,使其更贴合「${basePrompt}」。`
+        const next = await api.model3d.generateCode({ prompt: instruction, sourceId: item.id })
+        if ('error' in next) {
+          message.warning('本轮改码失败,保留当前最好一版')
+          break
+        }
+        setHistory((prev) => [next, ...prev])
+        item = next
+      }
+      setSelected(best)
+      message.success(
+        loopAbort.current ? `已停止,最佳还原度 ${bestScore} 分` : `自动优化完成,最佳还原度 ${bestScore} 分`,
+      )
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '视觉闭环出错')
+    } finally {
+      setGenerating(false)
+      setProgress(null)
+      setLoopInfo('')
+    }
+  }
+
   const onGenerate = async (): Promise<void> => {
     if (mode === 'image') {
       if (imgSource === 'upload' && !imageDataUrl) return void message.warning('请选择参考图片')
@@ -401,6 +465,7 @@ function Model3DPageInner(): React.JSX.Element {
     } else if (!prompt.trim()) {
       return void message.warning('请输入描述')
     }
+    if (mode === 'code' && autoLoop) return void runVisualLoop(prompt)
     const aiImage = mode === 'image' && imgSource === 'ai'
     setGenerating(true)
     setProgress({
@@ -558,10 +623,27 @@ function Model3DPageInner(): React.JSX.Element {
         )}
 
         {mode === 'code' && (
-          <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
-            由内嵌 agent 用 three.js 程序化手搓「可动画/可拆解」的代码模型,导出为 glb。
-            比 Tripo 慢(数分钟),适合游戏道具、需要绑定交互的场景。
-          </div>
+          <>
+            <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
+              由内嵌 agent 用 three.js 程序化手搓「可动画/可拆解」的代码模型,导出为 glb。
+              比 Tripo 慢(数分钟),适合游戏道具、需要绑定交互的场景。
+            </div>
+            <div className={styles.field}>
+              <span className={styles.label}>生成方式</span>
+              <Segmented
+                block
+                value={autoLoop ? 'loop' : 'once'}
+                onChange={(v) => setAutoLoop(v === 'loop')}
+                options={[
+                  { label: '一次生成', value: 'once' },
+                  { label: `自动优化(≤${LOOP_MAX_ROUNDS}轮)`, value: 'loop' },
+                ]}
+              />
+              <span className={styles.label} style={{ fontSize: 12 }}>
+                自动优化:每轮 渲染 → AI 评审 → 按点评改码,到 {LOOP_THRESHOLD} 分或 {LOOP_MAX_ROUNDS} 轮停
+              </span>
+            </div>
+          </>
         )}
 
         {mode !== 'image' ? (
@@ -813,6 +895,13 @@ function Model3DPageInner(): React.JSX.Element {
               onSnapshot={
                 !selected.thumbnailUrl && (selected.mode === 'code' || selected.mode === 'blender')
                   ? async (dataUrl) => {
+                      // 视觉闭环在等这一帧:直接交给闭环,别走 saveThumbnail
+                      if (snapshotResolve.current) {
+                        const resolve = snapshotResolve.current
+                        snapshotResolve.current = null
+                        resolve(dataUrl)
+                        return
+                      }
                       const r = await api.model3d.saveThumbnail({ id: selected.id, dataUrl })
                       if (!('error' in r)) {
                         setHistory((prev) => prev.map((it) => (it.id === r.id ? r : it)))
@@ -833,9 +922,20 @@ function Model3DPageInner(): React.JSX.Element {
               <div className={styles.placeholderCard}>
                 <Spin size="small" />
                 <span>
-                  {STATUS_TEXT[progress?.status ?? 'submitting'] ?? '生成中…'}
-                  {progress && progress.progress > 0 ? ` ${Math.round(progress.progress)}%` : ''}
+                  {loopInfo || (STATUS_TEXT[progress?.status ?? 'submitting'] ?? '生成中…')}
+                  {!loopInfo && progress && progress.progress > 0 ? ` ${Math.round(progress.progress)}%` : ''}
                 </span>
+                {loopInfo && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      loopAbort.current = true
+                      setLoopInfo((s) => (s.includes('停止') ? s : `${s} · 停止中`))
+                    }}
+                  >
+                    停止
+                  </Button>
+                )}
               </div>
             )}
             {history.map((it) => (
