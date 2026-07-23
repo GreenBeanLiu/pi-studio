@@ -6,11 +6,12 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'fs'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { dirname, isAbsolute, relative, resolve } from 'path'
 import { isContainedPath } from '../shared/ipc/validators'
 import {
@@ -22,6 +23,8 @@ import {
   WINDOWS_ICON_SPECS,
   createPngIco,
   createZipArchive,
+  flattenPremultipliedChannel,
+  encodeOpaqueRgbPng,
   iosContentsJson,
   type AppIconPlatform,
   type RasterIconSpec,
@@ -98,15 +101,20 @@ function createBitmapImage(
           foreground.copy(bitmap, targetOffset, sourceOffset, sourceOffset + 4)
           continue
         }
-        const inverse = 255 - alpha
-        bitmap[targetOffset] = Math.round(
-          (foreground[sourceOffset] * alpha + bitmap[targetOffset] * inverse) / 255,
+        bitmap[targetOffset] = flattenPremultipliedChannel(
+          foreground[sourceOffset],
+          alpha,
+          bitmap[targetOffset],
         )
-        bitmap[targetOffset + 1] = Math.round(
-          (foreground[sourceOffset + 1] * alpha + bitmap[targetOffset + 1] * inverse) / 255,
+        bitmap[targetOffset + 1] = flattenPremultipliedChannel(
+          foreground[sourceOffset + 1],
+          alpha,
+          bitmap[targetOffset + 1],
         )
-        bitmap[targetOffset + 2] = Math.round(
-          (foreground[sourceOffset + 2] * alpha + bitmap[targetOffset + 2] * inverse) / 255,
+        bitmap[targetOffset + 2] = flattenPremultipliedChannel(
+          foreground[sourceOffset + 2],
+          alpha,
+          bitmap[targetOffset + 2],
         )
         bitmap[targetOffset + 3] = 255
       }
@@ -124,16 +132,24 @@ function createBitmapImage(
 function rasterize(
   source: NativeImage,
   size: number,
-  options: { opaque?: boolean; safeArea?: boolean; backgroundColor: string },
+  options: {
+    opaque?: boolean
+    stripAlpha?: boolean
+    safeArea?: boolean
+    backgroundColor: string
+  },
 ): Buffer {
   const ratio = options.safeArea ? 66 / 108 : 1
   if (options.opaque || options.safeArea) {
-    return createBitmapImage(
+    const image = createBitmapImage(
       source,
       size,
       ratio,
       options.opaque ? options.backgroundColor : undefined,
-    ).toPNG()
+    )
+    return options.stripAlpha
+      ? encodeOpaqueRgbPng(image.toBitmap(), size)
+      : image.toPNG()
   }
   return source.resize({ width: size, height: size, quality: 'best' }).toPNG()
 }
@@ -175,7 +191,11 @@ function writeRasterSpecs(
     writeBuffer(
       root,
       spec.path,
-      rasterize(source, spec.size, { opaque: spec.opaque, backgroundColor }),
+      rasterize(source, spec.size, {
+        opaque: spec.opaque,
+        stripAlpha: spec.stripAlpha,
+        backgroundColor,
+      }),
     )
   }
 }
@@ -310,6 +330,30 @@ function assertSafeOutputRoot(workspacePath: string, outputRoot: string): void {
   }
 }
 
+function assertOwnedOutputRoot(workspacePath: string, outputRoot: string): void {
+  const ownedRoot = resolve(workspacePath, '.pi-studio', 'app-icons')
+  if (resolve(outputRoot) === ownedRoot || !isContainedPath(outputRoot, ownedRoot)) {
+    throw new Error('图标输出目录必须位于工作区 .pi-studio/app-icons/ 的独立子目录内')
+  }
+  assertSafeOutputRoot(workspacePath, outputRoot)
+}
+
+function replaceArchiveSafely(workspacePath: string, archivePath: string, data: Buffer): void {
+  const ownedRoot = resolve(workspacePath, '.pi-studio', 'app-icons')
+  if (!isContainedPath(archivePath, ownedRoot)) throw new Error('图标 ZIP 路径必须位于工作区图标目录内')
+  const realWorkspace = realpathSync.native(workspacePath)
+  const realParent = realpathSync.native(nearestExistingParent(dirname(archivePath)))
+  if (!isContainedPath(realParent, realWorkspace)) throw new Error('图标 ZIP 路径不能通过链接跳出工作区')
+  if (existsSync(archivePath)) {
+    const existing = lstatSync(archivePath)
+    if (existing.isSymbolicLink() || !existing.isFile()) throw new Error('图标 ZIP 路径必须是普通文件')
+  }
+  const temporary = `${archivePath}.tmp-${randomUUID()}`
+  writeFileSync(temporary, data)
+  if (existsSync(archivePath)) rmSync(archivePath, { force: true })
+  renameSync(temporary, archivePath)
+}
+
 function rasterMetadata(path: string): {
   pixelSize?: string
   colorSpace?: 'sRGB'
@@ -349,62 +393,67 @@ export async function generateAppIconBundle(
   if (platforms.length === 0) throw new Error('至少选择一个图标平台')
 
   const outputRoot = resolve(options.workspacePath, options.outputPath)
-  assertSafeOutputRoot(options.workspacePath, outputRoot)
-  rmSync(outputRoot, { recursive: true, force: true })
-  mkdirSync(outputRoot, { recursive: true })
-
+  assertOwnedOutputRoot(options.workspacePath, outputRoot)
   const source = await loadSource(options.source.trim(), options.workspacePath)
-  writeBuffer(outputRoot, 'source/master.png', source.toPNG())
-  writeBuffer(
-    outputRoot,
-    'source/background.png',
-    createBitmapImage(source, 1024, 0, backgroundColor).toPNG(),
-  )
-  writeBuffer(outputRoot, 'source/foreground.png', source.toPNG())
-  writeBuffer(
-    outputRoot,
-    'source/monochrome.png',
-    createBitmapImage(source, 1024, 66 / 108).toPNG(),
-  )
-
-  if (platforms.includes('android')) writeAndroid(outputRoot, source, backgroundColor)
-  if (platforms.includes('ios')) writeIos(outputRoot, source, backgroundColor)
-  if (platforms.includes('macos')) writeMacos(outputRoot, source, backgroundColor)
-  if (platforms.includes('windows')) writeWindows(outputRoot, source, backgroundColor)
-
-  writeText(
-    outputRoot,
-    'README.md',
-    `# ${options.appName.trim() || 'App'} 图标资源包\n\n由 pi-studio 应用图标工作流生成。母图没有预先烘焙系统圆角；请在真机、小尺寸、浅色和深色背景下检查后再发布。\n`,
-  )
-  const filesBeforeManifest = listFiles(outputRoot)
-  const manifest = {
-    schemaVersion: 1,
-    generator: 'pi-studio',
-    appName: options.appName.trim() || 'App',
-    createdAt: new Date().toISOString(),
-    source: { path: 'source/master.png', size: 1024 },
-    backgroundColor,
-    platforms,
-    files: filesBeforeManifest.map((path) => ({
-      path,
-      sha256: fileSha256(resolve(outputRoot, path)),
-      ...rasterMetadata(path),
-    })),
-  }
-  writeText(outputRoot, 'manifest.json', `${JSON.stringify(manifest, null, 2)}\n`)
+  const stagingRoot = `${outputRoot}.staging-${randomUUID()}`
   const archivePath = `${outputRoot}.zip`
-  if (!isContainedPath(archivePath, options.workspacePath)) throw new Error('图标 ZIP 路径必须位于工作区内')
-  const archiveFiles = listFiles(outputRoot)
-  writeFileSync(
-    archivePath,
-    createZipArchive(
+  let staged = true
+  try {
+    mkdirSync(stagingRoot, { recursive: true })
+    writeBuffer(stagingRoot, 'source/master.png', source.toPNG())
+    writeBuffer(
+      stagingRoot,
+      'source/background.png',
+      createBitmapImage(source, 1024, 0, backgroundColor).toPNG(),
+    )
+    writeBuffer(stagingRoot, 'source/foreground.png', source.toPNG())
+    writeBuffer(
+      stagingRoot,
+      'source/monochrome.png',
+      createBitmapImage(source, 1024, 66 / 108).toPNG(),
+    )
+
+    if (platforms.includes('android')) writeAndroid(stagingRoot, source, backgroundColor)
+    if (platforms.includes('ios')) writeIos(stagingRoot, source, backgroundColor)
+    if (platforms.includes('macos')) writeMacos(stagingRoot, source, backgroundColor)
+    if (platforms.includes('windows')) writeWindows(stagingRoot, source, backgroundColor)
+
+    writeText(
+      stagingRoot,
+      'README.md',
+      `# ${options.appName.trim() || 'App'} 图标资源包\n\n由 pi-studio 应用图标工作流生成。母图没有预先烘焙系统圆角；请在真机、小尺寸、浅色和深色背景下检查后再发布。\n`,
+    )
+    const filesBeforeManifest = listFiles(stagingRoot)
+    const manifest = {
+      schemaVersion: 1,
+      generator: 'pi-studio',
+      appName: options.appName.trim() || 'App',
+      createdAt: new Date().toISOString(),
+      source: { path: 'source/master.png', size: 1024 },
+      backgroundColor,
+      platforms,
+      files: filesBeforeManifest.map((path) => ({
+        path,
+        sha256: fileSha256(resolve(stagingRoot, path)),
+        ...rasterMetadata(path),
+      })),
+    }
+    writeText(stagingRoot, 'manifest.json', `${JSON.stringify(manifest, null, 2)}\n`)
+    const archiveFiles = listFiles(stagingRoot)
+    const archive = createZipArchive(
       archiveFiles.map((path) => ({
         path,
-        data: readFileSync(resolve(outputRoot, path)),
+        data: readFileSync(resolve(stagingRoot, path)),
       })),
-    ),
-  )
+    )
+
+    if (existsSync(outputRoot)) rmSync(outputRoot, { recursive: true, force: true })
+    renameSync(stagingRoot, outputRoot)
+    staged = false
+    replaceArchiveSafely(options.workspacePath, archivePath, archive)
+  } finally {
+    if (staged && existsSync(stagingRoot)) rmSync(stagingRoot, { recursive: true, force: true })
+  }
 
   return {
     outputPath: outputRoot,

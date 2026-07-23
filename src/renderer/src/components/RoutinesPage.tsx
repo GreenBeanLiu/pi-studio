@@ -1024,7 +1024,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       />
                     </div>
                     <span className={styles.hint}>
-                      母图至少 1024×1024；导出 Android 自适应资源、Xcode Asset Catalog、macOS iconset / Icon Composer 图层和 Windows ICO。
+                      母图至少 1024×1024；输出目录须位于 .pi-studio/app-icons/ 的独立子目录。导出 Android 自适应资源、Xcode Asset Catalog、macOS iconset / Icon Composer 图层和 Windows ICO。
                     </span>
                   </>
                 )}

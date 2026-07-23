@@ -19,7 +19,7 @@ async function main() {
     const result = await generateAppIconBundle({
       source: 'master.png',
       workspacePath: workspace,
-      outputPath: 'bundle',
+      outputPath: '.pi-studio/app-icons/smoke-test',
       appName: 'Smoke Test',
       backgroundColor: '#2563EB',
       platforms: ['android', 'ios', 'macos', 'windows'],
@@ -35,6 +35,16 @@ async function main() {
     }
     if (readFileSync(result.archivePath).readUInt32LE(0) !== 0x04034b50) {
       throw new Error('Smoke ZIP signature is invalid')
+    }
+    const iosMarketing = join(
+      result.outputPath,
+      'ios',
+      'Assets.xcassets',
+      'AppIcon.appiconset',
+      'AppIcon-ios-marketing-1024x1024@1x.png',
+    )
+    if (readFileSync(iosMarketing)[25] !== 2) {
+      throw new Error('iOS marketing PNG still contains an alpha channel')
     }
     process.stdout.write(`App icon Electron smoke passed (${result.fileCount} files)\n`)
   } finally {

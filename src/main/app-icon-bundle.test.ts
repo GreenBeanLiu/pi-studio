@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -84,6 +84,17 @@ describe('generateAppIconBundle', () => {
       ]),
     )
     expect(readFileSync(join(result.outputPath, 'windows/app.ico')).readUInt16LE(2)).toBe(1)
+
+    const rebuilt = await generateAppIconBundle({
+      source: '.pi-studio/app-icons/focus-flow/source/master.png',
+      workspacePath: workspace,
+      outputPath: '.pi-studio/app-icons/focus-flow',
+      appName: 'FocusFlow',
+      backgroundColor: '#2563EB',
+      platforms: ['windows'],
+    })
+    expect(existsSync(join(rebuilt.outputPath, 'android'))).toBe(false)
+    expect(existsSync(join(rebuilt.outputPath, 'windows', 'app.ico'))).toBe(true)
   })
 
   it('rejects output traversal and invalid colors', async () => {
@@ -101,5 +112,9 @@ describe('generateAppIconBundle', () => {
 
     await expect(generateAppIconBundle({ ...base, outputPath: '..\\outside' })).rejects.toThrow(/工作区/)
     await expect(generateAppIconBundle({ ...base, backgroundColor: 'blue' })).rejects.toThrow(/#RRGGBB/)
+    mkdirSync(join(workspace, 'src'))
+    writeFileSync(join(workspace, 'src', 'keep.txt'), 'keep')
+    await expect(generateAppIconBundle({ ...base, outputPath: 'src' })).rejects.toThrow(/\.pi-studio/)
+    expect(readFileSync(join(workspace, 'src', 'keep.txt'), 'utf8')).toBe('keep')
   })
 })

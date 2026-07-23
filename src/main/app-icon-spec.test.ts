@@ -7,6 +7,8 @@ import {
   WINDOWS_ICON_SIZES,
   createPngIco,
   createZipArchive,
+  flattenPremultipliedChannel,
+  encodeOpaqueRgbPng,
   iosContentsJson,
 } from './app-icon-spec'
 
@@ -27,6 +29,20 @@ describe('app icon specifications', () => {
     expect(contents.images).toHaveLength(IOS_ICON_ENTRIES.length)
     expect(contents.images.every((item) => item.filename?.endsWith('.png'))).toBe(true)
     expect(contents.info).toEqual({ author: 'pi-studio', version: 1 })
+  })
+
+  it('flattens Electron premultiplied bitmap channels without multiplying alpha twice', () => {
+    // 50% red is returned by Electron as premultiplied red=128, alpha=128.
+    expect(flattenPremultipliedChannel(128, 128, 255)).toBe(255)
+    expect(flattenPremultipliedChannel(0, 128, 255)).toBe(127)
+  })
+
+  it('encodes Apple-safe RGB PNGs without an alpha channel', () => {
+    const png = encodeOpaqueRgbPng(Buffer.from([0, 0, 255, 255]), 1)
+    expect(png.subarray(1, 4).toString('ascii')).toBe('PNG')
+    expect(png.readUInt32BE(16)).toBe(1)
+    expect(png.readUInt32BE(20)).toBe(1)
+    expect(png[25]).toBe(2)
   })
 })
 

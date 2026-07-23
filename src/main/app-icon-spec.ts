@@ -1,9 +1,12 @@
+import { deflateSync } from 'zlib'
+
 export type AppIconPlatform = 'android' | 'ios' | 'macos' | 'windows'
 
 export type RasterIconSpec = {
   path: string
   size: number
   opaque?: boolean
+  stripAlpha?: boolean
 }
 
 export const APP_ICON_PLATFORMS: AppIconPlatform[] = [
@@ -63,6 +66,7 @@ export const IOS_ICON_SPECS: RasterIconSpec[] = IOS_ICON_ENTRIES.map((entry) => 
   path: `ios/Assets.xcassets/AppIcon.appiconset/AppIcon-${entry.idiom}-${entry.size.replaceAll('.', '_')}@${entry.scale}.png`,
   size: entry.pixels,
   opaque: true,
+  stripAlpha: true,
 }))
 
 export const MACOS_ICON_SPECS: RasterIconSpec[] = [
@@ -84,6 +88,18 @@ export const WINDOWS_ICON_SPECS: RasterIconSpec[] = WINDOWS_ICON_SIZES.map((size
   path: `windows/png/app-${size}.png`,
   size,
 }))
+
+/** Electron NativeImage.toBitmap() returns premultiplied BGRA channels. */
+export function flattenPremultipliedChannel(
+  sourceChannel: number,
+  alpha: number,
+  backgroundChannel: number,
+): number {
+  return Math.min(
+    255,
+    sourceChannel + Math.round((backgroundChannel * (255 - alpha)) / 255),
+  )
+}
 
 export function iosContentsJson(): string {
   return `${JSON.stringify(
@@ -143,6 +159,46 @@ function crc32(value: Buffer): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0
+}
+
+function pngChunk(name: string, data: Buffer): Buffer {
+  const type = Buffer.from(name, 'ascii')
+  const chunk = Buffer.alloc(12 + data.length)
+  chunk.writeUInt32BE(data.length, 0)
+  type.copy(chunk, 4)
+  data.copy(chunk, 8)
+  chunk.writeUInt32BE(crc32(Buffer.concat([type, data])), data.length + 8)
+  return chunk
+}
+
+/** Encode an Electron BGRA bitmap as an RGB PNG with no alpha channel (Apple App Store-safe). */
+export function encodeOpaqueRgbPng(bitmap: Buffer, size: number): Buffer {
+  if (!Number.isInteger(size) || size < 1 || bitmap.length !== size * size * 4) {
+    throw new Error('RGB PNG 位图尺寸无效')
+  }
+  const rows = Buffer.alloc(size * (1 + size * 3))
+  for (let y = 0; y < size; y += 1) {
+    const rowOffset = y * (1 + size * 3)
+    rows[rowOffset] = 0
+    for (let x = 0; x < size; x += 1) {
+      const source = (y * size + x) * 4
+      const target = rowOffset + 1 + x * 3
+      rows[target] = bitmap[source + 2]
+      rows[target + 1] = bitmap[source + 1]
+      rows[target + 2] = bitmap[source]
+    }
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(size, 0)
+  ihdr.writeUInt32BE(size, 4)
+  ihdr[8] = 8
+  ihdr[9] = 2
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(rows, { level: 9 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
 }
 
 /** Small dependency-free ZIP writer. App icon assets are already PNG-compressed, so STORE is intentional. */
