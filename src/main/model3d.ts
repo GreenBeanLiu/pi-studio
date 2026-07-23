@@ -183,6 +183,61 @@ async function urlToDataUrl(url: string): Promise<string> {
   return `data:${ct};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`
 }
 
+/**
+ * 纯云端图生/文生 3D 调用(给工作流节点用):不碰历史/进度/下载,只返回 R2 上的模型 URL。
+ * 有 imageUrl 走图生 3D,否则用 prompt 走文生 3D。
+ */
+export async function cloud3dGenerate(params: {
+  imageUrl?: string
+  prompt?: string
+  provider?: Model3DProvider
+  options?: Model3DOptions
+}): Promise<{ modelUrl: string; thumbnailUrl: string | null }> {
+  const resp = await cloudFetch(
+    '/model3d',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(params.imageUrl ? { imageUrl: params.imageUrl } : {}),
+        ...(params.prompt ? { prompt: params.prompt } : {}),
+        provider: params.provider ?? 'tripo',
+        options: params.options ?? {},
+      }),
+    },
+    CLOUD_TIMEOUT_MS,
+  )
+  if (!resp.ok || !resp.body)
+    throw new Error(`云端 3D ${resp.status}: ${(await resp.text().catch(() => '')).slice(0, 200)}`)
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let modelUrl: string | undefined
+  let thumbUrl: string | null = null
+  outer: while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let sep: number
+    while ((sep = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, sep)
+      buf = buf.slice(sep + 2)
+      const event = /^event: (.+)$/m.exec(block)?.[1]
+      const dataRaw = /^data: (.+)$/m.exec(block)?.[1]
+      if (!event || !dataRaw) continue
+      const data = JSON.parse(dataRaw)
+      if (event === 'error') throw new Error(data.message || '云端 3D 生成失败')
+      if (event === 'result') {
+        modelUrl = data.modelUrl
+        thumbUrl = data.thumbnailUrl ?? null
+        break outer
+      }
+    }
+  }
+  if (!modelUrl) throw new Error('云端 3D 完成但没有返回模型 URL')
+  return { modelUrl, thumbnailUrl: thumbUrl }
+}
+
 async function generate(payload: GeneratePayload): Promise<Model3DResult> {
   if (payload.mode === 'text' && !payload.prompt.trim()) return { error: '请输入文字提示词' }
   if (payload.mode === 'image' && !payload.imageDataUrl && !(payload.aiImage && payload.prompt.trim()))

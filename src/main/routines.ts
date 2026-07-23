@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, Notification } from 'electron'
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
@@ -11,6 +11,7 @@ import { syncWebSearchExtension } from './web-search-extension'
 import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
+import { cloud3dGenerate } from './model3d'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import { parseRoutineSave } from '../shared/ipc/validators'
@@ -46,7 +47,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -64,6 +65,10 @@ export type RoutineStep = {
   path?: string
   /** export:Markdown 原文或公众号 HTML 片段 */
   format?: RoutineArtifactFormat
+  /** model3d:图生 3D 服务商 */
+  provider?: 'tripo' | 'hi3d'
+  /** model3d:输入图的模板(默认 {{prev.imageUrl}});解析成 URL 走图生 3D,否则用 prompt 文生 3D */
+  imageRef?: string
 }
 
 export type Routine = {
@@ -181,6 +186,8 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
     ...(step.message !== undefined ? { message: step.message } : {}),
     ...(step.path !== undefined ? { path: step.path } : {}),
     ...(step.format !== undefined ? { format: step.format } : {}),
+    ...(step.provider !== undefined ? { provider: step.provider } : {}),
+    ...(step.imageRef !== undefined ? { imageRef: step.imageRef } : {}),
   }
 }
 
@@ -458,6 +465,31 @@ async function runExportStep(routine: Routine, step: RoutineStep, ctx: RunContex
   return { output: artifact.path, artifactPath: artifact.path }
 }
 
+/** 图/文 → 3D 节点:有上游图(imageRef 默认 {{prev.imageUrl}})就图生 3D,否则用 prompt 文生 3D;glb 存进工作区。 */
+async function runModel3dStep(step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+  const prompt = interpolate(step.prompt ?? '', ctx).trim()
+  const imageRef = interpolate((step.imageRef ?? '{{prev.imageUrl}}').trim(), ctx).trim()
+  const imageUrl = /^https?:\/\//i.test(imageRef) ? imageRef : undefined
+  if (!imageUrl && !prompt) throw new Error('3D 节点需要上游图片(imageRef)或文字提示词')
+  const { modelUrl, thumbnailUrl } = await cloud3dGenerate({
+    ...(imageUrl ? { imageUrl } : { prompt }),
+    provider: step.provider ?? 'tripo',
+    options: { texture: true },
+  })
+  const dir = join(ctx.routine.workspacePath, '.pi-studio', 'models')
+  mkdirSync(dir, { recursive: true })
+  const safe = step.name.trim().replace(/[^\w一-龥-]+/g, '_').slice(0, 40) || 'model'
+  const glbPath = join(dir, `${Date.now()}-${safe}.glb`)
+  const res = await fetch(modelUrl, { signal: AbortSignal.timeout(180_000) })
+  if (!res.ok) throw new Error(`下载模型失败 HTTP ${res.status}`)
+  writeFileSync(glbPath, Buffer.from(await res.arrayBuffer()))
+  return {
+    output: glbPath,
+    artifactPath: glbPath,
+    ...(thumbnailUrl ? { imageUrl: thumbnailUrl } : {}),
+  }
+}
+
 async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
   const reviewId = randomUUID()
   const previous = ctx.prev
@@ -626,6 +658,8 @@ async function executeRoutine(
               ? runFolderInputStep(routine, step, ctx)
               : step.type === 'imagegen'
               ? await runImagegenStep(step, ctx)
+              : step.type === 'model3d'
+              ? await runModel3dStep(step, ctx)
               : step.type === 'notify'
                 ? await runNotifyStep(routine, step, ctx, channels)
                 : step.type === 'review'

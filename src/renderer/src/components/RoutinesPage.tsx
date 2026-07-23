@@ -19,6 +19,7 @@ import customParseFormat from 'dayjs/plugin/customParseFormat'
 
 dayjs.extend(customParseFormat)
 import {
+  Box,
   CalendarClock,
   Play,
   Pencil,
@@ -86,6 +87,7 @@ const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot 
   agent: { label: '智能体', icon: Bot },
   'folder-input': { label: '读取素材', icon: FolderSearch },
   imagegen: { label: '生图', icon: ImageIcon },
+  model3d: { label: '3D 生成', icon: Box },
   review: { label: '人工审核', icon: ShieldCheck },
   notify: { label: '通知', icon: Bell },
   export: { label: '导出文章', icon: FileText },
@@ -114,6 +116,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   name: '',
   type,
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
+  ...(type === 'model3d' ? { imageRef: '{{prev.imageUrl}}', provider: 'tripo' as const } : {}),
   ...(type === 'folder-input' ? { path: '' } : {}),
   ...(type === 'review' ? { message: '请检查上一步生成的内容，确认后继续。' } : {}),
   ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
@@ -566,7 +569,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     !!s.name.trim() &&
     (s.type === 'notify'
       ? !!s.channelId
-      : s.type === 'folder-input' || s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft'
+      : s.type === 'folder-input' || s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft' || s.type === 'model3d'
         ? true
         : !!s.prompt?.trim())
 
@@ -614,6 +617,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type !== 'notify' && type !== 'folder-input' ? { prompt: step.prompt ?? '' } : {}),
           ...(type === 'folder-input' ? { path: step.path ?? '' } : {}),
           ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
+          ...(type === 'model3d'
+            ? { imageRef: step.imageRef ?? '{{prev.imageUrl}}', provider: step.provider ?? ('tripo' as const) }
+            : {}),
           ...(type === 'notify' ? { channelId: step.channelId ?? channels[0]?.id, message: step.message ?? '' } : {}),
           ...(type === 'review' ? { message: step.message ?? '请检查上一步生成的内容，确认后继续。' } : {}),
           ...(type === 'export'
@@ -859,7 +865,13 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                     <Input.TextArea
                       value={step.prompt ?? ''}
                       onChange={(e) => updateStep(step.id, { prompt: e.target.value })}
-                      placeholder={step.type === 'imagegen' ? '画什么(支持 {{prev.output}} 等变量)' : 'Instruction for this node'}
+                      placeholder={
+                        step.type === 'imagegen'
+                          ? '画什么(支持 {{prev.output}} 等变量)'
+                          : step.type === 'model3d'
+                          ? '文字描述(有上游图片时可留空 → 走图生 3D)'
+                          : 'Instruction for this node'
+                      }
                       autoSize={{ minRows: 3, maxRows: 8 }}
                     />
                   )}
@@ -886,6 +898,31 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       options={[{ value: 'openai', label: '云端 gpt-image-2' }]}
                     />
                   </div>
+                )}
+                {step.type === 'model3d' && (
+                  <>
+                    <Input
+                      value={step.imageRef ?? '{{prev.imageUrl}}'}
+                      onChange={(e) => updateStep(step.id, { imageRef: e.target.value })}
+                      addonBefore="输入图"
+                      placeholder="{{prev.imageUrl}}(解析为图 URL 则图生 3D,否则用上面文字文生 3D)"
+                    />
+                    <div className={styles.formRow}>
+                      <span className={styles.hint}>服务商</span>
+                      <Select
+                        value={step.provider ?? 'tripo'}
+                        onChange={(v) => updateStep(step.id, { provider: v })}
+                        style={{ width: 180 }}
+                        options={[
+                          { value: 'tripo', label: 'Tripo(文/图生)' },
+                          { value: 'hi3d', label: 'Hi3D(仅图生)' },
+                        ]}
+                      />
+                    </div>
+                    <span className={styles.hint}>
+                      接在「生图」节点后即可图生 3D;glb 存到工作区 .pi-studio/models/
+                    </span>
+                  </>
                 )}
                 {step.type === 'notify' && (
                   <>

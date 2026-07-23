@@ -422,7 +422,7 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -434,6 +434,10 @@ export type RoutineStep = {
   message?: string
   path?: string
   format?: 'markdown' | 'html'
+  /** model3d:图生 3D 服务商 */
+  provider?: 'tripo' | 'hi3d'
+  /** model3d:输入图模板(默认 {{prev.imageUrl}}) */
+  imageRef?: string
 }
 
 export type Routine = {

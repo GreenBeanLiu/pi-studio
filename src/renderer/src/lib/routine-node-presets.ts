@@ -80,6 +80,13 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
     },
   },
   {
+    id: 'media.image-to-3d',
+    category: 'media',
+    label: '图生 3D 模型',
+    description: '把上一步生成的图片重建成 3D 模型(glb),存进工作区',
+    step: { name: '图生 3D', type: 'model3d', imageRef: '{{prev.imageUrl}}', provider: 'tripo' },
+  },
+  {
     id: 'output.wechat-html',
     category: 'output',
     label: '导出公众号 HTML',
@@ -151,6 +158,13 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
     label: '通用生图',
     description: '自定义提示词的生图节点',
     step: { name: '生图', type: 'imagegen', engine: 'openai', prompt: '' },
+  },
+  {
+    id: 'generic.model3d',
+    category: 'generic',
+    label: '通用 3D 生成',
+    description: '上游图片或文字 → 3D 模型(glb)',
+    step: { name: '3D 模型', type: 'model3d', prompt: '', imageRef: '{{prev.imageUrl}}', provider: 'tripo' },
   },
   {
     id: 'generic.export',

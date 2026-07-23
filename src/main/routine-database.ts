@@ -139,6 +139,10 @@ export class RoutineDatabase {
         ...(optionalString(row.format) !== undefined
           ? { format: optionalString(row.format) as RoutineStep['format'] }
           : {}),
+        ...(optionalString(row.provider) !== undefined
+          ? { provider: optionalString(row.provider) as RoutineStep['provider'] }
+          : {}),
+        ...(optionalString(row.image_ref) !== undefined ? { imageRef: optionalString(row.image_ref) } : {}),
       }
       const steps = stepsByWorkflow.get(workflowId) ?? []
       steps.push(step)
@@ -302,6 +306,7 @@ export class RoutineDatabase {
     ) ?? 0
     if (currentVersion < 1) this.migrateToVersion1()
     if (currentVersion < 2) this.migrateToVersion2()
+    if (currentVersion < 3) this.migrateToVersion3()
   }
 
   private migrateToVersion1(): void {
@@ -393,6 +398,16 @@ export class RoutineDatabase {
     `))
   }
 
+  private migrateToVersion3(): void {
+    // model3d 步骤的两个字段:图生 3D 服务商 + 输入图模板
+    this.transaction(() => this.db.exec(`
+      ALTER TABLE workflow_steps ADD COLUMN provider TEXT;
+      ALTER TABLE workflow_steps ADD COLUMN image_ref TEXT;
+      INSERT INTO schema_migrations (version, applied_at)
+        VALUES (3, unixepoch('subsec') * 1000);
+    `))
+  }
+
   private importLegacyOnce(): void {
     const imported = this.db.prepare("SELECT value FROM metadata WHERE key = 'legacy_json_imported'").get()
     if (imported) return
@@ -419,8 +434,8 @@ export class RoutineDatabase {
     `)
     const insertStep = this.db.prepare(`
       INSERT INTO workflow_steps (
-        workflow_id, id, position, name, type, prompt, engine, channel_id, message, path, format
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workflow_id, id, position, name, type, prompt, engine, channel_id, message, path, format, provider, image_ref
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const routine of store.routines) {
       insertWorkflow.run(
@@ -450,6 +465,8 @@ export class RoutineDatabase {
           step.message ?? null,
           step.path ?? null,
           step.format ?? null,
+          step.provider ?? null,
+          step.imageRef ?? null,
         )
       })
     }
