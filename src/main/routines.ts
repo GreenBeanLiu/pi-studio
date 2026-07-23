@@ -479,8 +479,8 @@ async function runAppIconStep(
       : ['android', 'ios', 'macos', 'windows'],
   })
   return {
-    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.outputPath}`,
-    artifactPath: result.outputPath,
+    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}`,
+    artifactPath: result.archivePath,
   }
 }
 

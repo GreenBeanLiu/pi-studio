@@ -1,9 +1,12 @@
 import { nativeImage, type NativeImage } from 'electron'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'fs'
@@ -18,6 +21,7 @@ import {
   MACOS_ICON_SPECS,
   WINDOWS_ICON_SPECS,
   createPngIco,
+  createZipArchive,
   iosContentsJson,
   type AppIconPlatform,
   type RasterIconSpec,
@@ -34,6 +38,7 @@ export type AppIconBundleOptions = {
 
 export type AppIconBundleResult = {
   outputPath: string
+  archivePath: string
   fileCount: number
   platforms: AppIconPlatform[]
 }
@@ -41,12 +46,12 @@ export type AppIconBundleResult = {
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
 const WINDOWS_ICO_SIZES = [16, 24, 32, 48, 256] as const
 
-function xmlEscape(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
+function rgbColor(value: string): { red: number; green: number; blue: number } {
+  return {
+    red: Number.parseInt(value.slice(1, 3), 16),
+    green: Number.parseInt(value.slice(3, 5), 16),
+    blue: Number.parseInt(value.slice(5, 7), 16),
+  }
 }
 
 function writeBuffer(root: string, relativePath: string, value: Buffer): void {
@@ -60,19 +65,58 @@ function writeText(root: string, relativePath: string, value: string): void {
   writeBuffer(root, relativePath, Buffer.from(value, 'utf8'))
 }
 
-function createSvgImage(source: NativeImage, size: number, ratio = 1, backgroundColor?: string): NativeImage {
-  const sourceData = source.toDataURL()
-  const rendered = size * ratio
-  const offset = (size - rendered) / 2
-  const svg = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
-    backgroundColor ? `<rect width="${size}" height="${size}" fill="${xmlEscape(backgroundColor)}"/>` : '',
-    `<image href="${xmlEscape(sourceData)}" x="${offset}" y="${offset}" width="${rendered}" height="${rendered}"/>`,
-    '</svg>',
-  ].join('')
-  const image = nativeImage.createFromDataURL(
-    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
-  )
+function createBitmapImage(
+  source: NativeImage,
+  size: number,
+  ratio = 1,
+  backgroundColor?: string,
+): NativeImage {
+  const bitmap = Buffer.alloc(size * size * 4)
+  if (backgroundColor) {
+    const { red, green, blue } = rgbColor(backgroundColor)
+    for (let offset = 0; offset < bitmap.length; offset += 4) {
+      // Electron/Chromium NativeImage bitmaps use BGRA byte order.
+      bitmap[offset] = blue
+      bitmap[offset + 1] = green
+      bitmap[offset + 2] = red
+      bitmap[offset + 3] = 255
+    }
+  }
+
+  const rendered = Math.round(size * ratio)
+  if (rendered > 0) {
+    const foreground = source
+      .resize({ width: rendered, height: rendered, quality: 'best' })
+      .toBitmap()
+    const start = Math.floor((size - rendered) / 2)
+    for (let y = 0; y < rendered; y += 1) {
+      for (let x = 0; x < rendered; x += 1) {
+        const sourceOffset = (y * rendered + x) * 4
+        const targetOffset = ((start + y) * size + start + x) * 4
+        const alpha = foreground[sourceOffset + 3]
+        if (!backgroundColor) {
+          foreground.copy(bitmap, targetOffset, sourceOffset, sourceOffset + 4)
+          continue
+        }
+        const inverse = 255 - alpha
+        bitmap[targetOffset] = Math.round(
+          (foreground[sourceOffset] * alpha + bitmap[targetOffset] * inverse) / 255,
+        )
+        bitmap[targetOffset + 1] = Math.round(
+          (foreground[sourceOffset + 1] * alpha + bitmap[targetOffset + 1] * inverse) / 255,
+        )
+        bitmap[targetOffset + 2] = Math.round(
+          (foreground[sourceOffset + 2] * alpha + bitmap[targetOffset + 2] * inverse) / 255,
+        )
+        bitmap[targetOffset + 3] = 255
+      }
+    }
+  }
+  const image = nativeImage.createFromBitmap(bitmap, {
+    width: size,
+    height: size,
+    scaleFactor: 1,
+  })
   if (image.isEmpty()) throw new Error(`无法合成 ${size}×${size} 图标`)
   return image
 }
@@ -84,7 +128,7 @@ function rasterize(
 ): Buffer {
   const ratio = options.safeArea ? 66 / 108 : 1
   if (options.opaque || options.safeArea) {
-    return createSvgImage(
+    return createBitmapImage(
       source,
       size,
       ratio,
@@ -106,6 +150,9 @@ async function loadSource(source: string, workspacePath: string): Promise<Native
     const target = isAbsolute(source) ? resolve(source) : resolve(workspacePath, source)
     if (!isContainedPath(target, workspacePath)) throw new Error('图标母图必须位于工作区内')
     if (!existsSync(target)) throw new Error(`找不到图标母图: ${target}`)
+    const realWorkspace = realpathSync.native(workspacePath)
+    const realTarget = realpathSync.native(target)
+    if (!isContainedPath(realTarget, realWorkspace)) throw new Error('图标母图不能通过链接跳出工作区')
     image = nativeImage.createFromBuffer(readFileSync(target))
   }
 
@@ -113,7 +160,9 @@ async function loadSource(source: string, workspacePath: string): Promise<Native
   const { width, height } = image.getSize()
   if (width !== height) throw new Error(`图标母图必须是正方形，当前为 ${width}×${height}`)
   if (width < 1024) throw new Error(`图标母图至少需要 1024×1024，当前为 ${width}×${height}`)
-  return image
+  return width === 1024
+    ? image
+    : image.resize({ width: 1024, height: 1024, quality: 'best' })
 }
 
 function writeRasterSpecs(
@@ -181,13 +230,13 @@ function writeMacos(root: string, source: NativeImage, backgroundColor: string):
   writeBuffer(
     root,
     'macos/IconComposer/background.png',
-    createSvgImage(source, 1024, 0, backgroundColor).toPNG(),
+    createBitmapImage(source, 1024, 0, backgroundColor).toPNG(),
   )
   writeBuffer(root, 'macos/IconComposer/foreground.png', source.toPNG())
   writeBuffer(
     root,
     'macos/IconComposer/monochrome.png',
-    createSvgImage(source, 1024, 66 / 108).toPNG(),
+    createBitmapImage(source, 1024, 66 / 108).toPNG(),
   )
   writeText(
     root,
@@ -237,6 +286,58 @@ function fileSha256(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
+function nearestExistingParent(path: string): string {
+  let current = path
+  while (!existsSync(current)) {
+    const parent = dirname(current)
+    if (parent === current) return current
+    current = parent
+  }
+  return current
+}
+
+function assertSafeOutputRoot(workspacePath: string, outputRoot: string): void {
+  const realWorkspace = realpathSync.native(workspacePath)
+  if (resolve(outputRoot) === resolve(workspacePath)) throw new Error('图标输出目录不能是工作区根目录')
+  if (!isContainedPath(outputRoot, workspacePath)) throw new Error('图标输出目录必须位于工作区内')
+  const existingParent = nearestExistingParent(outputRoot)
+  const realParent = realpathSync.native(existingParent)
+  if (!isContainedPath(realParent, realWorkspace)) throw new Error('图标输出目录不能通过链接跳出工作区')
+  if (existsSync(outputRoot)) {
+    if (lstatSync(outputRoot).isSymbolicLink()) throw new Error('图标输出目录不能是符号链接或 junction')
+    const realOutput = realpathSync.native(outputRoot)
+    if (!isContainedPath(realOutput, realWorkspace)) throw new Error('图标输出目录不能通过链接跳出工作区')
+  }
+}
+
+function rasterMetadata(path: string): {
+  pixelSize?: string
+  colorSpace?: 'sRGB'
+  alpha?: 'opaque' | 'preserved'
+} {
+  const allSpecs = [
+    ...ANDROID_LEGACY_SPECS,
+    ...ANDROID_ADAPTIVE_SPECS,
+    ...ANDROID_ADAPTIVE_SPECS.map((spec) => ({
+      ...spec,
+      path: spec.path.replace('foreground', 'monochrome'),
+    })),
+    ...IOS_ICON_SPECS,
+    ...MACOS_ICON_SPECS,
+    ...WINDOWS_ICON_SPECS,
+  ]
+  const sourceSize =
+    path.startsWith('source/') || path.startsWith('macos/IconComposer/') ? 1024 : undefined
+  const spec = allSpecs.find((item) => item.path === path)
+  const size = spec?.size ?? sourceSize
+  if (!size || !path.endsWith('.png')) return {}
+  return {
+    pixelSize: `${size}x${size}`,
+    colorSpace: 'sRGB',
+    alpha: spec?.opaque || path.endsWith('background.png') ? 'opaque' : 'preserved',
+  }
+}
+
 export async function generateAppIconBundle(
   options: AppIconBundleOptions,
 ): Promise<AppIconBundleResult> {
@@ -248,7 +349,8 @@ export async function generateAppIconBundle(
   if (platforms.length === 0) throw new Error('至少选择一个图标平台')
 
   const outputRoot = resolve(options.workspacePath, options.outputPath)
-  if (!isContainedPath(outputRoot, options.workspacePath)) throw new Error('图标输出目录必须位于工作区内')
+  assertSafeOutputRoot(options.workspacePath, outputRoot)
+  rmSync(outputRoot, { recursive: true, force: true })
   mkdirSync(outputRoot, { recursive: true })
 
   const source = await loadSource(options.source.trim(), options.workspacePath)
@@ -256,13 +358,13 @@ export async function generateAppIconBundle(
   writeBuffer(
     outputRoot,
     'source/background.png',
-    createSvgImage(source, 1024, 0, backgroundColor).toPNG(),
+    createBitmapImage(source, 1024, 0, backgroundColor).toPNG(),
   )
   writeBuffer(outputRoot, 'source/foreground.png', source.toPNG())
   writeBuffer(
     outputRoot,
     'source/monochrome.png',
-    createSvgImage(source, 1024, 66 / 108).toPNG(),
+    createBitmapImage(source, 1024, 66 / 108).toPNG(),
   )
 
   if (platforms.includes('android')) writeAndroid(outputRoot, source, backgroundColor)
@@ -287,12 +389,26 @@ export async function generateAppIconBundle(
     files: filesBeforeManifest.map((path) => ({
       path,
       sha256: fileSha256(resolve(outputRoot, path)),
+      ...rasterMetadata(path),
     })),
   }
   writeText(outputRoot, 'manifest.json', `${JSON.stringify(manifest, null, 2)}\n`)
+  const archivePath = `${outputRoot}.zip`
+  if (!isContainedPath(archivePath, options.workspacePath)) throw new Error('图标 ZIP 路径必须位于工作区内')
+  const archiveFiles = listFiles(outputRoot)
+  writeFileSync(
+    archivePath,
+    createZipArchive(
+      archiveFiles.map((path) => ({
+        path,
+        data: readFileSync(resolve(outputRoot, path)),
+      })),
+    ),
+  )
 
   return {
     outputPath: outputRoot,
+    archivePath,
     fileCount: listFiles(outputRoot).length,
     platforms,
   }

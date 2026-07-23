@@ -222,9 +222,18 @@ my-app-icons/
 
 ## 实现边界
 
-- 第一版可以可靠完成：候选生成、前景抠图与手动微调、平台遮罩预览、PNG/ICO/Android XML/Apple `Contents.json`/ZIP 导出。
-- 第一版不应承诺自动生成最终 `.icon`；它应输出 Icon Composer 可导入的图层素材。
-- `.icns` 可先输出 `.iconset`，在 macOS 上编译；跨平台直接编码要单独做格式回归测试。
-- 自动向量化是增强项。位图前景可以先满足平台规范，但 Mono 层应允许用户修正，否则复杂彩图简单灰度化会在主题图标中失真。
-- 所有尺寸必须从无损母稿独立缩放并在目标尺寸重新锐化，不能逐级从上一张小图继续缩放。
+### pi-studio 0.10 第一阶段
 
+- 生成或引用一张 1024×1024 母图，在人工审核节点中确认后继续。
+- 一次导出 PNG、ICO、Android XML、Apple `Contents.json`、macOS `.iconset`、Icon Composer 可导入图层和 ZIP。
+- 记录平台、背景色、文件尺寸、透明策略和 SHA-256；每次重建先清理旧目录，避免残留未选择平台的文件。
+- 不承诺在 Windows 上伪造最终 `.icon`；输出 Icon Composer 图层素材，由 Mac 上的 Apple 工具完成。
+- `.icns` 先输出 `.iconset`，在 macOS 上用 `iconutil` 编译。
+- 所有尺寸从规范化的 1024 母稿独立缩放，不能逐级从上一张小图继续缩放。
+
+### 后续交互增强
+
+- 同批次 1–4 个候选并排比较并选择。
+- 前景抠图、缩放/偏移手动微调和可修正的 Mono 图层。
+- Android 遮罩、Apple 外观、Windows 小尺寸及浅色/深色背景预览。
+- MSIX / Microsoft Store 全资产高级包和自动向量化。

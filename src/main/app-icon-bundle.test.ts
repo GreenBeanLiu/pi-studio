@@ -20,6 +20,11 @@ class FakeNativeImage {
   resize(options: { width: number }): FakeNativeImage {
     return new FakeNativeImage(options.width)
   }
+  toBitmap(): Buffer {
+    const bitmap = Buffer.alloc(this.size * this.size * 4)
+    for (let offset = 0; offset < bitmap.length; offset += 4) bitmap[offset + 3] = 255
+    return bitmap
+  }
 }
 
 vi.mock('electron', () => ({
@@ -29,6 +34,8 @@ vi.mock('electron', () => ({
       const size = /width%3D%22(\d+)/.exec(value)?.[1]
       return new FakeNativeImage(size ? Number(size) : 1024)
     },
+    createFromBitmap: (_bitmap: Buffer, options: { width: number }) =>
+      new FakeNativeImage(options.width),
   },
 }))
 
@@ -56,6 +63,7 @@ describe('generateAppIconBundle', () => {
     })
 
     expect(result.fileCount).toBeGreaterThan(60)
+    expect(readFileSync(result.archivePath).readUInt32LE(0)).toBe(0x04034b50)
     const manifest = JSON.parse(readFileSync(join(result.outputPath, 'manifest.json'), 'utf8')) as {
       appName: string
       platforms: string[]
@@ -63,6 +71,10 @@ describe('generateAppIconBundle', () => {
     }
     expect(manifest.appName).toBe('FocusFlow')
     expect(manifest.platforms).toEqual(['android', 'ios', 'macos', 'windows'])
+    expect(manifest.files.find((item) => item.path === 'android/play-store-icon.png')).toMatchObject({
+      pixelSize: '512x512',
+      alpha: 'opaque',
+    })
     expect(manifest.files).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ path: 'android/play-store-icon.png' }),

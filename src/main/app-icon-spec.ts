@@ -133,3 +133,91 @@ export function createPngIco(frames: ReadonlyArray<{ size: number; png: Buffer }
 
   return Buffer.concat([header, ...frames.map((frame) => frame.png)])
 }
+
+function crc32(value: Buffer): number {
+  let crc = 0xffffffff
+  for (const byte of value) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+/** Small dependency-free ZIP writer. App icon assets are already PNG-compressed, so STORE is intentional. */
+export function createZipArchive(
+  entries: ReadonlyArray<{ path: string; data: Buffer }>,
+  timestamp = new Date(),
+): Buffer {
+  if (entries.length === 0 || entries.length > 65_535) {
+    throw new Error('ZIP 至少需要一个文件且不能超过 65535 个文件')
+  }
+  const year = Math.max(1980, timestamp.getFullYear())
+  const dosTime =
+    (timestamp.getHours() << 11) |
+    (timestamp.getMinutes() << 5) |
+    Math.floor(timestamp.getSeconds() / 2)
+  const dosDate =
+    ((year - 1980) << 9) |
+    ((timestamp.getMonth() + 1) << 5) |
+    timestamp.getDate()
+  const localParts: Buffer[] = []
+  const centralParts: Buffer[] = []
+  let offset = 0
+
+  for (const entry of entries) {
+    const normalized = entry.path.replaceAll('\\', '/').replace(/^\/+/, '')
+    if (!normalized || normalized.includes('../')) throw new Error(`ZIP 路径无效: ${entry.path}`)
+    const name = Buffer.from(normalized, 'utf8')
+    if (name.length > 65_535) throw new Error(`ZIP 文件名过长: ${entry.path}`)
+    const checksum = crc32(entry.data)
+
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(0x0800, 6)
+    local.writeUInt16LE(0, 8)
+    local.writeUInt16LE(dosTime, 10)
+    local.writeUInt16LE(dosDate, 12)
+    local.writeUInt32LE(checksum, 14)
+    local.writeUInt32LE(entry.data.length, 18)
+    local.writeUInt32LE(entry.data.length, 22)
+    local.writeUInt16LE(name.length, 26)
+    local.writeUInt16LE(0, 28)
+    localParts.push(local, name, entry.data)
+
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0x0800, 8)
+    central.writeUInt16LE(0, 10)
+    central.writeUInt16LE(dosTime, 12)
+    central.writeUInt16LE(dosDate, 14)
+    central.writeUInt32LE(checksum, 16)
+    central.writeUInt32LE(entry.data.length, 20)
+    central.writeUInt32LE(entry.data.length, 24)
+    central.writeUInt16LE(name.length, 28)
+    central.writeUInt16LE(0, 30)
+    central.writeUInt16LE(0, 32)
+    central.writeUInt16LE(0, 34)
+    central.writeUInt16LE(0, 36)
+    central.writeUInt32LE(0, 38)
+    central.writeUInt32LE(offset, 42)
+    centralParts.push(central, name)
+    offset += local.length + name.length + entry.data.length
+  }
+
+  const centralDirectory = Buffer.concat(centralParts)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(0, 4)
+  end.writeUInt16LE(0, 6)
+  end.writeUInt16LE(entries.length, 8)
+  end.writeUInt16LE(entries.length, 10)
+  end.writeUInt32LE(centralDirectory.length, 12)
+  end.writeUInt32LE(offset, 16)
+  end.writeUInt16LE(0, 20)
+  return Buffer.concat([...localParts, centralDirectory, end])
+}

@@ -6,6 +6,7 @@ import {
   MACOS_ICON_SPECS,
   WINDOWS_ICON_SIZES,
   createPngIco,
+  createZipArchive,
   iosContentsJson,
 } from './app-icon-spec'
 
@@ -50,5 +51,22 @@ describe('PNG-compressed ICO writer', () => {
 
   it('rejects invalid frame sizes', () => {
     expect(() => createPngIco([{ size: 512, png: Buffer.from([1]) }])).toThrow(/1-256/)
+  })
+})
+
+describe('ZIP bundle writer', () => {
+  it('writes UTF-8 stored entries with a central directory', () => {
+    const zip = createZipArchive(
+      [
+        { path: 'android/icon.png', data: Buffer.from('png') },
+        { path: '说明.txt', data: Buffer.from('hello') },
+      ],
+      new Date(2026, 6, 24, 12, 0, 0),
+    )
+    expect(zip.readUInt32LE(0)).toBe(0x04034b50)
+    expect(zip.includes(Buffer.from('android/icon.png'))).toBe(true)
+    expect(zip.includes(Buffer.from('说明.txt'))).toBe(true)
+    expect(zip.readUInt32LE(zip.length - 22)).toBe(0x06054b50)
+    expect(zip.readUInt16LE(zip.length - 12)).toBe(2)
   })
 })
