@@ -98,6 +98,7 @@ const PROVIDERS: Array<{
 ]
 
 const STATUS_TEXT: Record<string, string> = {
+  'generating-image': 'AI 生图中…',
   uploading: '上传参考图…',
   submitting: '提交任务…',
   queued: '排队中…',
@@ -288,6 +289,8 @@ function Model3DPageInner(): React.JSX.Element {
   const [mode, setMode] = useState<'text' | 'image' | 'code' | 'blender'>('text')
   const [prompt, setPrompt] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
+  // 图生模式的图从哪来:上传 or gpt-image-2 生成
+  const [imgSource, setImgSource] = useState<'upload' | 'ai'>('upload')
   const [refWarnings, setRefWarnings] = useState<string[]>([])
   const [blenderStatus, setBlenderStatus] = useState<BlenderSetupStatus | null>(null)
   const [blenderSetupLoading, setBlenderSetupLoading] = useState(false)
@@ -392,11 +395,18 @@ function Model3DPageInner(): React.JSX.Element {
   }
 
   const onGenerate = async (): Promise<void> => {
-    if (mode !== 'image' && !prompt.trim())
+    if (mode === 'image') {
+      if (imgSource === 'upload' && !imageDataUrl) return void message.warning('请选择参考图片')
+      if (imgSource === 'ai' && !prompt.trim()) return void message.warning('请输入模型描述')
+    } else if (!prompt.trim()) {
       return void message.warning('请输入描述')
-    if (mode === 'image' && !imageDataUrl) return void message.warning('请选择参考图片')
+    }
+    const aiImage = mode === 'image' && imgSource === 'ai'
     setGenerating(true)
-    setProgress({ status: mode === 'code' || mode === 'blender' ? 'building' : 'submitting', progress: 0 })
+    setProgress({
+      status: mode === 'code' || mode === 'blender' ? 'building' : aiImage ? 'generating-image' : 'submitting',
+      progress: 0,
+    })
     try {
       const res =
         mode === 'blender'
@@ -406,7 +416,8 @@ function Model3DPageInner(): React.JSX.Element {
           : await api.model3d.generate({
               mode,
               prompt,
-              ...(mode === 'image' && imageDataUrl ? { imageDataUrl } : {}),
+              ...(aiImage ? { aiImage: true } : {}),
+              ...(mode === 'image' && !aiImage && imageDataUrl ? { imageDataUrl } : {}),
               provider,
               options: opts,
             })
@@ -569,55 +580,82 @@ function Model3DPageInner(): React.JSX.Element {
           </div>
         ) : (
           <div className={styles.field}>
-            <span className={styles.label}>参考图片</span>
-            <div className={styles.dropzone} onClick={() => fileRef.current?.click()}>
-              {imageDataUrl ? (
-                <>
-                  <img className={styles.dropImg} src={imageDataUrl} alt="reference" />
-                  <Button
-                    className={styles.clearImg}
-                    size="small"
-                    icon={<X size={14} />}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setImageDataUrl(null)
-                      setRefWarnings([])
-                    }}
-                  />
-                </>
-              ) : (
-                <div style={{ textAlign: 'center' }}>
-                  <ImagePlus size={26} />
-                  <div style={{ marginTop: 6, fontSize: 12 }}>点击选择图片</div>
-                </div>
-              )}
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={(e) => pickFile(e.target.files?.[0])}
+            <Segmented
+              block
+              value={imgSource}
+              onChange={(v) => setImgSource(v as 'upload' | 'ai')}
+              options={[
+                { label: '上传参考图', value: 'upload' },
+                { label: 'AI 生图', value: 'ai' },
+              ]}
+              style={{ marginBottom: 10 }}
             />
-            <span className={styles.label} style={{ fontSize: 12 }}>
-              建议:单一主体、白底或透明底、无遮挡,重建效果最好
-            </span>
-            {refWarnings.length > 0 && (
-              <Alert
-                type="warning"
-                showIcon
-                title={
-                  refWarnings.length === 1 ? (
-                    refWarnings[0]
+            {imgSource === 'ai' ? (
+              <>
+                <span className={styles.label}>模型描述（gpt-image-2 生图 → 图生 3D）</span>
+                <Input.TextArea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="例如:一只赛博朋克风格的机械猫"
+                  autoSize={{ minRows: 3, maxRows: 6 }}
+                />
+                <span className={styles.label} style={{ fontSize: 12 }}>
+                  先按描述生成一张纯白底参考图,再据此图生 3D
+                </span>
+              </>
+            ) : (
+              <>
+                <span className={styles.label}>参考图片</span>
+                <div className={styles.dropzone} onClick={() => fileRef.current?.click()}>
+                  {imageDataUrl ? (
+                    <>
+                      <img className={styles.dropImg} src={imageDataUrl} alt="reference" />
+                      <Button
+                        className={styles.clearImg}
+                        size="small"
+                        icon={<X size={14} />}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setImageDataUrl(null)
+                          setRefWarnings([])
+                        }}
+                      />
+                    </>
                   ) : (
-                    <ul style={{ margin: 0, paddingLeft: 16 }}>
-                      {refWarnings.map((w) => (
-                        <li key={w}>{w}</li>
-                      ))}
-                    </ul>
-                  )
-                }
-              />
+                    <div style={{ textAlign: 'center' }}>
+                      <ImagePlus size={26} />
+                      <div style={{ marginTop: 6, fontSize: 12 }}>点击选择图片</div>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => pickFile(e.target.files?.[0])}
+                />
+                <span className={styles.label} style={{ fontSize: 12 }}>
+                  建议:单一主体、白底或透明底、无遮挡,重建效果最好
+                </span>
+                {refWarnings.length > 0 && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    title={
+                      refWarnings.length === 1 ? (
+                        refWarnings[0]
+                      ) : (
+                        <ul style={{ margin: 0, paddingLeft: 16 }}>
+                          {refWarnings.map((w) => (
+                            <li key={w}>{w}</li>
+                          ))}
+                        </ul>
+                      )
+                    }
+                  />
+                )}
+              </>
             )}
           </div>
         )}

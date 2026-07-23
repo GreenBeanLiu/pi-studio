@@ -242,6 +242,8 @@ model3d: {
     mode: 'text' | 'image' | 'code' | 'blender'
     prompt: string
     imageDataUrl?: string
+    /** 图生模式:true = 先用 gpt-image-2 按 prompt 生成参考图再图生 3D */
+    aiImage?: boolean
     provider?: Model3DProvider
     options?: Model3DOptions
   }) => Promise<Model3DHistoryItem | { error: string }>

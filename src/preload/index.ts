@@ -243,6 +243,7 @@ const api = {
       mode: 'text' | 'image' | 'code' | 'blender'
       prompt: string
       imageDataUrl?: string
+      aiImage?: boolean
       provider?: Model3DProvider
       options?: Model3DOptions
     }) => ipcRenderer.invoke('model3d:generate', payload),

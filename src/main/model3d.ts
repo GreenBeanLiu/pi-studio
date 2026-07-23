@@ -91,6 +91,8 @@ type GeneratePayload = {
   mode: 'text' | 'image'
   prompt: string
   imageDataUrl?: string
+  /** 图生模式:true = 先用 gpt-image-2 按 prompt 生成参考图,再图生 3D(可不带 imageDataUrl) */
+  aiImage?: boolean
   provider?: Model3DProvider
   options?: Model3DOptions
 }
@@ -133,9 +135,58 @@ async function download(url: string, dest: string): Promise<void> {
   writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
 }
 
+/** 用 gpt-image-2 按提示词生成一张适合图生 3D 的参考图,返回 R2 公网 URL。 */
+async function genGptImage(prompt: string): Promise<string> {
+  const imagePrompt = `${prompt}，单个主体居中，纯白背景，正面视角，产品照，无阴影投影，写实清晰`
+  const resp = await cloudFetch(
+    '/imagegen',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-image-2', prompt: imagePrompt }),
+    },
+    CLOUD_TIMEOUT_MS,
+  )
+  if (!resp.ok || !resp.body)
+    throw new Error(`生图失败 ${resp.status}: ${(await resp.text().catch(() => '')).slice(0, 200)}`)
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let sep: number
+    while ((sep = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, sep)
+      buf = buf.slice(sep + 2)
+      const event = /^event: (.+)$/m.exec(block)?.[1]
+      const dataRaw = /^data: (.+)$/m.exec(block)?.[1]
+      if (!event || !dataRaw) continue
+      const data = JSON.parse(dataRaw)
+      if (event === 'error') throw new Error(data.message || '生图失败')
+      if (event === 'result') {
+        const url = (data.urls as string[] | undefined)?.[0]
+        if (!url) throw new Error('生图完成但没有返回图片')
+        return url
+      }
+    }
+  }
+  throw new Error('生图流结束但没有结果')
+}
+
+/** 拉一张远程图片转成 data URL(给 AI 视觉评审当参考图)。 */
+async function urlToDataUrl(url: string): Promise<string> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+  if (!res.ok) throw new Error(`取图失败 HTTP ${res.status}`)
+  const ct = res.headers.get('content-type') || 'image/png'
+  return `data:${ct};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`
+}
+
 async function generate(payload: GeneratePayload): Promise<Model3DResult> {
   if (payload.mode === 'text' && !payload.prompt.trim()) return { error: '请输入文字提示词' }
-  if (payload.mode === 'image' && !payload.imageDataUrl) return { error: '请提供参考图片' }
+  if (payload.mode === 'image' && !payload.imageDataUrl && !(payload.aiImage && payload.prompt.trim()))
+    return { error: '请提供参考图片,或填写描述用 AI 生图' }
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   // 进度事件带上 prompt/mode,渲染进程据此在历史画廊里渲染"生成中"占位卡
@@ -149,9 +200,22 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
     })
   try {
     let imageUrl: string | undefined
-    if (payload.mode === 'image' && payload.imageDataUrl) {
-      progress('uploading', 0)
-      imageUrl = await uploadReference(payload.imageDataUrl)
+    // 评审参考图:上传模式=用户图;AI 生图模式=生成的图(下面补);文生模式=无
+    let reviewReferenceDataUrl: string | undefined = payload.imageDataUrl
+    if (payload.mode === 'image') {
+      if (payload.aiImage && !payload.imageDataUrl) {
+        // 先用 gpt-image-2 生成参考图,直接拿 R2 URL 喂图生 3D(免二次上传)
+        progress('generating-image', 0)
+        imageUrl = await genGptImage(payload.prompt)
+        try {
+          reviewReferenceDataUrl = await urlToDataUrl(imageUrl)
+        } catch {
+          reviewReferenceDataUrl = undefined // 评审参考可缺省,不阻断生成
+        }
+      } else if (payload.imageDataUrl) {
+        progress('uploading', 0)
+        imageUrl = await uploadReference(payload.imageDataUrl)
+      }
     }
 
     progress('submitting', 0)
@@ -231,7 +295,12 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
     }
     saveHistory([item, ...loadHistory()])
     progress('done', 100)
-    if (thumbPath) void scoreFidelity(item, payload, thumbPath)
+    if (thumbPath)
+      void scoreFidelity(
+        item,
+        { mode: payload.mode, prompt: payload.prompt, referenceDataUrl: reviewReferenceDataUrl },
+        thumbPath,
+      )
     return item
   } catch (err) {
     appendAppLog('error', 'model3d.generate', '3D 生成失败', normalizeError(err))
@@ -243,15 +312,15 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
 /** 生成完成后异步评分:不阻塞返回,失败静默(记日志),成功补写历史并广播。 */
 async function scoreFidelity(
   item: Model3DHistoryItem,
-  payload: GeneratePayload,
+  review: { mode: 'text' | 'image'; prompt: string; referenceDataUrl?: string },
   thumbPath: string,
 ): Promise<void> {
   try {
     const renderDataUrl = `data:image/png;base64,${readFileSync(thumbPath).toString('base64')}`
     const fidelity = await reviewModelRender({
-      mode: payload.mode,
-      prompt: payload.prompt,
-      ...(payload.imageDataUrl ? { referenceDataUrl: payload.imageDataUrl } : {}),
+      mode: review.mode,
+      prompt: review.prompt,
+      ...(review.referenceDataUrl ? { referenceDataUrl: review.referenceDataUrl } : {}),
       renderDataUrl,
     })
     saveHistory(loadHistory().map((it) => (it.id === item.id ? { ...it, fidelity } : it)))
