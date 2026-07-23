@@ -203,15 +203,15 @@ pnpm exec electron-vite build && pnpm exec electron-builder --mac --publish neve
 
 ---
 
-## 5. Blender 出 3D（可暂缓）
+## 5. Blender 出 3D（Mac 明确不移植）
 
 `src/main/blender-setup.ts` 是纯 Windows：`BLENDER_EXE='blender.exe'`、`where.exe` 查路径、`platform!=='win32'` 直接返回空。
-Mac 要支持「Blender 建模出 glb」需补 mac 分支：
-```ts
-// 探测顺序：which blender → /Applications/Blender.app/Contents/MacOS/Blender
-```
-> 这只影响「3D → Blender 引擎」这一个子功能。**换装、生图、Tripo/Hi3D 的 3D、agent 全不依赖它**，
-> 初版 mac 可以先不做，UI 上该按钮报「未安装 Blender」即可（现有逻辑已能优雅降级）。
+
+> **决策：Mac 版不支持 Blender 引擎，不做移植**（产品定位：不在 mac 上做 3D 建模）。
+> Mac 上该功能直接**隐藏/降级**即可——现有 `platform!=='win32'` 早退逻辑已经让它优雅失效，
+> **无需为 mac 补任何 Blender 分支**。
+> 影响面很小：**换装、生图、图生 3D(Tripo/Hi3D，走云中转)、three.js 代码建模、agent 全不依赖 Blender**，
+> 在 mac 上都照常可用；唯独「3D → Blender 引擎」这一个子入口在 mac 隐藏。
 
 ---
 
