@@ -87,6 +87,19 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
     step: { name: '图生 3D', type: 'model3d', imageRef: '{{prev.imageUrl}}', provider: 'tripo' },
   },
   {
+    id: 'media.app-icon-master',
+    category: 'media',
+    label: '应用图标母图',
+    description: '生成适合四端适配的 1024×1024 透明母图',
+    step: {
+      name: '应用图标母图',
+      type: 'imagegen',
+      engine: 'openai',
+      prompt:
+        '为「{{routine.input}}」设计应用图标母图。1024×1024 正方形 PNG，透明背景，主体居中，四周保留约 20% 安全边距；符号简洁、轮廓清晰、在 16px 仍可辨认。不要预先添加圆角、外框、投影、文字、水印或设备模型。',
+    },
+  },
+  {
     id: 'output.wechat-html',
     category: 'output',
     label: '导出公众号 HTML',
@@ -143,6 +156,21 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
       name: '发送预览提醒',
       type: 'notify',
       message: '草稿已生成：{{prev.output}}\n请人工确认后再发布。',
+    },
+  },
+  {
+    id: 'output.app-icon-bundle',
+    category: 'output',
+    label: '导出应用图标包',
+    description: '一次导出 Android、iOS、macOS 和 Windows 工程资源',
+    step: {
+      name: '导出应用图标包',
+      type: 'app-icon',
+      imageRef: '{{prev.imageUrl}}',
+      appName: '{{routine.name}}',
+      path: '.pi-studio/app-icons/{{routine.name}}',
+      backgroundColor: '#2563EB',
+      platforms: ['android', 'ios', 'macos', 'windows'],
     },
   },
   {

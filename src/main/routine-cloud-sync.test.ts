@@ -45,6 +45,36 @@ describe('routine cloud payloads', () => {
     })
   })
 
+  it('stores application icon options in the cloud step config', () => {
+    const iconRoutine: Routine = {
+      ...routine,
+      steps: [
+        {
+          id: 'icon-step',
+          name: 'Icons',
+          type: 'app-icon',
+          imageRef: '{{prev.imageUrl}}',
+          appName: 'FocusFlow',
+          backgroundColor: '#2563EB',
+          platforms: ['android', 'ios', 'macos', 'windows'],
+        },
+      ],
+    }
+    expect(routineWorkflowPayload(iconRoutine)).toMatchObject({
+      steps: [
+        {
+          type: 'app-icon',
+          config: {
+            image_ref: '{{prev.imageUrl}}',
+            app_name: 'FocusFlow',
+            background_color: '#2563EB',
+            platforms: ['android', 'ios', 'macos', 'windows'],
+          },
+        },
+      ],
+    })
+  })
+
   it('maps completed runs and links step definitions', () => {
     const run: RoutineRun = {
       id: '58ce991c-f0b4-41f9-86e3-786cd643977a',

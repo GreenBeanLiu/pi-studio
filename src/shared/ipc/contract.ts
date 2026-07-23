@@ -422,7 +422,9 @@ export type RoutineSchedule =
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type AppIconPlatform = 'android' | 'ios' | 'macos' | 'windows'
+
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -438,6 +440,12 @@ export type RoutineStep = {
   provider?: 'tripo' | 'hi3d'
   /** model3d:输入图模板(默认 {{prev.imageUrl}}) */
   imageRef?: string
+  /** app-icon:资源包显示名称 */
+  appName?: string
+  /** app-icon:导出平台 */
+  platforms?: AppIconPlatform[]
+  /** app-icon:不透明底图背景色 */
+  backgroundColor?: string
 }
 
 export type Routine = {
@@ -474,6 +482,7 @@ export type RoutineReviewRequest = {
   stepName: string
   message: string
   artifactPath?: string
+  imageUrl?: string
   preview: string
 }
 

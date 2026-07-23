@@ -87,6 +87,27 @@ describe('RoutineDatabase', () => {
     reopened.close()
   })
 
+  it('round-trips application icon node configuration', () => {
+    const paths = createPaths()
+    const store = fixture()
+    store.routines[0].steps = [
+      {
+        id: 'icon-step',
+        name: 'Export app icons',
+        type: 'app-icon',
+        imageRef: '{{prev.imageUrl}}',
+        appName: '{{routine.name}}',
+        path: '.pi-studio/app-icons/app',
+        backgroundColor: '#2563EB',
+        platforms: ['android', 'ios', 'macos', 'windows'],
+      },
+    ]
+    const database = new RoutineDatabase(paths.database, paths.legacy)
+    database.save(store)
+    expect(database.load().routines[0].steps[0]).toEqual(store.routines[0].steps[0])
+    database.close()
+  })
+
   it('does not mark a broken legacy file as imported and can retry', () => {
     const paths = createPaths()
     writeFileSync(paths.legacy, '{broken', 'utf8')

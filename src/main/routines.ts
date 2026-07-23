@@ -12,6 +12,8 @@ import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { cloud3dGenerate } from './model3d'
+import { generateAppIconBundle } from './app-icon-bundle'
+import type { AppIconPlatform } from './app-icon-spec'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
 import { parseRoutineSave } from '../shared/ipc/validators'
@@ -47,7 +49,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -69,6 +71,12 @@ export type RoutineStep = {
   provider?: 'tripo' | 'hi3d'
   /** model3d:输入图的模板(默认 {{prev.imageUrl}});解析成 URL 走图生 3D,否则用 prompt 文生 3D */
   imageRef?: string
+  /** app-icon:导出包内显示的应用名称(支持 {{…}} 变量) */
+  appName?: string
+  /** app-icon:需要导出的目标平台 */
+  platforms?: AppIconPlatform[]
+  /** app-icon:需要不透明底图的平台使用的品牌背景色 */
+  backgroundColor?: string
 }
 
 export type Routine = {
@@ -114,6 +122,7 @@ export type RoutineReviewRequest = {
   stepName: string
   message: string
   artifactPath?: string
+  imageUrl?: string
   preview: string
 }
 
@@ -176,6 +185,15 @@ function cancelPendingReviews(routineId: string, reason: string): void {
 }
 
 function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
+  const platforms = Array.isArray(step.platforms)
+    ? step.platforms.filter(
+        (platform): platform is AppIconPlatform =>
+          platform === 'android' ||
+          platform === 'ios' ||
+          platform === 'macos' ||
+          platform === 'windows',
+      )
+    : undefined
   return {
     id: step.id || randomUUID(),
     name: step.name ?? '',
@@ -188,6 +206,9 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
     ...(step.format !== undefined ? { format: step.format } : {}),
     ...(step.provider !== undefined ? { provider: step.provider } : {}),
     ...(step.imageRef !== undefined ? { imageRef: step.imageRef } : {}),
+    ...(typeof step.appName === 'string' ? { appName: step.appName } : {}),
+    ...(platforms !== undefined ? { platforms } : {}),
+    ...(typeof step.backgroundColor === 'string' ? { backgroundColor: step.backgroundColor } : {}),
   }
 }
 
@@ -436,6 +457,33 @@ async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<Step
   }
 }
 
+async function runAppIconStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+): Promise<StepProduct> {
+  const source = interpolate((step.imageRef ?? '{{prev.imageUrl}}').trim(), ctx).trim()
+  if (!source || source.includes('{{')) throw new Error('应用图标节点需要上游生图链接或工作区内的母图路径')
+  const outputPath = interpolate(
+    step.path?.trim() || '.pi-studio/app-icons/app-icon-bundle',
+    ctx,
+  )
+  const result = await generateAppIconBundle({
+    source,
+    workspacePath: routine.workspacePath,
+    outputPath,
+    appName: interpolate(step.appName?.trim() || routine.name, ctx),
+    backgroundColor: interpolate(step.backgroundColor?.trim() || '#2563EB', ctx),
+    platforms: step.platforms?.length
+      ? step.platforms
+      : ['android', 'ios', 'macos', 'windows'],
+  })
+  return {
+    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.outputPath}`,
+    artifactPath: result.outputPath,
+  }
+}
+
 function runFolderInputStep(
   routine: Routine,
   step: RoutineStep,
@@ -501,6 +549,9 @@ async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContex
     stepName: step.name,
     message: interpolate(step.message?.trim() || '请检查上一步生成的公众号草稿，确认后继续。', ctx),
     ...(previous?.artifactPath ? { artifactPath: previous.artifactPath } : {}),
+    ...(previous?.imageUrl || previous?.imageDataUrl
+      ? { imageUrl: previous.imageUrl ?? previous.imageDataUrl }
+      : {}),
     preview: (previous?.output ?? '').slice(0, 8000),
   }
 
@@ -658,6 +709,8 @@ async function executeRoutine(
               ? runFolderInputStep(routine, step, ctx)
               : step.type === 'imagegen'
               ? await runImagegenStep(step, ctx)
+              : step.type === 'app-icon'
+              ? await runAppIconStep(routine, step, ctx)
               : step.type === 'model3d'
               ? await runModel3dStep(step, ctx)
               : step.type === 'notify'

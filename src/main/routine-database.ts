@@ -46,6 +46,21 @@ function requiredNumber(value: SqlValue): number {
   return value
 }
 
+function optionalPlatforms(value: SqlValue): RoutineStep['platforms'] {
+  if (typeof value !== 'string') return undefined
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    const allowed = new Set(['android', 'ios', 'macos', 'windows'])
+    return parsed.filter(
+      (item): item is NonNullable<RoutineStep['platforms']>[number] =>
+        typeof item === 'string' && allowed.has(item),
+    )
+  } catch {
+    return undefined
+  }
+}
+
 function openDatabase(path: string): DatabaseSyncInstance {
   // Keep this lookup inside the constructor path so unsupported Electron runtimes
   // can still load the routines module and fall back to JSON storage.
@@ -143,6 +158,13 @@ export class RoutineDatabase {
           ? { provider: optionalString(row.provider) as RoutineStep['provider'] }
           : {}),
         ...(optionalString(row.image_ref) !== undefined ? { imageRef: optionalString(row.image_ref) } : {}),
+        ...(optionalString(row.app_name) !== undefined ? { appName: optionalString(row.app_name) } : {}),
+        ...(optionalPlatforms(row.platforms_json) !== undefined
+          ? { platforms: optionalPlatforms(row.platforms_json) }
+          : {}),
+        ...(optionalString(row.background_color) !== undefined
+          ? { backgroundColor: optionalString(row.background_color) }
+          : {}),
       }
       const steps = stepsByWorkflow.get(workflowId) ?? []
       steps.push(step)
@@ -307,6 +329,7 @@ export class RoutineDatabase {
     if (currentVersion < 1) this.migrateToVersion1()
     if (currentVersion < 2) this.migrateToVersion2()
     if (currentVersion < 3) this.migrateToVersion3()
+    if (currentVersion < 4) this.migrateToVersion4()
   }
 
   private migrateToVersion1(): void {
@@ -408,6 +431,17 @@ export class RoutineDatabase {
     `))
   }
 
+  private migrateToVersion4(): void {
+    // app-icon 步骤的资源包名称、平台集合和不透明底色。
+    this.transaction(() => this.db.exec(`
+      ALTER TABLE workflow_steps ADD COLUMN app_name TEXT;
+      ALTER TABLE workflow_steps ADD COLUMN platforms_json TEXT;
+      ALTER TABLE workflow_steps ADD COLUMN background_color TEXT;
+      INSERT INTO schema_migrations (version, applied_at)
+        VALUES (4, unixepoch('subsec') * 1000);
+    `))
+  }
+
   private importLegacyOnce(): void {
     const imported = this.db.prepare("SELECT value FROM metadata WHERE key = 'legacy_json_imported'").get()
     if (imported) return
@@ -434,8 +468,9 @@ export class RoutineDatabase {
     `)
     const insertStep = this.db.prepare(`
       INSERT INTO workflow_steps (
-        workflow_id, id, position, name, type, prompt, engine, channel_id, message, path, format, provider, image_ref
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workflow_id, id, position, name, type, prompt, engine, channel_id, message, path, format,
+        provider, image_ref, app_name, platforms_json, background_color
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const routine of store.routines) {
       insertWorkflow.run(
@@ -467,6 +502,9 @@ export class RoutineDatabase {
           step.format ?? null,
           step.provider ?? null,
           step.imageRef ?? null,
+          step.appName ?? null,
+          step.platforms ? JSON.stringify(step.platforms) : null,
+          step.backgroundColor ?? null,
         )
       })
     }

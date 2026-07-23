@@ -41,10 +41,12 @@ import {
   FileUp,
   ShieldCheck,
   FolderSearch,
+  AppWindow,
 } from 'lucide-react'
 import {
   api,
   type Channel,
+  type AppIconPlatform,
   type Routine,
   type RoutineNotify,
   type RoutineRun,
@@ -87,6 +89,7 @@ const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot 
   agent: { label: '智能体', icon: Bot },
   'folder-input': { label: '读取素材', icon: FolderSearch },
   imagegen: { label: '生图', icon: ImageIcon },
+  'app-icon': { label: '应用图标', icon: AppWindow },
   model3d: { label: '3D 生成', icon: Box },
   review: { label: '人工审核', icon: ShieldCheck },
   notify: { label: '通知', icon: Bell },
@@ -117,12 +120,52 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   type,
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
   ...(type === 'model3d' ? { imageRef: '{{prev.imageUrl}}', provider: 'tripo' as const } : {}),
+  ...(type === 'app-icon'
+    ? {
+        imageRef: '{{prev.imageUrl}}',
+        appName: '{{routine.name}}',
+        path: '.pi-studio/app-icons/{{routine.name}}',
+        backgroundColor: '#2563EB',
+        platforms: ['android', 'ios', 'macos', 'windows'] as const,
+      }
+    : {}),
   ...(type === 'folder-input' ? { path: '' } : {}),
   ...(type === 'review' ? { message: '请检查上一步生成的内容，确认后继续。' } : {}),
   ...(type === 'export' ? { format: 'html' as const, path: '.pi-studio/articles/article-draft' } : {}),
   ...(type === 'feishu-doc' ? { message: '{{prev.output}}', path: '{{routine.name}} · {{trigger.time}}' } : {}),
   ...(type === 'wechat-draft' ? { message: '{{prev.output}}', path: '{{routine.name}} · {{trigger.time}}' } : {}),
 })
+
+function appIconWorkflowTemplate(workspacePath: string): FormState {
+  return {
+    ...emptyForm(workspacePath),
+    name: '我的应用',
+    input: '应用名称与功能，例如：FocusFlow，一款帮助独立开发者专注工作的效率应用',
+    scheduleType: 'manual',
+    steps: [
+      {
+        ...createStep('imagegen'),
+        name: '应用图标母图',
+        prompt:
+          '为「{{routine.input}}」设计一个专业应用图标母图。1024×1024 正方形 PNG，透明背景，主体居中，四周保留约 20% 安全边距；使用一个简洁、独特、轮廓清晰的核心符号，在 16px 仍可辨认。不要预先添加圆角、外框、投影、文字、水印或设备模型。',
+      },
+      {
+        ...createStep('review'),
+        name: '确认图标方案',
+        message: '请检查图标是否清晰、无文字、没有预先烘焙圆角，确认后导出四个平台资源包。',
+      },
+      {
+        ...createStep('app-icon'),
+        name: '导出四端图标包',
+        imageRef: '{{steps.应用图标母图.imageUrl}}',
+        appName: '{{routine.name}}',
+        path: '.pi-studio/app-icons/{{routine.name}}',
+        backgroundColor: '#2563EB',
+        platforms: ['android', 'ios', 'macos', 'windows'],
+      },
+    ],
+  }
+}
 const emptyForm = (workspacePath: string): FormState => ({
   name: '',
   input: '',
@@ -569,7 +612,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     !!s.name.trim() &&
     (s.type === 'notify'
       ? !!s.channelId
-      : s.type === 'folder-input' || s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft' || s.type === 'model3d'
+      : s.type === 'folder-input' || s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft' || s.type === 'app-icon' || s.type === 'model3d'
         ? true
         : !!s.prompt?.trim())
 
@@ -619,6 +662,15 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
           ...(type === 'model3d'
             ? { imageRef: step.imageRef ?? '{{prev.imageUrl}}', provider: step.provider ?? ('tripo' as const) }
+            : {}),
+          ...(type === 'app-icon'
+            ? {
+                imageRef: step.imageRef ?? '{{prev.imageUrl}}',
+                appName: step.appName ?? '{{routine.name}}',
+                path: step.path ?? '.pi-studio/app-icons/{{routine.name}}',
+                backgroundColor: step.backgroundColor ?? '#2563EB',
+                platforms: step.platforms ?? ['android', 'ios', 'macos', 'windows'],
+              }
             : {}),
           ...(type === 'notify' ? { channelId: step.channelId ?? channels[0]?.id, message: step.message ?? '' } : {}),
           ...(type === 'review' ? { message: step.message ?? '请检查上一步生成的内容，确认后继续。' } : {}),
@@ -807,7 +859,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
             新建
           </Button>
           <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? '', channels))}>
-            快速模板
+            文章模板
+          </Button>
+          <Button size="small" onClick={() => setForm(appIconWorkflowTemplate(workspace?.path ?? ''))}>
+            图标模板
           </Button>
         </div>
 
@@ -861,6 +916,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                   step.type !== 'review' &&
                   step.type !== 'feishu-doc' &&
                   step.type !== 'wechat-draft' &&
+                  step.type !== 'app-icon' &&
                   step.type !== 'folder-input' && (
                     <Input.TextArea
                       value={step.prompt ?? ''}
@@ -921,6 +977,54 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                     </div>
                     <span className={styles.hint}>
                       接在「生图」节点后即可图生 3D;glb 存到工作区 .pi-studio/models/
+                    </span>
+                  </>
+                )}
+                {step.type === 'app-icon' && (
+                  <>
+                    <Input
+                      value={step.imageRef ?? '{{prev.imageUrl}}'}
+                      onChange={(e) => updateStep(step.id, { imageRef: e.target.value })}
+                      addonBefore="母图"
+                      placeholder="{{prev.imageUrl}} 或工作区内的图片路径"
+                    />
+                    <Input
+                      value={step.appName ?? '{{routine.name}}'}
+                      onChange={(e) => updateStep(step.id, { appName: e.target.value })}
+                      addonBefore="应用名"
+                      placeholder="{{routine.name}}"
+                    />
+                    <Input
+                      value={step.path ?? ''}
+                      onChange={(e) => updateStep(step.id, { path: e.target.value })}
+                      addonBefore="输出目录"
+                      placeholder=".pi-studio/app-icons/{{routine.name}}"
+                    />
+                    <Input
+                      value={step.backgroundColor ?? '#2563EB'}
+                      onChange={(e) => updateStep(step.id, { backgroundColor: e.target.value })}
+                      addonBefore="品牌底色"
+                      placeholder="#2563EB"
+                    />
+                    <div className={styles.formRow}>
+                      <span className={styles.hint}>平台</span>
+                      <Select
+                        mode="multiple"
+                        value={step.platforms ?? ['android', 'ios', 'macos', 'windows']}
+                        onChange={(platforms) =>
+                          updateStep(step.id, { platforms: platforms as AppIconPlatform[] })
+                        }
+                        style={{ flex: 1 }}
+                        options={[
+                          { value: 'android', label: 'Android' },
+                          { value: 'ios', label: 'iOS / iPadOS' },
+                          { value: 'macos', label: 'macOS' },
+                          { value: 'windows', label: 'Windows' },
+                        ]}
+                      />
+                    </div>
+                    <span className={styles.hint}>
+                      母图至少 1024×1024；导出 Android 自适应资源、Xcode Asset Catalog、macOS iconset / Icon Composer 图层和 Windows ICO。
                     </span>
                   </>
                 )}
@@ -1265,6 +1369,11 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       </div>
                     ) : step.type === 'review' ? (
                       <div className={styles.nodeSub}>⏸ {step.message || '等待人工审核后继续'}</div>
+                    ) : step.type === 'app-icon' ? (
+                      <div className={styles.nodeSub}>
+                        → {step.path || '.pi-studio/app-icons/app-icon-bundle'} ·{' '}
+                        {(step.platforms ?? ['android', 'ios', 'macos', 'windows']).join(' / ')}
+                      </div>
                     ) : (
                       <div className={styles.nodePrompt} title={step.prompt}>
                         {step.prompt}
@@ -1329,6 +1438,20 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           <div style={{ display: 'grid', gap: 10 }}>
             <div>{reviewRequest.message}</div>
             {reviewRequest.artifactPath && <code>{reviewRequest.artifactPath}</code>}
+            {reviewRequest.imageUrl && (
+              <img
+                src={reviewRequest.imageUrl}
+                alt={reviewRequest.stepName}
+                style={{
+                  width: 'min(100%, 360px)',
+                  aspectRatio: '1',
+                  objectFit: 'contain',
+                  borderRadius: 12,
+                  background: 'var(--ant-color-fill-quaternary)',
+                  justifySelf: 'center',
+                }}
+              />
+            )}
             <Input.TextArea
               value={reviewComment}
               onChange={(e) => setReviewComment(e.target.value)}

@@ -37,7 +37,13 @@ function stepPayload(workflowId: string, step: RoutineStep): Record<string, unkn
     message: step.message ?? null,
     path: step.path ?? null,
     format: step.format ?? null,
-    config: {},
+    config: {
+      ...(step.provider ? { provider: step.provider } : {}),
+      ...(step.imageRef ? { image_ref: step.imageRef } : {}),
+      ...(step.appName ? { app_name: step.appName } : {}),
+      ...(step.platforms ? { platforms: step.platforms } : {}),
+      ...(step.backgroundColor ? { background_color: step.backgroundColor } : {}),
+    },
   }
 }
 

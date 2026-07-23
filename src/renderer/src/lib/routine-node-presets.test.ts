@@ -9,8 +9,10 @@ describe('routine node presets', () => {
         'article.research',
         'article.draft',
         'article.approval',
+        'media.app-icon-master',
         'output.wechat-html',
         'output.wechat-draft',
+        'output.app-icon-bundle',
       ]),
     )
   })
