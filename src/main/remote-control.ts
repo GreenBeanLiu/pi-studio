@@ -140,6 +140,11 @@ class RemoteControlManager {
     if (id !== undefined && id !== null) this.send({ type: 'result', id, data })
   }
 
+  /** 业务错误单独走 top-level error 字段,手机端据此 reject(而不是把 {error} 当成正常结果)。 */
+  private replyError(id: unknown, message: string): void {
+    if (id !== undefined && id !== null) this.send({ type: 'result', id, error: message })
+  }
+
   private async onControllerMessage(raw: string): Promise<void> {
     let msg: Record<string, unknown>
     try {
@@ -203,11 +208,11 @@ class RemoteControlManager {
           break
         }
         default:
-          this.reply(msg.id, { error: `unknown command: ${type}` })
+          this.replyError(msg.id, `unknown command: ${type}`)
           break
       }
     } catch (err) {
-      this.reply(msg.id, { error: errMsg(err) })
+      this.replyError(msg.id, errMsg(err))
     }
   }
 
