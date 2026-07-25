@@ -92,6 +92,24 @@ afterEach(() => {
 })
 
 describe('remote-control command protocol', () => {
+  it('reports the computer identity when creating a pairing code', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ code: '123456', expires_at: 123 }),
+    })
+    ;(globalThis as { fetch: typeof fetch }).fetch = fetchMock as typeof fetch
+
+    await expect(remoteControl.generatePairingCode()).resolves.toEqual({
+      code: '123456',
+      expiresAt: 123,
+    })
+    const request = fetchMock.mock.calls[0][1] as RequestInit
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      device_name: expect.any(String),
+      platform: process.platform,
+    })
+  })
+
   it('acknowledges prompt only after the agent accepts it', async () => {
     mocks.prompt.mockResolvedValue(undefined)
     const ws = await connect()

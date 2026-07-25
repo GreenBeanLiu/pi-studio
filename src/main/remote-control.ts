@@ -1,4 +1,5 @@
 import { dirname } from 'path'
+import { hostname } from 'os'
 import { piClientManager } from './pi-client'
 import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
@@ -228,7 +229,7 @@ class RemoteControlManager {
       const res = await fetch(`${origin}/remote/pair/start`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${cred.token}`, 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ device_name: hostname(), platform: process.platform }),
       })
       if (!res.ok) return { error: `生成配对码失败(${res.status})` }
       const body = (await res.json()) as { code: string; expires_at: number }

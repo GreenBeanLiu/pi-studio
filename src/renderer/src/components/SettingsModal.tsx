@@ -929,7 +929,7 @@ export default function SettingsModal({
                       loading={pairingLoading}
                       onClick={() => void generatePairingCode()}
                     >
-                      生成配对码
+                      添加到手机
                     </Button>
                     {pairing && (
                       <>
@@ -943,7 +943,7 @@ export default function SettingsModal({
                         >
                           {pairing.code}
                         </span>
-                        <span className={styles.labelHint}>5 分钟内在手机端输入</span>
+                        <span className={styles.labelHint}>5 分钟内在手机端输入，可继续添加其他电脑</span>
                       </>
                     )}
                   </div>
@@ -951,7 +951,7 @@ export default function SettingsModal({
                 <Alert
                   type="warning"
                   showIcon
-                  message="手机端稍后上线;现在开启后 app 会连上中转等待配对。远程控制能在这台机器上跑 agent、改代码、执行命令 —— 只在信任环境开启,配对码勿外传。"
+                  message="手机账户可以绑定多台 Mac 或 Windows 电脑。远程控制能在这台机器上运行 agent、修改代码和执行命令，请勿向他人泄露配对码。"
                 />
               </div>
 
