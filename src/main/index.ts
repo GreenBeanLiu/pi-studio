@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, session, Menu, Tray, nativeImage } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 // electron-updater 是 CJS 包,ESM 下不能具名导入,走默认导入再解构
@@ -162,14 +163,16 @@ function setupAutoUpdater(): void {
 }
 
 function createWindow(): void {
+  const isMac = process.platform === 'darwin'
   const mainWindow = new BrowserWindow({
     width: 1480,
     height: 920,
     minWidth: 960,
     minHeight: 640,
     show: false,
-    frame: false,
-    titleBarStyle: 'hidden',
+    ...(isMac
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 12 } }
+      : { frame: false, titleBarStyle: 'hidden' }),
     backgroundColor: '#000000',
     webPreferences: {
       // ESM 构建下 electron-vite 的 preload 产物是 index.mjs
@@ -234,7 +237,7 @@ app.whenReady().then(() => {
     })
   }
 
-  electronApp.setAppUserModelId('cc.glanger.pi-studio')
+  electronApp.setAppUserModelId('com.jiubingwangwang.pi-studio')
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -258,7 +261,7 @@ app.whenReady().then(() => {
       })
     })
   }
-  if (!is.dev) setupAutoUpdater()
+  if (!is.dev && existsSync(join(process.resourcesPath, 'app-update.yml'))) setupAutoUpdater()
   createWindow()
 
   const [mainWindow] = BrowserWindow.getAllWindows()

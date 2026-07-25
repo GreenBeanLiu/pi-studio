@@ -39,6 +39,10 @@ const useStyles = createStyles(({ token, css }) => ({
     flex-shrink: 0;
   `,
 
+  railOffsetMac: css`
+    width: 78px;
+  `,
+
   /* 与 SessionSidebar 同宽,两者左右边界必须精确对齐 */
   brand: css`
     width: clamp(240px, 19vw, 312px);
@@ -194,6 +198,7 @@ const useStyles = createStyles(({ token, css }) => ({
 export default function TitleBar({ workspace, sandboxMode, update, onInstall, onDismissUpdate, onSwitchWorkspace }: Props) {
   const { styles, cx, theme: token } = useStyles()
   const [version, setVersion] = useState('')
+  const isMac = api.platform === 'darwin'
 
   useEffect(() => {
     api.app.version().then(setVersion).catch(() => {})
@@ -205,7 +210,7 @@ export default function TitleBar({ workspace, sandboxMode, update, onInstall, on
 
   return (
     <div className={styles.bar}>
-      <div className={styles.railOffset} />
+      <div className={cx(styles.railOffset, isMac && styles.railOffsetMac)} />
 
       <div className={styles.brand}>
         <img
@@ -291,33 +296,37 @@ export default function TitleBar({ workspace, sandboxMode, update, onInstall, on
           </div>
         )}
 
-        <Tooltip title="最小化" placement="bottom">
-          <button className={styles.winBtn} onClick={() => api.win.minimize()}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-        </Tooltip>
+        {!isMac && (
+          <>
+            <Tooltip title="最小化" placement="bottom">
+              <button className={styles.winBtn} onClick={() => api.win.minimize()}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+            </Tooltip>
 
-        <Tooltip title="最大化" placement="bottom">
-          <button className={styles.winBtn} onClick={() => api.win.maximize()}>
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <rect x="4" y="4" width="16" height="16" rx="2" />
-            </svg>
-          </button>
-        </Tooltip>
+            <Tooltip title="最大化" placement="bottom">
+              <button className={styles.winBtn} onClick={() => api.win.maximize()}>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                </svg>
+              </button>
+            </Tooltip>
 
-        <Tooltip title="关闭" placement="bottom">
-          <button
-            className={cx(styles.winBtn, styles.winBtnClose)}
-            onClick={() => api.win.close()}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </Tooltip>
+            <Tooltip title="关闭" placement="bottom">
+              <button
+                className={cx(styles.winBtn, styles.winBtnClose)}
+                onClick={() => api.win.close()}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </Tooltip>
+          </>
+        )}
       </div>
     </div>
   )

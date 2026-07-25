@@ -23,6 +23,7 @@ export const WSL_SANDBOX_DISTRO = 'pi-studio-sandbox'
 
 /** wsl.exe 的列表输出是 UTF-16LE,必须按此解码(踩过的坑)。 */
 export async function detectWslSandboxDistro(): Promise<boolean> {
+  if (process.platform !== 'win32') return false
   return new Promise((resolve) => {
     const p = spawn('wsl.exe', ['-l', '-q'], { windowsHide: true })
     const chunks: Buffer[] = []

@@ -287,6 +287,7 @@ function scoreColor(score: number): string {
 function Model3DPageInner(): React.JSX.Element {
   const { styles, cx } = useStyles()
   const { message } = AntApp.useApp()
+  const supportsBlender = api.platform === 'win32'
 
   const [configured, setConfigured] = useState(true)
   const [providerReady, setProviderReady] = useState<Record<string, boolean> | null>(null)
@@ -586,7 +587,7 @@ function Model3DPageInner(): React.JSX.Element {
                 ]
               : [
                   { label: '代码建模', value: 'code' },
-                  { label: 'Blender', value: 'blender' },
+                  ...(supportsBlender ? [{ label: 'Blender', value: 'blender' }] : []),
                 ]
           }
         />

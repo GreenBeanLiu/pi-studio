@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -34,7 +34,7 @@ describe('readRoutineMaterialFolder', () => {
         id: 'folder:cover.png',
         name: 'cover.png',
         role: 'cover',
-        uri: join(root, 'materials', 'cover.png'),
+        uri: realpathSync(join(root, 'materials', 'cover.png')),
       }),
     ])
     expect(result.warnings).toContain('Skipped unsupported file: ignore.bin')

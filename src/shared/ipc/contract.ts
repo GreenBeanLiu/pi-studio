@@ -43,7 +43,8 @@ export type {
 // Type-safe wrapper around window.api (exposed by preload)
 
 export type DesktopApi = {
-win: {
+  platform: NodeJS.Platform
+  win: {
   minimize: () => void
   maximize: () => void
   close: () => void

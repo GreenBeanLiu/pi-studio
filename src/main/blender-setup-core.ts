@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { join } from 'path'
+import { win32 } from 'path'
 
 export const BLENDER_MCP_COMMIT = '6641189231caf3752302ae20591bc87fda85fc4e'
 export const BLENDER_MCP_ADDON_URL =
@@ -22,7 +22,7 @@ export function parseBlenderVersion(value: string): string | null {
 }
 
 export function blenderAddonPath(appDataPath: string, version: string): string {
-  return join(
+  return win32.join(
     appDataPath,
     'Blender Foundation',
     'Blender',

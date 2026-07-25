@@ -15,6 +15,8 @@ import type {
 } from '../shared/ipc/contract'
 
 const api = {
+  platform: process.platform,
+
   // 窗口控制
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),

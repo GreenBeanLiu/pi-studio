@@ -1,7 +1,7 @@
 import { ipcMain, app, BrowserWindow } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { writeFileSync, mkdirSync, readFileSync } from 'fs'
-import { join, dirname, relative, resolve, sep } from 'path'
+import { join, dirname, posix, win32 } from 'path'
 import { resolvePiCliPath } from './pi-client'
 import { agentConfigDir } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
@@ -31,13 +31,17 @@ export type SandboxImageStatus = {
 
 const SANDBOX_AGENT_DIR = '/agent'
 
+function hostPathApi(hostPath: string): typeof posix {
+  return /^[A-Za-z]:[\\/]/.test(hostPath) ? win32 : posix
+}
+
 /** Convert the Linux path returned by pi in Docker into the host path used by the UI. */
 export function sandboxSessionPathToHost(sessionPath: string, hostAgentDir = agentConfigDir()): string {
   if (sessionPath !== SANDBOX_AGENT_DIR && !sessionPath.startsWith(`${SANDBOX_AGENT_DIR}/`)) {
     return sessionPath
   }
   const relativePath = sessionPath.slice(`${SANDBOX_AGENT_DIR}/`.length)
-  return join(hostAgentDir, ...relativePath.split('/'))
+  return hostPathApi(hostAgentDir).join(hostAgentDir, ...relativePath.split('/'))
 }
 
 /** Convert a host session path selected by the UI into the path visible in Docker. */
@@ -45,12 +49,13 @@ export function sandboxSessionPathToContainer(
   sessionPath: string,
   hostAgentDir = agentConfigDir(),
 ): string {
-  const hostRoot = resolve(hostAgentDir)
-  const target = resolve(sessionPath)
+  const path = hostPathApi(hostAgentDir)
+  const hostRoot = path.resolve(hostAgentDir)
+  const target = path.resolve(sessionPath)
   const rootKey = hostRoot.toLowerCase()
   const targetKey = target.toLowerCase()
-  if (targetKey !== rootKey && !targetKey.startsWith(`${rootKey}${sep}`)) return sessionPath
-  const relativePath = relative(hostRoot, target).split(sep).join('/')
+  if (targetKey !== rootKey && !targetKey.startsWith(`${rootKey}${path.sep}`)) return sessionPath
+  const relativePath = path.relative(hostRoot, target).split(path.sep).join('/')
   return relativePath ? `${SANDBOX_AGENT_DIR}/${relativePath}` : SANDBOX_AGENT_DIR
 }
 
@@ -88,6 +93,7 @@ async function detectDocker(): Promise<SandboxDetect['docker']> {
 }
 
 async function detectWsl(): Promise<SandboxDetect['wsl']> {
+  if (process.platform !== 'win32') return { available: false, distros: [] }
   // wsl -l -q 在 Windows 上输出 UTF-16LE
   const res = await run('wsl.exe', ['-l', '-q'], { encoding: 'utf16le' })
   if (!res.ok) return { available: false, distros: [] }

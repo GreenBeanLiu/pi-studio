@@ -1,7 +1,7 @@
 {
   "name": "pi-studio",
   "version": "0.10.1",
-  "description": "Windows desktop client for the Pi coding agent",
+  "description": "Desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -14,6 +14,8 @@
     "verify": "pnpm run check && pnpm run build",
     "preview": "electron-vite preview",
     "package": "pnpm run verify && electron-builder --win --publish always",
+    "package:mac": "pnpm run verify && electron-builder --mac dmg zip --arm64 --publish never",
+    "package:win": "pnpm run verify && electron-builder --win --publish always",
     "release:local": "node scripts/release-local.js",
     "release:dry": "node scripts/release-local.js --dry-run --skip-build"
   },
@@ -54,7 +56,7 @@
     "vitest": "^2.1.9"
   },
   "build": {
-    "appId": "cc.glanger.pi-studio",
+    "appId": "com.jiubingwangwang.pi-studio",
     "productName": "pi-studio",
     "asar": false,
     "directories": {
@@ -63,6 +65,7 @@
     "files": [
       "out/**",
       "build/icon.ico",
+      "build/icon.png",
       "!**/*.map",
       "!node_modules/**/*.d.ts",
       "!node_modules/**/*.{md,markdown,txt}",
@@ -75,6 +78,18 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "sign": false
     },
     "nsis": {
       "oneClick": false,

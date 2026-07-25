@@ -125,7 +125,7 @@ macOS 默认 APFS 也大小写不敏感，一般无碍；若目标盘是大小�
 ### 4.1 `package.json` → `build` 加 mac 目标
 ```jsonc
 "build": {
-  "appId": "cc.glanger.pi-studio",
+  "appId": "com.jiubingwangwang.pi-studio",
   "productName": "pi-studio",
   "asar": false,                         // 保持：外部子进程要能读到 cli.js（app.asar 内读不到）
   "directories": { "output": "dist" },
