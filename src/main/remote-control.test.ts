@@ -41,11 +41,13 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = []
 
   readonly url: string
+  readonly protocols?: string | string[]
   readonly sent: string[] = []
   private listeners = new Map<string, Listener[]>()
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url
+    this.protocols = protocols
     FakeWebSocket.instances.push(this)
   }
 
@@ -92,6 +94,13 @@ afterEach(() => {
 })
 
 describe('remote-control command protocol', () => {
+  it('sends host credentials through WebSocket protocols instead of the URL', async () => {
+    const ws = await connect()
+
+    expect(ws.url).toBe('wss://relay.example/remote/ws')
+    expect(ws.protocols).toEqual(['pi-studio-role.host', 'pi-studio-token.host-token'])
+  })
+
   it('reports the computer identity when creating a pairing code', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

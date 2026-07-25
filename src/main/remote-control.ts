@@ -93,8 +93,11 @@ class RemoteControlManager {
     try {
       const cred = await ensureCredential()
       const origin = routineSyncOrigin().replace(/\/+$/, '')
-      const wsUrl = `${origin.replace(/^http/, 'ws')}/remote/ws?role=host&token=${encodeURIComponent(cred.token)}`
-      const ws = new WebSocket(wsUrl)
+      const wsUrl = `${origin.replace(/^http/, 'ws')}/remote/ws`
+      const ws = new WebSocket(wsUrl, [
+        'pi-studio-role.host',
+        `pi-studio-token.${cred.token}`,
+      ])
       this.ws = ws
       ws.addEventListener('open', () => {
         this.controllers = 0
