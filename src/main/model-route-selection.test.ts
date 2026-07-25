@@ -52,6 +52,23 @@ describe('canonical model route selection', () => {
     ).toEqual({ provider: 'openai', model: 'gpt-4o' })
   })
 
+  it('uses gpt-5.6-luna as the first-run cloud default when available', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: null,
+        localProvider: 'openai',
+        localModel: 'gpt-4o',
+        localKeyConfigured: true,
+        gatewayProfiles: [
+          {
+            ...cloudProfiles[0],
+            models: ['codex-auto-review', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+          },
+        ],
+      }),
+    ).toEqual({ provider: 'three-a-main', model: 'gpt-5.6-luna' })
+  })
+
   it('scopes favorites by provider when model ids are identical', () => {
     expect(favoriteRouteKey('three-a-main', 'gpt-5.5')).not.toBe(
       favoriteRouteKey('other-main', 'gpt-5.5'),

@@ -23,6 +23,7 @@ import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type C
 import { appendAppLog, normalizeError } from './app-log'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
+import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import { readRoutineMaterialFolder } from './routine-material-folder'
 import {
   inferRoutineImageRole,
@@ -385,6 +386,7 @@ async function ensureAgentClient(routine: Routine, session: AgentSession): Promi
     cliPath: launch.cliPath,
   })
   await client.start()
+  await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
   session.client = client
   return client
 }

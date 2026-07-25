@@ -43,6 +43,7 @@ import {
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 import { favoriteRouteKey, type ModelRoute } from '../../../shared/model-route'
+import { DEFAULT_THINKING_LEVEL } from '../../../shared/agent-defaults'
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
 
@@ -858,7 +859,7 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
 
   paramsPanel: css`
-    width: 340px;
+    width: 320px;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -896,40 +897,66 @@ const useStyles = createStyles(({ token, css }) => ({
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   `,
 
   modelRow: css`
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    min-height: 36px;
     padding: 7px 10px;
     border-radius: ${token.borderRadiusSM}px;
     border: none;
     background: transparent;
     color: ${token.colorText};
     font-size: 13px;
-    font-family: ${token.fontFamilyCode};
+    font-family: ${token.fontFamily};
+    font-weight: 400;
     cursor: pointer;
     outline: none;
     text-align: left;
     width: 100%;
+    transition:
+      background ${token.motionDurationFast},
+      color ${token.motionDurationFast};
 
     &:hover {
-      background: ${token.colorFillTertiary};
+      background: ${token.colorFillSecondary};
     }
   `,
 
   modelRowActive: css`
-    background: ${token.colorFillSecondary};
+    background: ${token.colorPrimaryBg};
     color: ${token.colorPrimary};
+    font-weight: 500;
+
+    &:hover {
+      background: ${token.colorPrimaryBgHover};
+    }
+  `,
+
+  modelCheckSlot: css`
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  `,
+
+  modelRowLabel: css`
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   `,
 
   modelGroupLabel: css`
     padding: 6px 10px 3px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     color: ${token.colorTextTertiary};
     user-select: none;
   `,
@@ -937,12 +964,49 @@ const useStyles = createStyles(({ token, css }) => ({
   modelRowTag: css`
     margin-left: auto;
     padding: 0 6px;
-    border-radius: 999px;
+    border-radius: ${token.borderRadiusSM}px;
     font-size: 10px;
     line-height: 16px;
     background: ${token.colorFillSecondary};
     color: ${token.colorTextTertiary};
     flex-shrink: 0;
+  `,
+
+  modelInfoPopover: css`
+    .ant-popover-inner {
+      padding: 14px;
+      border: 1px solid ${token.colorBorderSecondary};
+      border-radius: ${token.borderRadiusLG}px;
+      box-shadow: ${token.boxShadowSecondary};
+    }
+  `,
+
+  modelHoverPanel: css`
+    width: 252px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-family: ${token.fontFamily};
+  `,
+
+  modelSpecGrid: css`
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 7px;
+    align-items: baseline;
+    font-size: 12px;
+    line-height: 1.45;
+  `,
+
+  modelSpecLabel: css`
+    color: ${token.colorTextTertiary};
+  `,
+
+  modelSpecValue: css`
+    min-width: 0;
+    color: ${token.colorText};
+    overflow-wrap: anywhere;
   `,
 
   paramGrid: css`
@@ -1289,7 +1353,7 @@ export default function ChatPane({
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [currentModel, setCurrentModel] = useState<{ provider: string; id: string } | null>(null)
-  const [thinking, setThinking] = useState<ThinkingLevel>('off')
+  const [thinking, setThinking] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL)
   const [steeringMode, setSteeringMode] = useState<QueueMode>('all')
   const [followUpMode, setFollowUpMode] = useState<QueueMode>('all')
   const [autoCompaction, setAutoCompaction] = useState(true)
@@ -2424,11 +2488,11 @@ export default function ChatPane({
         `入 $${cost.input ?? 0} · 出 $${cost.output ?? 0}`,
       ])
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px', fontSize: 12 }}>
+      <div className={styles.modelSpecGrid}>
         {rows.map(([k, v]) => (
           <Fragment key={k}>
-            <span style={{ opacity: 0.65 }}>{k}</span>
-            <span style={{ fontFamily: 'monospace' }}>{v}</span>
+            <span className={styles.modelSpecLabel}>{k}</span>
+            <span className={styles.modelSpecValue}>{v}</span>
           </Fragment>
         ))}
       </div>
@@ -2493,7 +2557,7 @@ export default function ChatPane({
    *  参数控制只挂在「当前使用的模型」上,且按模型能力裁剪(推理深度只给 reasoning 模型)。 */
   function modelHoverPanel(m: ModelInfo, active: boolean): ReactNode {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 240 }}>
+      <div className={styles.modelHoverPanel}>
         {modelParamsTooltip(m)}
         {active ? (
           <>
@@ -2571,16 +2635,19 @@ export default function ChatPane({
                   <Popover
                     key={m.key}
                     content={modelHoverPanel(m.info, active)}
-                    placement="right"
+                    placement="rightTop"
                     trigger="hover"
-                    mouseEnterDelay={0.3}
+                    mouseEnterDelay={0.15}
+                    classNames={{ root: styles.modelInfoPopover }}
                   >
                     <button
                       className={cx(styles.modelRow, active && styles.modelRowActive)}
                       onClick={() => pickModel(m.key)}
                     >
-                      {active && <Check size={12} />}
-                      <span style={{ marginLeft: active ? 0 : 18 }}>{m.label}</span>
+                      <span className={styles.modelCheckSlot}>
+                        {active && <Check size={13} />}
+                      </span>
+                      <span className={styles.modelRowLabel}>{m.label}</span>
                       {m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
                     </button>
                   </Popover>

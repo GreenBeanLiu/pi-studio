@@ -19,6 +19,7 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
+import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import {
   inspectBlenderInstall,
   installAddonAndLaunchBlender,
@@ -267,6 +268,7 @@ async function generateBlenderModel(payload: {
       cliPath: resolvePiCliPath(),
     })
     await client.start()
+    await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
 
     const runAgentTurn = (text: string): Promise<void> =>
       new Promise<void>((resolve, reject) => {

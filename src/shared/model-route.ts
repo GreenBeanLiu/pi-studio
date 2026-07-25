@@ -1,3 +1,5 @@
+import { DEFAULT_MODEL_ROUTE } from './agent-defaults'
+
 export type ModelRoute = {
   provider: string
   model: string
@@ -45,6 +47,13 @@ export function selectRuntimeModelRoute(input: RuntimeModelRouteInput): ModelRou
     )
     if (selectedIsLocal || selectedIsCloud) return input.selected
   }
+
+  const defaultCloudProfile = input.gatewayProfiles.find(
+    (profile) =>
+      profile.id === DEFAULT_MODEL_ROUTE.provider &&
+      profile.models.includes(DEFAULT_MODEL_ROUTE.model),
+  )
+  if (defaultCloudProfile) return { ...DEFAULT_MODEL_ROUTE }
 
   if (input.localKeyConfigured) {
     return { provider: input.localProvider, model: input.localModel }

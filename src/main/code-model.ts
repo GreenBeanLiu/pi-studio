@@ -20,6 +20,7 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
+import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 
 /**
  * 第三种 3D 引擎「代码建模」:不走 Tripo,由内嵌的 pi agent 程序化手搓
@@ -246,6 +247,7 @@ async function generateCodeModel(payload: {
       cliPath: resolvePiCliPath(),
     })
     await client.start()
+    await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {

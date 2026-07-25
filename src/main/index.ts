@@ -165,10 +165,10 @@ function setupAutoUpdater(): void {
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
   const mainWindow = new BrowserWindow({
-    width: 1480,
-    height: 920,
-    minWidth: 960,
-    minHeight: 640,
+    width: 1280,
+    height: 800,
+    minWidth: 900,
+    minHeight: 600,
     show: false,
     ...(isMac
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 12 } }

@@ -7,6 +7,7 @@ import type {
 } from '@earendil-works/pi-coding-agent'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
+import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import { loadSettings } from './settings'
 import {
   prepareSandboxLaunch,
@@ -179,6 +180,8 @@ class PiClientManager {
         })
       }
     }
+
+    await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
 
     try {
       const state = await this.getState()
