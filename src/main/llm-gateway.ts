@@ -4,6 +4,18 @@ export type { LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
 
 export type LlmCatalog = { providers: LlmProviderProfile[] }
 
+export function listEnabledLlmRoutes(catalog: LlmCatalog): string[] {
+  return catalog.providers
+    .filter((profile) => profile.enabled)
+    .sort((a, b) => a.sort_order - b.sort_order || a.display_name.localeCompare(b.display_name))
+    .flatMap((profile) =>
+      profile.models
+        .map((model) => model.trim())
+        .filter(Boolean)
+        .map((model) => `${profile.id}::${model}`),
+    )
+}
+
 export type PiCustomModelConfig = {
   id: string
   name: string

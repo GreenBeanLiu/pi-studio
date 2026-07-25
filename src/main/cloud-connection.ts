@@ -14,6 +14,11 @@ export type CloudConnectionSources = {
   allowHttpLoopback?: boolean
 }
 
+export type CloudConnectionDraft = {
+  relay: string
+  key: string
+}
+
 /**
  * Resolves the single Pi Studio backend connection shared by image, LLM, and 3D features.
  * The legacy PI_CLOUD_IMAGE_* names remain environment fallbacks for installed clients.
@@ -32,6 +37,19 @@ export function resolveCloudConnection(sources: CloudConnectionSources): CloudCo
   )
 }
 
+/** Resolve credentials currently shown in Settings without requiring them to be saved first. */
+export function resolveDraftCloudConnection(
+  sources: CloudConnectionSources,
+  draft: CloudConnectionDraft,
+): CloudConnection {
+  return resolveCloudConnection({
+    ...sources,
+    savedRelay: draft.relay,
+    // An encrypted saved key is intentionally not sent back to the renderer.
+    savedKey: draft.key.trim() || sources.savedKey,
+  })
+}
+
 export function getCloudConnection(): CloudConnection {
   const settings = loadSettings()
   return resolveCloudConnection({
@@ -41,4 +59,18 @@ export function getCloudConnection(): CloudConnection {
     builtInRelay: __CLOUD_IMAGE_RELAY__,
     allowHttpLoopback: !app.isPackaged,
   })
+}
+
+export function getDraftCloudConnection(draft: CloudConnectionDraft): CloudConnection {
+  const settings = loadSettings()
+  return resolveDraftCloudConnection(
+    {
+      savedRelay: settings.cloudImageRelay,
+      savedKey: settings.cloudImageKey,
+      env: process.env,
+      builtInRelay: __CLOUD_IMAGE_RELAY__,
+      allowHttpLoopback: !app.isPackaged,
+    },
+    draft,
+  )
 }

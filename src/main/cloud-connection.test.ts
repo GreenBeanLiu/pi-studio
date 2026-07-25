@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveCloudConnection } from './cloud-connection'
+import { resolveCloudConnection, resolveDraftCloudConnection } from './cloud-connection'
 
 describe('Pi Studio cloud connection', () => {
   it('uses the saved connection for every cloud capability', () => {
@@ -35,5 +35,37 @@ describe('Pi Studio cloud connection', () => {
     expect(connection.available).toBe(true)
     expect(connection.relay).toBe('https://legacy.example')
     expect(connection.key).toBe('legacy-key')
+  })
+
+  it('uses unsaved draft values while testing Settings', () => {
+    const connection = resolveDraftCloudConnection(
+      {
+        savedRelay: 'https://saved.example',
+        savedKey: 'saved-key',
+        env: {},
+        builtInRelay: 'https://built-in.example',
+      },
+      { relay: 'https://draft.example/', key: 'draft-key' },
+    )
+
+    expect(connection).toMatchObject({
+      available: true,
+      relay: 'https://draft.example',
+      key: 'draft-key',
+    })
+  })
+
+  it('falls back to the encrypted saved key hidden from Settings', () => {
+    const connection = resolveDraftCloudConnection(
+      {
+        savedRelay: 'https://saved.example',
+        savedKey: 'saved-key',
+        env: {},
+        builtInRelay: 'https://built-in.example',
+      },
+      { relay: 'https://draft.example', key: '' },
+    )
+
+    expect(connection.available && connection.key).toBe('saved-key')
   })
 })

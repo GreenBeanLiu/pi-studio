@@ -452,20 +452,29 @@ export default function SettingsModal({
     setFetchingModels(true)
     setModelFetchResult(null)
     try {
-      const result = await api.settings.listModels({
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        baseUrl: settings.baseUrl,
-      })
+      const useCloudCatalog =
+        !SHOW_ADVANCED_MODEL_CONFIG ||
+        !!settings.cloudImageKey.trim() ||
+        (settings.cloudImageKeyConfigured && !settings.clearCloudImageKey)
+      const result = useCloudCatalog
+        ? await api.settings.listCloudModels({
+            relay: settings.cloudImageRelay,
+            key: settings.cloudImageKey,
+          })
+        : await api.settings.listModels({
+            provider: settings.provider,
+            apiKey: settings.apiKey,
+            model: settings.model,
+            baseUrl: settings.baseUrl,
+          })
       setModelFetchResult(result)
       if (result.ok) {
         setSettings((s) => ({
           ...s,
-          favoriteModels: result.models
-            .map((model) => `${settings.provider}::${model}`)
-            .join(','),
-          model: s.model || result.models[0] || '',
+          favoriteModels: useCloudCatalog
+            ? result.models.join(',')
+            : result.models.map((model) => `${settings.provider}::${model}`).join(','),
+          model: useCloudCatalog ? s.model : s.model || result.models[0] || '',
         }))
       }
     } catch (err) {
@@ -679,9 +688,13 @@ export default function SettingsModal({
                 </span>
                 <div className={styles.actionRow}>
                   <Button size="small" onClick={handleFetchModels} loading={fetchingModels}>
-                    从接口拉取模型
+                    {SHOW_ADVANCED_MODEL_CONFIG ? '从接口拉取模型' : '从云端拉取模型'}
                   </Button>
-                  <span className={styles.labelHint}>支持 OpenAI 兼容网关的 /v1/models。</span>
+                  <span className={styles.labelHint}>
+                    {SHOW_ADVANCED_MODEL_CONFIG
+                      ? '支持 OpenAI 兼容网关的 /v1/models。'
+                      : '读取 Pi Studio 云端已启用的模型线路。'}
+                  </span>
                 </div>
                 <Input.TextArea
                   value={settings.favoriteModels}

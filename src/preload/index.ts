@@ -45,6 +45,7 @@ const api = {
     save: (s: SettingsSaveInput) => ipcRenderer.invoke('settings:save', s),
     testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
     listModels: (s: unknown) => ipcRenderer.invoke('settings:listModels', s),
+    listCloudModels: (s: unknown) => ipcRenderer.invoke('settings:listCloudModels', s),
     onChanged: (cb: () => void) => {
       const handler = (): void => cb()
       ipcRenderer.on('settings:changed', handler)

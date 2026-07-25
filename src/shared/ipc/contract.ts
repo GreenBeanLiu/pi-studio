@@ -83,6 +83,10 @@ settings: {
     model: string
     baseUrl: string
   }) => Promise<ProviderModelListResult>
+  listCloudModels: (s: {
+    relay: string
+    key: string
+  }) => Promise<ProviderModelListResult>
   onChanged: (cb: () => void) => () => void
 }
 llmProfiles: {

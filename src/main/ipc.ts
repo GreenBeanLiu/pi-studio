@@ -45,10 +45,18 @@ import {
   type SecurityPolicyRuleTarget,
 } from './security-policy'
 import { registerImageGenHandlers } from './image-gen'
-import { getCloudConnection } from './cloud-connection'
+import { getCloudConnection, getDraftCloudConnection } from './cloud-connection'
+import { fetchLlmCatalog, listEnabledLlmRoutes } from './llm-gateway'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { parseLlmProfileSavePayload } from './ipc-contracts'
-import { oneOf, parseSessionPath, parseSettingsSave, requiredString } from '../shared/ipc/validators'
+import {
+  isRecord,
+  oneOf,
+  optionalString,
+  parseSessionPath,
+  parseSettingsSave,
+  requiredString,
+} from '../shared/ipc/validators'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const QUEUE_MODES = ['all', 'one-at-a-time'] as const
@@ -291,6 +299,32 @@ export function registerIpcHandlers(): void {
       },
     ) => listProviderModels(settings),
   )
+  ipcMain.handle('settings:listCloudModels', async (_event, payload: unknown) => {
+    try {
+      if (!isRecord(payload)) throw new TypeError('云服务配置无效')
+      const connection = getDraftCloudConnection({
+        relay: optionalString(payload.relay, '云服务地址') ?? '',
+        key: optionalString(payload.key, 'Pi Studio 应用令牌') ?? '',
+      })
+      if (!connection.available) {
+        return { ok: false, message: '云服务配置无效', details: connection.error }
+      }
+
+      const models = listEnabledLlmRoutes(
+        await fetchLlmCatalog(connection.relay, connection.key),
+      )
+      if (models.length === 0) {
+        return { ok: false, message: '云端没有可用模型' }
+      }
+      return { ok: true, message: `已从云端读取 ${models.length} 个模型`, models }
+    } catch (err) {
+      return {
+        ok: false,
+        message: '云端模型读取失败',
+        details: (err as Error).message ?? String(err),
+      }
+    }
+  })
 
   ipcMain.handle('securityPolicy:load', () => {
     return loadSecurityPolicy(piClientManager.getWorkspacePath())

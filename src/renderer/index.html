@@ -35,6 +35,7 @@
             save: () => Promise.resolve({ ok: true }),
             testConnection: () => Promise.resolve({ ok: true, message: 'mock connection ok' }),
             listModels: () => Promise.resolve({ ok: true, message: 'mock models loaded', models: ['gpt-5.5', 'gpt-5.4'] }),
+            listCloudModels: () => Promise.resolve({ ok: true, message: 'mock cloud models loaded', models: ['three-a-main::gpt-5.5'] }),
           },
           securityPolicy: {
             load: () => Promise.resolve({ scope: 'default', policy: { commandAllowlist: [], commandBlocklist: [], writeAllowlist: [], writeBlocklist: [], requireConfirmationForDangerousCommands: true, blockProtectedPaths: true, blockOutsideWorkspace: true } }),

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildGatewayProviderConfigs, type LlmProviderProfile } from './llm-gateway'
+import {
+  buildGatewayProviderConfigs,
+  listEnabledLlmRoutes,
+  type LlmProviderProfile,
+} from './llm-gateway'
 
 const profiles: LlmProviderProfile[] = [
   {
@@ -51,5 +55,21 @@ describe('LLM gateway model registration', () => {
     expect(json).not.toContain('api.3a-api.com')
     expect(json).not.toContain('upstream-secret')
     expect(json).toContain('$PI_STUDIO_LLM_KEY')
+  })
+
+  it('formats only enabled cloud catalog models as provider routes', () => {
+    const routes = listEnabledLlmRoutes({
+      providers: [
+        ...profiles,
+        {
+          ...profiles[0],
+          id: 'disabled-provider',
+          models: ['hidden-model'],
+          enabled: false,
+        },
+      ],
+    })
+
+    expect(routes).toEqual(['three-a-gpt::gpt-5.5', 'three-a-grok::grok-4'])
   })
 })
