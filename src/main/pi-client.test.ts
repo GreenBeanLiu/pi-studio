@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
-import { join } from 'path'
-import { embeddedNodeEnv, loadRpcClient } from './pi-client'
+import { dirname, join } from 'path'
+import { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath } from './pi-client'
 
 describe('embeddedNodeEnv', () => {
   it('marks the application executable as a Node-compatible runtime', () => {
@@ -40,7 +40,7 @@ process.stdin.on('data', (chunk) => {
       'utf8',
     )
     const RpcClient = await loadRpcClient()
-    const client = new RpcClient({ cliPath: fixture })
+    const client = new RpcClient({ cliPath: fixture, runtimePath: process.execPath })
     try {
       await client.start()
       await expect(client.getState()).resolves.toMatchObject({ runtime: process.execPath })
@@ -50,9 +50,33 @@ process.stdin.on('data', (chunk) => {
     }
   })
 
+  it('selects Electron\'s background-only Helper on macOS', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-studio-helper-runtime-'))
+    const execPath = join(dir, 'Test.app', 'Contents', 'MacOS', 'Test')
+    const helperPath = join(
+      dir,
+      'Test.app',
+      'Contents',
+      'Frameworks',
+      'Test Helper.app',
+      'Contents',
+      'MacOS',
+      'Test Helper',
+    )
+    try {
+      mkdirSync(dirname(helperPath), { recursive: true })
+      writeFileSync(helperPath, '')
+      expect(resolveEmbeddedNodePath(execPath, 'darwin')).toBe(helperPath)
+      expect(resolveEmbeddedNodePath(execPath, 'win32')).toBe(execPath)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   const electronPath = require('electron') as string
-  it.runIf(existsSync(electronPath))('runs Electron itself as the embedded Node runtime', () => {
-    const result = spawnSync(electronPath, ['-e', 'process.stdout.write(process.version)'], {
+  it.runIf(existsSync(electronPath))('runs the selected Electron runtime as Node', () => {
+    const runtimePath = resolveEmbeddedNodePath(electronPath)
+    const result = spawnSync(runtimePath, ['-e', 'process.stdout.write(process.version)'], {
       encoding: 'utf8',
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     })

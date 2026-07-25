@@ -4,7 +4,12 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
 import { prepareAgentRuntime } from './agent-runtime-config'
-import { embeddedNodeEnv, loadRpcClient, resolvePiCliPath } from './pi-client'
+import {
+  embeddedNodeEnv,
+  loadRpcClient,
+  resolveEmbeddedNodePath,
+  resolvePiCliPath,
+} from './pi-client'
 import { prepareSandboxLaunch } from './sandbox'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
 import { syncWebSearchExtension } from './web-search-extension'
@@ -373,9 +378,8 @@ async function ensureAgentClient(routine: Routine, session: AgentSession): Promi
     : { cliPath: resolvePiCliPath(), env }
   const client = new RpcClient({
     cwd: routine.workspacePath,
-    // Electron 打包后 RpcClient 用 process.execPath(=pi-studio.exe)拉起子进程,
-    // 不带这个标记会再开一个应用窗口而不是跑 pi CLI → 卡 30s "Timeout waiting for response"。
     env: embeddedNodeEnv(launch.env),
+    runtimePath: resolveEmbeddedNodePath(),
     provider: runtime.provider,
     model: runtime.model,
     cliPath: launch.cliPath,

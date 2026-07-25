@@ -7,7 +7,19 @@ index af2b28976950551bcaa6526b48f1faae0c5b0a81..d9c92f9394070037892af97f5aa0a669
              args.push(...this.options.args);
          }
 -        const childProcess = spawn("node", [cliPath, ...args], {
-+        const childProcess = spawn(process.execPath, [cliPath, ...args], {
++        const childProcess = spawn(this.options.runtimePath ?? process.execPath, [cliPath, ...args], {
              cwd: this.options.cwd,
              env: { ...process.env, ...this.options.env },
              stdio: ["pipe", "pipe", "pipe"],
+diff --git a/dist/modes/rpc/rpc-client.d.ts b/dist/modes/rpc/rpc-client.d.ts
+index e381740c06a4ef6fec756c5c88d97f1720732ad7..9a1f59eb6b982568b3a63f8b8db00a55bbc67c71 100644
+--- a/dist/modes/rpc/rpc-client.d.ts
++++ b/dist/modes/rpc/rpc-client.d.ts
+@@ -11,6 +11,8 @@ export interface RpcClientOptions {
+     /** Path to the CLI entry point (default: searches for dist/cli.js) */
+     cliPath?: string;
++    /** Node-compatible executable used to launch the CLI */
++    runtimePath?: string;
+     /** Working directory for the agent */
+     cwd?: string;
+     /** Environment variables */

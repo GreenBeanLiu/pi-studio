@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import { createRequire } from 'module'
 import type {
   AgentSessionEvent,
@@ -77,6 +77,28 @@ export function embeddedNodeEnv(env: Record<string, string>): Record<string, str
 }
 
 /**
+ * macOS registers the main app executable in Dock even in ELECTRON_RUN_AS_NODE mode.
+ * Electron's LSUIElement Helper provides the same embedded Node runtime without a Dock icon.
+ */
+export function resolveEmbeddedNodePath(
+  execPath = process.execPath,
+  platform = process.platform,
+): string {
+  if (platform !== 'darwin') return execPath
+  const executableName = basename(execPath)
+  const helperPath = resolve(
+    dirname(execPath),
+    '..',
+    'Frameworks',
+    `${executableName} Helper.app`,
+    'Contents',
+    'MacOS',
+    `${executableName} Helper`,
+  )
+  return existsSync(helperPath) ? helperPath : execPath
+}
+
+/**
  * Owns the single active RpcClient (one `pi` CLI subprocess running RPC mode)
  * for the currently open workspace. Switching workspaces stops the old
  * subprocess and starts a fresh one — conversations within a workspace are
@@ -128,6 +150,7 @@ class PiClientManager {
     const client = new RpcClient({
       cwd,
       env: runtimeEnv,
+      runtimePath: resolveEmbeddedNodePath(),
       provider,
       model,
       cliPath: launch.cliPath,

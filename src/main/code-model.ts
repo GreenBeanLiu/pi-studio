@@ -3,7 +3,12 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { spawn } from 'child_process'
-import { loadRpcClient, resolvePiCliPath, embeddedNodeEnv } from './pi-client'
+import {
+  loadRpcClient,
+  resolvePiCliPath,
+  embeddedNodeEnv,
+  resolveEmbeddedNodePath,
+} from './pi-client'
 import { prepareAgentRuntime } from './agent-runtime-config'
 import {
   modelsDir,
@@ -235,6 +240,7 @@ async function generateCodeModel(payload: {
     const client = new RpcClient({
       cwd: dir,
       env,
+      runtimePath: resolveEmbeddedNodePath(),
       provider: runtime.provider,
       model: runtime.model,
       cliPath: resolvePiCliPath(),

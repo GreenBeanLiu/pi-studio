@@ -2,7 +2,12 @@ import { app, ipcMain } from 'electron'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { connect } from 'net'
-import { loadRpcClient, resolvePiCliPath, embeddedNodeEnv } from './pi-client'
+import {
+  loadRpcClient,
+  resolvePiCliPath,
+  embeddedNodeEnv,
+  resolveEmbeddedNodePath,
+} from './pi-client'
 import { prepareAgentRuntime } from './agent-runtime-config'
 import {
   modelsDir,
@@ -256,6 +261,7 @@ async function generateBlenderModel(payload: {
     const client = new RpcClient({
       cwd: dir,
       env: embeddedNodeEnv(runtime.env),
+      runtimePath: resolveEmbeddedNodePath(),
       provider: runtime.provider,
       model: runtime.model,
       cliPath: resolvePiCliPath(),
