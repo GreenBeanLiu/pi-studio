@@ -136,7 +136,7 @@ class RemoteControlManager {
     }
   }
 
-  private reply(id: unknown, data: unknown): void {
+  private reply(id: unknown, data: unknown = { ok: true }): void {
     if (id !== undefined && id !== null) this.send({ type: 'result', id, data })
   }
 
@@ -171,15 +171,19 @@ class RemoteControlManager {
       switch (type) {
         case 'prompt':
           await piClientManager.prompt(String(msg.text ?? ''), msg.images as ImageContent[] | undefined)
+          this.reply(msg.id)
           break
         case 'steer':
           await piClientManager.steer(String(msg.text ?? ''), msg.images as ImageContent[] | undefined)
+          this.reply(msg.id)
           break
         case 'followUp':
           await piClientManager.followUp(String(msg.text ?? ''), msg.images as ImageContent[] | undefined)
+          this.reply(msg.id)
           break
         case 'abort':
           await piClientManager.abort()
+          this.reply(msg.id)
           break
         case 'newSession':
           this.reply(msg.id, await piClientManager.newSession())
