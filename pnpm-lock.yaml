@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@earendil-works/pi-coding-agent@0.80.7': 9093aae8f94a843699586df947b84503eab7ea6acd1eaad3447e9541228a8482
+  '@earendil-works/pi-coding-agent@0.80.7': 4a17223d5ab5e57ee48a0cb5fdb4207a2239e84454666a41e107a8481bd92e2c
 
 importers:
 
@@ -13,7 +13,7 @@ importers:
     dependencies:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.80.7
-        version: 0.80.7(patch_hash=9093aae8f94a843699586df947b84503eab7ea6acd1eaad3447e9541228a8482)(ws@8.21.1)(zod@4.4.3)
+        version: 0.80.7(patch_hash=4a17223d5ab5e57ee48a0cb5fdb4207a2239e84454666a41e107a8481bd92e2c)(ws@8.21.1)(zod@4.4.3)
       electron-updater:
         specifier: ^6.8.3
         version: 6.8.9
@@ -5738,7 +5738,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.80.7(patch_hash=9093aae8f94a843699586df947b84503eab7ea6acd1eaad3447e9541228a8482)(ws@8.21.1)(zod@4.4.3)':
+  '@earendil-works/pi-coding-agent@0.80.7(patch_hash=4a17223d5ab5e57ee48a0cb5fdb4207a2239e84454666a41e107a8481bd92e2c)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.80.7(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.80.7(ws@8.21.1)(zod@4.4.3)
@@ -8942,7 +8942,7 @@ snapshots:
       es6-error: 4.1.1
       matcher: 3.0.0
       roarr: 2.15.4
-      semver: 7.7.4
+      semver: 7.8.5
       serialize-error: 7.0.1
     optional: true
 
@@ -10128,11 +10128,11 @@ snapshots:
 
   node-abi@4.33.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
 
   node-api-version@0.2.1:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
 
   node-domexception@1.0.0: {}
 
@@ -10149,7 +10149,7 @@ snapshots:
       graceful-fs: 4.2.11
       nopt: 9.0.0
       proc-log: 6.1.0
-      semver: 7.7.4
+      semver: 7.8.5
       tar: 7.5.19
       tinyglobby: 0.2.17
       undici: 6.27.0
