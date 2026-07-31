@@ -15,8 +15,10 @@ import {
   type SandboxDetect,
   type SandboxImageStatus,
   type RemoteControlSnapshot,
+  type RemotePairingCode,
 } from '../lib/api'
 import { createDefaultSettingsView } from '../../../shared/contracts'
+import { QRCodeSVG } from 'qrcode.react'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
@@ -199,7 +201,7 @@ export default function SettingsModal({
   const [sandboxDetecting, setSandboxDetecting] = useState(false)
   const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
   const [remoteSnap, setRemoteSnap] = useState<RemoteControlSnapshot | null>(null)
-  const [pairing, setPairing] = useState<{ code: string; expiresAt: number } | null>(null)
+  const [pairing, setPairing] = useState<RemotePairingCode | null>(null)
   const [pairingLoading, setPairingLoading] = useState(false)
   const [sandboxBuilding, setSandboxBuilding] = useState(false)
   const [sandboxBuildLog, setSandboxBuildLog] = useState('')
@@ -933,6 +935,16 @@ export default function SettingsModal({
                     </Button>
                     {pairing && (
                       <>
+                        <div
+                          style={{
+                            background: '#fff',
+                            borderRadius: 8,
+                            padding: 8,
+                            lineHeight: 0,
+                          }}
+                        >
+                          <QRCodeSVG value={pairing.qrPayload} size={112} />
+                        </div>
                         <span
                           style={{
                             fontSize: 22,
@@ -943,7 +955,9 @@ export default function SettingsModal({
                         >
                           {pairing.code}
                         </span>
-                        <span className={styles.labelHint}>5 分钟内在手机端输入，可继续添加其他电脑</span>
+                        <span className={styles.labelHint}>
+                          手机扫码或在 5 分钟内输入，可继续添加其他电脑
+                        </span>
                       </>
                     )}
                   </div>

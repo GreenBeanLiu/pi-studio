@@ -5,6 +5,7 @@ import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog } from './app-log'
 import type { ImageContent } from '@earendil-works/pi-ai'
+import type { RemotePairingCode } from '../shared/ipc/contract'
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -225,7 +226,7 @@ class RemoteControlManager {
   }
 
   /** app 生成一个配对码给手机输入。 */
-  async generatePairingCode(): Promise<{ code: string; expiresAt: number } | { error: string }> {
+  async generatePairingCode(): Promise<RemotePairingCode | { error: string }> {
     try {
       const cred = await ensureCredential()
       const origin = routineSyncOrigin().replace(/\/+$/, '')
@@ -236,7 +237,11 @@ class RemoteControlManager {
       })
       if (!res.ok) return { error: `生成配对码失败(${res.status})` }
       const body = (await res.json()) as { code: string; expires_at: number }
-      return { code: body.code, expiresAt: body.expires_at }
+      return {
+        code: body.code,
+        expiresAt: body.expires_at,
+        qrPayload: `pi-studio://pair?code=${encodeURIComponent(body.code)}`,
+      }
     } catch (err) {
       return { error: errMsg(err) }
     }

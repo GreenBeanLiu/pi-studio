@@ -111,6 +111,7 @@ describe('remote-control command protocol', () => {
     await expect(remoteControl.generatePairingCode()).resolves.toEqual({
       code: '123456',
       expiresAt: 123,
+      qrPayload: 'pi-studio://pair?code=123456',
     })
     const request = fetchMock.mock.calls[0][1] as RequestInit
     expect(JSON.parse(String(request.body))).toMatchObject({

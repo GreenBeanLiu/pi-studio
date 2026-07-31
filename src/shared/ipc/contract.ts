@@ -118,9 +118,7 @@ sandbox: {
 remote: {
   getStatus: () => Promise<RemoteControlSnapshot>
   setEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>
-  generatePairingCode: () => Promise<
-    { code: string; expiresAt: number } | { error: string }
-  >
+  generatePairingCode: () => Promise<RemotePairingCode | { error: string }>
   onStatus: (cb: (snap: RemoteControlSnapshot) => void) => () => void
 }
 securityPolicy: {
@@ -563,6 +561,12 @@ export type RemoteControlSnapshot = {
   status: 'disabled' | 'connecting' | 'connected' | 'error'
   controllers: number
   lastError: string
+}
+
+export type RemotePairingCode = {
+  code: string
+  expiresAt: number
+  qrPayload: string
 }
 
 export type WorkspaceMemory = {

@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.7",
-    "electron-updater": "^6.8.3"
+    "electron-updater": "^6.8.3",
+    "qrcode.react": "^4.2.0"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "^0.80.7",
