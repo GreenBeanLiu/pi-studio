@@ -12,7 +12,6 @@ describe('Grok video request', () => {
         resolution: '720p',
       }),
     ).toEqual({
-      model: 'grok-imagine-video',
       prompt: 'A paper airplane circles a glass tower',
       imageUrl: 'https://cdn.example.com/start.png',
       duration: 10,

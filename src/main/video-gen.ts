@@ -4,6 +4,13 @@ import { join } from 'path'
 import { appendAppLog, normalizeError } from './app-log'
 import { getCloudConnection } from './cloud-connection'
 import {
+  cloudMediaFetch as cloudFetch,
+  downloadCloudMedia as download,
+  localMediaFileUrl as localFileUrl,
+  readCloudSseResult as readSseResult,
+  uploadCloudImageReference as uploadReference,
+} from './cloud-media'
+import {
   buildGrokVideoRequest,
   type GrokVideoGeneratePayload,
 } from './video-gen-request'
@@ -54,80 +61,10 @@ function saveHistory(items: VideoGenHistoryItem[]): void {
   writeFileSync(historyPath(), JSON.stringify(items.slice(0, 200), null, 2), 'utf8')
 }
 
-function localFileUrl(path: string): string {
-  return `file:///${path.replace(/\\/g, '/')}`
-}
-
 function broadcast(payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send('videoGen:progress', payload)
   }
-}
-
-async function cloudFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
-  const cloud = getCloudConnection()
-  if (!cloud.available) throw new Error(cloud.error ?? '云端服务未配置')
-  const headers = new Headers(init.headers)
-  headers.set('X-API-Key', cloud.key)
-  return fetch(`${cloud.relay}${path}`, {
-    ...init,
-    headers,
-    redirect: 'error',
-    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
-  })
-}
-
-async function uploadReference(dataUrl: string): Promise<string> {
-  const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl)
-  if (!match) throw new Error('图片 data URL 无法解析')
-  const response = await cloudFetch(
-    '/imagegen/reference',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_base64: match[2], content_type: match[1] }),
-    },
-    60_000,
-  )
-  if (!response.ok) throw new Error(`图片上传失败(${response.status}): ${(await response.text()).slice(0, 200)}`)
-  const result = (await response.json()) as { url?: string }
-  if (!result.url) throw new Error('图片上传成功但没有返回 URL')
-  return result.url
-}
-
-async function readSseResult(response: Response, onStatus: (stage: string) => void): Promise<Record<string, unknown>> {
-  if (!response.ok || !response.body) {
-    throw new Error(`云端中继 ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`)
-  }
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let separator = buffer.indexOf('\n\n')
-    while (separator >= 0) {
-      const block = buffer.slice(0, separator)
-      buffer = buffer.slice(separator + 2)
-      const event = /^event: (.+)$/m.exec(block)?.[1]
-      const raw = /^data: (.+)$/m.exec(block)?.[1]
-      if (event && raw) {
-        const data = JSON.parse(raw) as Record<string, unknown>
-        if (event === 'error') throw new Error(String(data.message ?? '云端视频任务失败'))
-        if (event === 'status') onStatus(String(data.stage ?? 'running'))
-        if (event === 'result') return data
-      }
-      separator = buffer.indexOf('\n\n')
-    }
-  }
-  throw new Error('云端视频任务结束但没有返回结果')
-}
-
-async function download(url: string, destination: string): Promise<void> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(180_000) })
-  if (!response.ok) throw new Error(`视频下载失败 HTTP ${response.status}`)
-  writeFileSync(destination, Buffer.from(await response.arrayBuffer()))
 }
 
 async function generate(payload: GrokVideoGeneratePayload): Promise<VideoGenResult> {

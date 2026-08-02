@@ -10,7 +10,6 @@ export type GrokVideoGeneratePayload = {
 }
 
 export type GrokVideoRelayRequest = {
-  model: 'grok-imagine-video'
   prompt: string
   imageUrl?: string
   duration: 5 | 10 | 15
@@ -22,7 +21,6 @@ export function buildGrokVideoRequest(
   payload: Omit<GrokVideoGeneratePayload, 'imageDataUrl'> & { imageUrl?: string },
 ): GrokVideoRelayRequest {
   return {
-    model: 'grok-imagine-video',
     prompt: payload.prompt.trim(),
     ...(payload.imageUrl ? { imageUrl: payload.imageUrl } : {}),
     duration: payload.duration ?? 5,

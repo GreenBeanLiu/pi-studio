@@ -25,6 +25,7 @@ import { appendAppLog, normalizeError } from './app-log'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
 import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
+import type { RoutineStepType as SharedRoutineStepType } from '../shared/ipc/contract'
 import { readRoutineMaterialFolder } from './routine-material-folder'
 import {
   inferRoutineImageRole,
@@ -56,7 +57,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'dressup' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = SharedRoutineStepType
 
 export type RoutineStep = {
   id: string

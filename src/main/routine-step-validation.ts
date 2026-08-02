@@ -1,4 +1,6 @@
-export type RoutineStepKind = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'dressup' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+import type { RoutineStepType } from '../shared/ipc/contract'
+
+export type RoutineStepKind = RoutineStepType
 
 export type RoutineStepLike = {
   name: string

@@ -3,6 +3,13 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { getCloudConnection } from './cloud-connection'
 import { appendAppLog, normalizeError } from './app-log'
+import {
+  cloudMediaFetch as cloudFetch,
+  downloadCloudMedia as download,
+  localMediaFileUrl as localFileUrl,
+  readCloudSseResult as readSseResult,
+  uploadCloudImageReference as uploadReference,
+} from './cloud-media'
 
 /**
  * 换装视频:两张「同一主角不同造型」的照片作首帧/尾帧,经 VPS 中继
@@ -54,10 +61,6 @@ export function saveHistory(items: DressupHistoryItem[]): void {
   writeFileSync(indexPath(), JSON.stringify(items.slice(0, 200), null, 2), 'utf-8')
 }
 
-function localFileUrl(p: string): string {
-  return `file:///${p.replace(/\\/g, '/')}`
-}
-
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
@@ -73,74 +76,6 @@ type GeneratePayload = {
   mode?: 'std' | 'pro'
   duration?: '5' | '10'
   model?: string
-}
-
-async function cloudFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
-  const cloud = getCloudConnection()
-  if (!cloud.available) throw new Error(cloud.error ?? '云端服务未配置(设置 → 生图 → 云端中继)')
-  const headers = new Headers(init.headers)
-  headers.set('X-API-Key', cloud.key)
-  return fetch(`${cloud.relay}${path}`, {
-    ...init,
-    headers,
-    redirect: 'error',
-    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
-  })
-}
-
-/** 把一帧照片上传到 R2(复用 imagegen 的 /reference),拿公网 URL 给中继。 */
-async function uploadReference(dataUrl: string): Promise<string> {
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl)
-  if (!m) throw new Error('图片 data URL 无法解析')
-  const resp = await cloudFetch(
-    '/imagegen/reference',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_base64: m[2], content_type: m[1] }),
-    },
-    60_000,
-  )
-  if (!resp.ok) throw new Error(`图片上传失败(${resp.status}): ${(await resp.text()).slice(0, 200)}`)
-  const r = (await resp.json()) as { url?: string }
-  if (!r.url) throw new Error('图片上传成功但没有返回 URL')
-  return r.url
-}
-
-async function download(url: string, dest: string): Promise<void> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(180_000) })
-  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`)
-  writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
-}
-
-/** 读一条中继 SSE 流:status(阶段)回调 → 遇 result 返回其 data,遇 error 抛错。 */
-async function readSseResult(
-  resp: Response,
-  onStatus: (stage: string) => void,
-): Promise<Record<string, unknown>> {
-  if (!resp.ok || !resp.body)
-    throw new Error(`云端中继 ${resp.status}: ${(await resp.text().catch(() => '')).slice(0, 200)}`)
-  const reader = resp.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buf.indexOf('\n\n')) >= 0) {
-      const block = buf.slice(0, sep)
-      buf = buf.slice(sep + 2)
-      const event = /^event: (.+)$/m.exec(block)?.[1]
-      const dataRaw = /^data: (.+)$/m.exec(block)?.[1]
-      if (!event || !dataRaw) continue
-      const data = JSON.parse(dataRaw) as Record<string, unknown>
-      if (event === 'error') throw new Error(String(data.message ?? '云端任务失败'))
-      if (event === 'status') onStatus(String(data.stage ?? 'running'))
-      if (event === 'result') return data
-    }
-  }
-  throw new Error('云端任务结束但没有返回结果')
 }
 
 // gpt-image-2 试衣的默认提示词:双参考图(人物 + 衣服)。
