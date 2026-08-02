@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspacePath: vi.fn(),
   switchSession: vi.fn(),
   listSessions: vi.fn(),
-  loadProviderLabels: vi.fn(),
+  loadCachedProviderLabels: vi.fn(),
 }))
 
 vi.mock('./pi-client', () => ({
@@ -39,7 +39,7 @@ vi.mock('./routine-cloud-sync', () => ({
 vi.mock('./app-log', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./model-catalog', () => ({
   ModelCatalogCoordinator: class {
-    loadProviderLabels = mocks.loadProviderLabels
+    loadCachedProviderLabels = mocks.loadCachedProviderLabels
   },
 }))
 
@@ -96,7 +96,7 @@ async function connect(): Promise<FakeWebSocket> {
 beforeEach(() => {
   FakeWebSocket.instances = []
   vi.clearAllMocks()
-  mocks.loadProviderLabels.mockResolvedValue({ providerLabels: {} })
+  mocks.loadCachedProviderLabels.mockReturnValue({ providerLabels: {} })
   ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket
 })
 
@@ -167,13 +167,37 @@ describe('remote-control command protocol', () => {
     expect(mocks.listSessions).toHaveBeenCalledWith('/sessions', '/workspace')
   })
 
+  it('labels the current model in the initial host state', async () => {
+    mocks.getState.mockResolvedValue({
+      isStreaming: false,
+      model: { provider: 'openai', id: 'gpt-5.5' },
+    })
+    mocks.loadCachedProviderLabels.mockReturnValue({
+      providerLabels: { openai: '3A API' },
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 'state-1', type: 'getState' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'state-1',
+        data: {
+          isStreaming: false,
+          model: { provider: 'openai', providerLabel: '3A API', id: 'gpt-5.5' },
+        },
+      }),
+    )
+  })
+
   it('lists available models and applies a model selected by the phone', async () => {
     const models = [
       { provider: 'openai', id: 'gpt-5.6', contextWindow: 200_000, reasoning: true },
       { provider: 'deepseek', id: 'deepseek-chat', contextWindow: 64_000, reasoning: false },
     ]
     mocks.getAvailableModels.mockResolvedValue(models)
-    mocks.loadProviderLabels.mockResolvedValue({
+    mocks.loadCachedProviderLabels.mockReturnValue({
       providerLabels: { openai: '3A API', deepseek: 'DeepSeek 官方' },
     })
     mocks.setModel.mockResolvedValue({ provider: 'deepseek', id: 'deepseek-chat' })

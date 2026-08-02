@@ -12,6 +12,22 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+function cachedProviderLabels(): Record<string, string> {
+  try {
+    return new ModelCatalogCoordinator().loadCachedProviderLabels().providerLabels
+  } catch {
+    return {}
+  }
+}
+
+function withProviderLabel<T extends { provider: string }>(
+  model: T,
+  providerLabels: Record<string, string>,
+): T & { providerLabel?: string } {
+  const providerLabel = providerLabels[model.provider]
+  return { ...model, ...(providerLabel ? { providerLabel } : {}) }
+}
+
 export type RemoteStatus = 'disabled' | 'connecting' | 'connected' | 'error'
 
 export type RemoteControlSnapshot = {
@@ -197,7 +213,18 @@ class RemoteControlManager {
           this.reply(msg.id, await piClientManager.newSession())
           break
         case 'getState':
-          this.reply(msg.id, await piClientManager.getState())
+          {
+            const state = await piClientManager.getState()
+            this.reply(
+              msg.id,
+              state?.model
+                ? {
+                    ...state,
+                    model: withProviderLabel(state.model, cachedProviderLabels()),
+                  }
+                : state,
+            )
+          }
           break
         case 'getMessages':
           this.reply(msg.id, await piClientManager.getMessages())
@@ -205,21 +232,10 @@ class RemoteControlManager {
         case 'getAvailableModels':
           {
             const models = await piClientManager.getAvailableModels()
-            let providerLabels: Record<string, string> = {}
-            try {
-              providerLabels = (await new ModelCatalogCoordinator().loadProviderLabels())
-                .providerLabels
-            } catch {
-              // Labels are presentation metadata; the model catalog remains usable without them.
-            }
+            const providerLabels = cachedProviderLabels()
             this.reply(
               msg.id,
-              models.map((model) => ({
-                ...model,
-                ...(providerLabels[model.provider]
-                  ? { providerLabel: providerLabels[model.provider] }
-                  : {}),
-              })),
+              models.map((model) => withProviderLabel(model, providerLabels)),
             )
           }
           break

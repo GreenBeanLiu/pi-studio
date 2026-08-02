@@ -69,7 +69,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function localProviderLabel(settings: LocalModelSettings): string | undefined {
+function legacyThreeAProviderLabel(settings: LocalModelSettings): string | undefined {
   if (settings.provider !== 'openai' || !settings.baseUrl.trim()) return undefined
   try {
     const hostname = new URL(settings.baseUrl).hostname.toLowerCase()
@@ -78,6 +78,19 @@ function localProviderLabel(settings: LocalModelSettings): string | undefined {
     return undefined
   }
   return undefined
+}
+
+function providerLabelView(
+  profiles: LlmProviderProfile[],
+  local: LocalModelSettings,
+): ModelCatalogView {
+  const localLabel = legacyThreeAProviderLabel(local)
+  return {
+    providerLabels: {
+      ...Object.fromEntries(profiles.map((profile) => [profile.id, profile.display_name])),
+      ...(localLabel ? { [local.provider]: localLabel } : {}),
+    },
+  }
 }
 
 function catalogCachePath(): string {
@@ -274,7 +287,7 @@ export class ModelCatalogCoordinator {
 
   async loadProviderLabels(): Promise<ModelCatalogView> {
     const local = this.dependencies.loadLocalSettings()
-    const localLabel = localProviderLabel(local)
+    const localLabel = legacyThreeAProviderLabel(local)
     const connection = this.dependencies.getConnection()
     let profiles: LlmProviderProfile[]
     if (!connection.available) {
@@ -290,12 +303,14 @@ export class ModelCatalogCoordinator {
         if (!localLabel && profiles.length === 0) throw error
       }
     }
-    return {
-      providerLabels: {
-        ...Object.fromEntries(profiles.map((profile) => [profile.id, profile.display_name])),
-        ...(localLabel ? { [local.provider]: localLabel } : {}),
-      },
-    }
+    return providerLabelView(profiles, local)
+  }
+
+  loadCachedProviderLabels(): ModelCatalogView {
+    return providerLabelView(
+      validProfiles(this.dependencies.loadCachedProfiles()),
+      this.dependencies.loadLocalSettings(),
+    )
   }
 
   private async mutateAndPublish<T>(mutation: () => Promise<T>): Promise<{

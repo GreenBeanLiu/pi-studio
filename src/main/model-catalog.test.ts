@@ -255,6 +255,31 @@ describe('model catalog coordination', () => {
     })
   })
 
+  it('loads local and cached labels without waiting for the cloud catalog', () => {
+    const fetchCatalog = vi.fn(async () => ({ providers: [profile] }))
+    const catalog = new ModelCatalogCoordinator(
+      dependencies({
+        loadLocalSettings: () => ({
+          provider: 'openai',
+          baseUrl: 'https://www.3a-api.com',
+          heliconeEnabled: false,
+          customModelIds: [],
+          favoriteModelRoutes: [],
+        }),
+        loadCachedProfiles: vi.fn(() => [deepSeekProfile]),
+        fetchCatalog,
+      }),
+    )
+
+    expect(catalog.loadCachedProviderLabels()).toEqual({
+      providerLabels: {
+        openai: '3A API',
+        deepseek: 'DeepSeek 官方',
+      },
+    })
+    expect(fetchCatalog).not.toHaveBeenCalled()
+  })
+
   it('loads provider labels from the last valid cache when the gateway is offline', async () => {
     const catalog = new ModelCatalogCoordinator(
       dependencies({
