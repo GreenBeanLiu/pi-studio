@@ -15,6 +15,9 @@ import {
   type SettingsForm,
   type Workspace,
 } from '../shared/contracts'
+import {
+  migrateDeepSeekFavoriteModels,
+} from '../shared/deepseek-profile'
 
 export type { PiProvider, Workspace } from '../shared/contracts'
 
@@ -34,6 +37,7 @@ const DEFAULTS: SettingsData = {
 }
 
 const MAX_RECENT_WORKSPACES = 10
+const DEEPSEEK_FAVORITES_MIGRATION_KEY = 'deepSeekFavoriteModelsMigrated'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
@@ -201,6 +205,24 @@ export function saveSelectedModelRoute(provider: string, model: string): void {
   const raw = readRaw()
   raw.selectedModelRoute = { provider: provider.trim(), model: model.trim() }
   writeRaw(raw)
+}
+
+export function migrateOfficialDeepSeekFavorites(enabledModels: string[]): boolean {
+  const raw = readRaw()
+  if (raw[DEEPSEEK_FAVORITES_MIGRATION_KEY] === true) return false
+
+  const current =
+    typeof raw.favoriteModels === 'string' ? raw.favoriteModels : DEFAULTS.favoriteModels
+  const next = migrateDeepSeekFavoriteModels({
+    favoriteModels: current,
+    legacyProvider: (raw.provider as PiProvider) ?? DEFAULTS.provider,
+    enabledModels,
+  })
+
+  raw[DEEPSEEK_FAVORITES_MIGRATION_KEY] = true
+  if (next !== current) raw.favoriteModels = next
+  writeRaw(raw)
+  return next !== current
 }
 
 export function removeRecentWorkspace(path: string): Workspace[] {

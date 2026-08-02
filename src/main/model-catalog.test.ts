@@ -13,6 +13,17 @@ const profile: LlmProviderProfile = {
   has_key: true,
 }
 
+const deepSeekProfile: LlmProviderProfile = {
+  id: 'deepseek',
+  display_name: 'DeepSeek 官方',
+  base_url: 'https://api.deepseek.com',
+  api_type: 'openai-completions',
+  models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+  enabled: true,
+  sort_order: 2,
+  has_key: true,
+}
+
 function dependencies(
   overrides: Partial<ModelCatalogDependencies> = {},
 ): ModelCatalogDependencies {
@@ -48,6 +59,7 @@ function dependencies(
     projectModels: vi.fn(),
     loadCachedProfiles: vi.fn(() => []),
     saveCachedProfiles: vi.fn(),
+    migrateOfficialDeepSeekFavorites: vi.fn(() => false),
     loadAvailableModels: vi.fn(async () => []),
     saveCustomModelIds: vi.fn(),
     ...overrides,
@@ -108,6 +120,49 @@ describe('model catalog coordination', () => {
     expect(runtime.profiles).toEqual([profile])
     expect(runtime.chatToken).toBe('chat-token')
     expect(deps.projectModels).toHaveBeenCalledOnce()
+  })
+
+  it('publishes a model-switcher refresh when cloud favorites are migrated', async () => {
+    const onChanged = vi.fn()
+    const migrateOfficialDeepSeekFavorites = vi.fn(() => true)
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => ({ providers: [profile, deepSeekProfile] })),
+      migrateOfficialDeepSeekFavorites,
+    } as never)
+
+    await new ModelCatalogCoordinator(deps, onChanged).sync()
+
+    expect(migrateOfficialDeepSeekFavorites).toHaveBeenCalledWith([
+      profile,
+      deepSeekProfile,
+    ])
+    expect(onChanged).toHaveBeenCalledOnce()
+  })
+
+  it('migrates DeepSeek favorites from the cached catalog when refresh is offline', async () => {
+    const onChanged = vi.fn()
+    const migrateOfficialDeepSeekFavorites = vi.fn(() => true)
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => {
+        throw new Error('offline')
+      }),
+      loadCachedProfiles: vi.fn(() => [deepSeekProfile]),
+      migrateOfficialDeepSeekFavorites,
+    })
+
+    await new ModelCatalogCoordinator(deps, onChanged).sync()
+
+    expect(migrateOfficialDeepSeekFavorites).toHaveBeenCalledWith([deepSeekProfile])
+    expect(onChanged).toHaveBeenCalledOnce()
+  })
+
+  it('defers the one-time migration when no model-switcher notifier is attached', async () => {
+    const migrateOfficialDeepSeekFavorites = vi.fn(() => true)
+    const deps = dependencies({ migrateOfficialDeepSeekFavorites })
+
+    await new ModelCatalogCoordinator(deps).sync()
+
+    expect(migrateOfficialDeepSeekFavorites).not.toHaveBeenCalled()
   })
 
   it('removes projected cloud models when a scoped session token cannot be issued', async () => {

@@ -4,6 +4,7 @@ import {
   DEEPSEEK_OFFICIAL_MODELS,
   DEEPSEEK_PROFILE_ID,
   createDeepSeekProfileWrite,
+  migrateDeepSeekFavoriteModels,
 } from './deepseek-profile'
 
 describe('DeepSeek official profile preset', () => {
@@ -27,5 +28,17 @@ describe('DeepSeek official profile preset', () => {
       enabled: true,
       sort_order: 3,
     })
+  })
+
+  it('adds an existing cloud DeepSeek lane to a curated model switcher', () => {
+    expect(
+      migrateDeepSeekFavoriteModels({
+        favoriteModels: 'openai::gpt-5.6-sol',
+        legacyProvider: 'openai',
+        enabledModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+      }),
+    ).toBe(
+      'openai::gpt-5.6-sol, deepseek::deepseek-v4-flash, deepseek::deepseek-v4-pro',
+    )
   })
 })

@@ -15,6 +15,7 @@ import {
 import {
   agentConfigDir,
   loadSettings,
+  migrateOfficialDeepSeekFavorites,
   saveCustomModelIds,
   writeModelsOverride,
   type PiProvider,
@@ -22,6 +23,7 @@ import {
 import { piClientManager } from './pi-client'
 import type { LlmProfileSavePayload, ModelCatalogView } from '../shared/contracts'
 import { favoriteRouteKey, type ModelRoute } from '../shared/model-route'
+import { DEEPSEEK_PROFILE_ID } from '../shared/deepseek-profile'
 
 type LocalModelSettings = {
   provider: PiProvider
@@ -49,6 +51,7 @@ export type ModelCatalogDependencies = {
   projectModels: (projection: ModelProjection) => void
   loadCachedProfiles: () => LlmProviderProfile[]
   saveCachedProfiles: (profiles: LlmProviderProfile[]) => void
+  migrateOfficialDeepSeekFavorites: (profiles: LlmProviderProfile[]) => boolean
   loadAvailableModels: () => Promise<Array<{ provider: string; id: string }>>
   saveCustomModelIds: (ids: string[]) => void
 }
@@ -142,6 +145,15 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
       ),
     loadCachedProfiles: loadCatalogCache,
     saveCachedProfiles: saveCatalogCache,
+    migrateOfficialDeepSeekFavorites: (profiles) => {
+      const deepSeek = profiles.find(
+        (profile) =>
+          profile.id === DEEPSEEK_PROFILE_ID &&
+          profile.enabled &&
+          profile.models.length > 0,
+      )
+      return deepSeek ? migrateOfficialDeepSeekFavorites(deepSeek.models) : false
+    },
     loadAvailableModels: () => piClientManager.getAvailableModels(),
     saveCustomModelIds,
   }
@@ -151,8 +163,17 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
 export class ModelCatalogCoordinator {
   constructor(
     private readonly dependencies = defaultModelCatalogDependencies(),
-    private readonly onChanged: () => void = () => undefined,
+    private readonly onChanged?: () => void,
   ) {}
+
+  private migrateOfficialDeepSeekFavoritesAndNotify(
+    profiles: LlmProviderProfile[],
+  ): void {
+    if (!this.onChanged) return
+    if (this.dependencies.migrateOfficialDeepSeekFavorites(profiles)) {
+      this.onChanged()
+    }
+  }
 
   private project(
     connection: CloudConnection,
@@ -182,12 +203,14 @@ export class ModelCatalogCoordinator {
     const catalog = await this.dependencies.fetchCatalog(connection.relay, connection.key)
     const profiles = validProfiles(catalog.providers)
     this.dependencies.saveCachedProfiles(profiles)
+    this.migrateOfficialDeepSeekFavoritesAndNotify(profiles)
     return profiles
   }
 
   private loadCachedAndProject(connection: CloudConnection): LlmProviderProfile[] {
     const profiles = validProfiles(this.dependencies.loadCachedProfiles())
       .filter((profile) => profile.enabled && profile.models.length > 0)
+    this.migrateOfficialDeepSeekFavoritesAndNotify(profiles)
     this.project(connection, profiles.length > 0 ? profiles : undefined)
     return profiles
   }
@@ -260,7 +283,7 @@ export class ModelCatalogCoordinator {
   }> {
     const value = await mutation()
     const sync = await this.sync()
-    this.onChanged()
+    this.onChanged?.()
     return { value, warning: sync.warning }
   }
 
