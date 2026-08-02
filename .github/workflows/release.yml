@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      CI: 'true'
+      npm_config_confirm_modules_purge: 'false'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run verify
+      - run: pnpm exec electron-builder --win --publish never
+      - name: Verify and normalize updater assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $expectedTag = "v$($package.version)"
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $expectedTag"
+          }
+
+          $latestPath = Join-Path $PWD 'dist/latest.yml'
+          $latest = Get-Content $latestPath -Raw
+          $artifactName = [regex]::Match($latest, '(?m)^path:\s*(.+)$').Groups[1].Value.Trim()
+          $expectedSize = [long][regex]::Match($latest, '(?m)^\s*size:\s*(\d+)$').Groups[1].Value
+          $expectedSha = [regex]::Match($latest, '(?m)^sha512:\s*(.+)$').Groups[1].Value.Trim()
+          if (-not $artifactName -or -not $expectedSize -or -not $expectedSha) {
+            throw 'latest.yml is missing path, size, or sha512'
+          }
+
+          $targetExe = Join-Path $PWD "dist/$artifactName"
+          $sourceExe = Join-Path $PWD "dist/$($package.build.productName) Setup $($package.version).exe"
+          if (-not (Test-Path $sourceExe)) { throw "Missing installer: $sourceExe" }
+          $actualSize = (Get-Item $sourceExe).Length
+          $actualSha = [Convert]::ToBase64String(
+            [System.Security.Cryptography.SHA512]::HashData([System.IO.File]::ReadAllBytes($sourceExe))
+          )
+          if ($actualSize -ne $expectedSize) { throw 'Installer size does not match latest.yml' }
+          if ($actualSha -ne $expectedSha) { throw 'Installer SHA-512 does not match latest.yml' }
+
+          Copy-Item $sourceExe $targetExe -Force
+          Copy-Item "$sourceExe.blockmap" "$targetExe.blockmap" -Force
+          "RELEASE_TAG=$expectedTag" >> $env:GITHUB_ENV
+          "RELEASE_EXE=$artifactName" >> $env:GITHUB_ENV
+      - name: Publish GitHub release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG `
+              "dist/$env:RELEASE_EXE" `
+              "dist/$env:RELEASE_EXE.blockmap" `
+              dist/latest.yml `
+              --clobber
+          } else {
+            gh release create $env:RELEASE_TAG `
+              "dist/$env:RELEASE_EXE" `
+              "dist/$env:RELEASE_EXE.blockmap" `
+              dist/latest.yml `
+              --title "pi-studio $env:RELEASE_TAG" `
+              --notes "pi-studio $($env:RELEASE_TAG.TrimStart('v')) release." `
+              --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release upload failed' }
+      - name: Verify uploaded release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = gh release view $env:RELEASE_TAG --json assets,isDraft,isPrerelease,url | ConvertFrom-Json
+          if ($release.isDraft -or $release.isPrerelease) { throw 'Release is not final' }
+          $expected = @($env:RELEASE_EXE, "$env:RELEASE_EXE.blockmap", 'latest.yml')
+          foreach ($name in $expected) {
+            if ($name -notin $release.assets.name) { throw "Missing release asset: $name" }
+          }
+          $localSize = (Get-Item "dist/$env:RELEASE_EXE").Length
+          $remoteSize = ($release.assets | Where-Object name -eq $env:RELEASE_EXE).size
+          if ($localSize -ne $remoteSize) { throw 'Uploaded installer size mismatch' }
+          Write-Host "Release verified: $($release.url)"
