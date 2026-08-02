@@ -27,6 +27,7 @@ export const ANDROID_LEGACY_SPECS: RasterIconSpec[] = [
 ]
 
 export const ANDROID_ADAPTIVE_SPECS: RasterIconSpec[] = [
+  { path: 'android/app/src/main/res/mipmap-ldpi/ic_launcher_foreground.png', size: 81 },
   { path: 'android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png', size: 108 },
   { path: 'android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png', size: 162 },
   { path: 'android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png', size: 216 },

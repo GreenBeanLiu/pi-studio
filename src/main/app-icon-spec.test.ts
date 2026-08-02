@@ -15,7 +15,7 @@ import {
 describe('app icon specifications', () => {
   it('covers the platform-required raster sizes', () => {
     expect(ANDROID_LEGACY_SPECS.map((item) => item.size)).toEqual([36, 48, 72, 96, 144, 192, 512])
-    expect(ANDROID_ADAPTIVE_SPECS.map((item) => item.size)).toEqual([108, 162, 216, 324, 432])
+    expect(ANDROID_ADAPTIVE_SPECS.map((item) => item.size)).toEqual([81, 108, 162, 216, 324, 432])
     expect(IOS_ICON_ENTRIES.some((item) => item.idiom === 'ios-marketing' && item.pixels === 1024)).toBe(true)
     expect(MACOS_ICON_SPECS.map((item) => item.size)).toContain(1024)
     expect(WINDOWS_ICON_SIZES).toEqual(expect.arrayContaining([16, 24, 32, 48, 256]))

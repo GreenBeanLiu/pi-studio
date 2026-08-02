@@ -17,7 +17,7 @@ import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { cloud3dGenerate } from './model3d'
-import { generateAppIconBundle } from './app-icon-bundle'
+import { formatAppIconWarning, generateAppIconBundle } from './app-icon-bundle'
 import type { AppIconPlatform } from './app-icon-spec'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
@@ -478,14 +478,14 @@ async function runAppIconStep(
     source,
     workspacePath: routine.workspacePath,
     outputPath,
-    appName: interpolate(step.appName?.trim() || routine.name, ctx),
-    backgroundColor: interpolate(step.backgroundColor?.trim() || '#2563EB', ctx),
+    appName: interpolate(step.appName?.trim() || '', ctx),
+    backgroundColor: interpolate(step.backgroundColor?.trim() || '', ctx),
     platforms: step.platforms?.length
       ? step.platforms
       : ['android', 'ios', 'macos', 'windows'],
   })
   return {
-    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}`,
+    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}${result.warnings.length ? `\n\n检测警告:\n${result.warnings.map((warning) => `- ${formatAppIconWarning(warning)}`).join('\n')}` : ''}`,
     artifactPath: result.archivePath,
   }
 }

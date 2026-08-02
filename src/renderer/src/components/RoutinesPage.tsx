@@ -123,9 +123,9 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   ...(type === 'app-icon'
     ? {
         imageRef: '{{prev.imageUrl}}',
-        appName: '{{routine.name}}',
+        appName: '',
         path: '.pi-studio/app-icons/{{routine.name}}',
-        backgroundColor: '#2563EB',
+        backgroundColor: '',
         platforms: ['android', 'ios', 'macos', 'windows'] as const,
       }
     : {}),
@@ -158,9 +158,9 @@ function appIconWorkflowTemplate(workspacePath: string): FormState {
         ...createStep('app-icon'),
         name: '导出四端图标包',
         imageRef: '{{steps.应用图标母图.imageUrl}}',
-        appName: '{{routine.name}}',
+        appName: '',
         path: '.pi-studio/app-icons/{{routine.name}}',
-        backgroundColor: '#2563EB',
+        backgroundColor: '',
         platforms: ['android', 'ios', 'macos', 'windows'],
       },
     ],
@@ -666,9 +666,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type === 'app-icon'
             ? {
                 imageRef: step.imageRef ?? '{{prev.imageUrl}}',
-                appName: step.appName ?? '{{routine.name}}',
+                appName: step.appName ?? '',
                 path: step.path ?? '.pi-studio/app-icons/{{routine.name}}',
-                backgroundColor: step.backgroundColor ?? '#2563EB',
+                backgroundColor: step.backgroundColor ?? '',
                 platforms: step.platforms ?? ['android', 'ios', 'macos', 'windows'],
               }
             : {}),
@@ -989,10 +989,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       placeholder="{{prev.imageUrl}} 或工作区内的图片路径"
                     />
                     <Input
-                      value={step.appName ?? '{{routine.name}}'}
+                      value={step.appName ?? ''}
                       onChange={(e) => updateStep(step.id, { appName: e.target.value })}
                       addonBefore="应用名"
-                      placeholder="{{routine.name}}"
+                      placeholder="可选；留空则不写入假名称"
                     />
                     <Input
                       value={step.path ?? ''}
@@ -1001,10 +1001,10 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       placeholder=".pi-studio/app-icons/{{routine.name}}"
                     />
                     <Input
-                      value={step.backgroundColor ?? '#2563EB'}
+                      value={step.backgroundColor ?? ''}
                       onChange={(e) => updateStep(step.id, { backgroundColor: e.target.value })}
                       addonBefore="品牌底色"
-                      placeholder="#2563EB"
+                      placeholder="留空则从母图边缘自动采样"
                     />
                     <div className={styles.formRow}>
                       <span className={styles.hint}>平台</span>

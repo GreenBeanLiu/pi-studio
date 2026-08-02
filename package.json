@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
