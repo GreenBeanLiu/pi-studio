@@ -28,6 +28,7 @@ export type PiCustomModelConfig = {
     Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>
   >
   compat?: {
+    supportsDeveloperRole?: boolean
     supportsReasoningEffort?: boolean
     requiresReasoningContentOnAssistantMessages?: boolean
     thinkingFormat?: 'deepseek'
@@ -80,6 +81,7 @@ function buildGatewayModel(profileId: string, id: string): PiCustomModelConfig {
         max: 'max',
       },
       compat: {
+        supportsDeveloperRole: false,
         supportsReasoningEffort: true,
         requiresReasoningContentOnAssistantMessages: true,
         thinkingFormat: 'deepseek',

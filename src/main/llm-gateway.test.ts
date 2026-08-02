@@ -105,6 +105,7 @@ describe('LLM gateway model registration', () => {
           max: 'max',
         },
         compat: {
+          supportsDeveloperRole: false,
           supportsReasoningEffort: true,
           requiresReasoningContentOnAssistantMessages: true,
           thinkingFormat: 'deepseek',
