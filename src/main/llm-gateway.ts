@@ -20,7 +20,18 @@ export type PiCustomModelConfig = {
   id: string
   name: string
   reasoning?: boolean
-  compat?: { supportsReasoningEffort?: boolean }
+  input?: Array<'text' | 'image'>
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }
+  contextWindow?: number
+  maxTokens?: number
+  thinkingLevelMap?: Partial<
+    Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>
+  >
+  compat?: {
+    supportsReasoningEffort?: boolean
+    requiresReasoningContentOnAssistantMessages?: boolean
+    thinkingFormat?: 'deepseek'
+  }
 }
 
 export type PiCustomProviderConfig = {
@@ -39,7 +50,43 @@ export type PiCustomProviderConfig = {
 export function isGatewayReasoningModel(id: string): boolean {
   const s = id.toLowerCase()
   if (/non-reasoning|composer|fast|build|image|embed|whisper|tts/.test(s)) return false
-  return /grok-4|grok-[5-9]|gpt-5|gpt-[6-9]|^o[1-9]|reasoning|deepseek-r|glm.*think|qwq/.test(s)
+  return /grok-4|grok-[5-9]|gpt-5|gpt-[6-9]|^o[1-9]|reasoning|deepseek-(?:r|v4)|glm.*think|qwq/.test(s)
+}
+
+function buildGatewayModel(profileId: string, id: string): PiCustomModelConfig {
+  const reasoning = isGatewayReasoningModel(id)
+  if (!reasoning) return { id, name: id }
+  if (profileId === 'deepseek' && id.toLowerCase().startsWith('deepseek-v4-')) {
+    const isPro = id.toLowerCase() === 'deepseek-v4-pro'
+    return {
+      id,
+      name: isPro ? 'DeepSeek V4 Pro' : 'DeepSeek V4 Flash',
+      reasoning: true,
+      input: ['text'],
+      cost: {
+        input: isPro ? 0.435 : 0.14,
+        output: isPro ? 0.87 : 0.28,
+        cacheRead: isPro ? 0.003625 : 0.0028,
+        cacheWrite: 0,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 384_000,
+      thinkingLevelMap: {
+        minimal: 'low',
+        low: 'low',
+        medium: 'high',
+        high: 'high',
+        xhigh: 'xhigh',
+        max: 'max',
+      },
+      compat: {
+        supportsReasoningEffort: true,
+        requiresReasoningContentOnAssistantMessages: true,
+        thinkingFormat: 'deepseek',
+      },
+    }
+  }
+  return { id, name: id, reasoning: true, compat: { supportsReasoningEffort: true } }
 }
 
 export function buildGatewayProviderConfigs(
@@ -57,11 +104,7 @@ export function buildGatewayProviderConfigs(
           baseUrl: `${root}/llm/v1/${encodeURIComponent(profile.id)}`,
           api: 'openai-completions' as const,
           apiKey: '$PI_STUDIO_LLM_KEY' as const,
-          models: profile.models.map((id) =>
-            isGatewayReasoningModel(id)
-              ? { id, name: id, reasoning: true, compat: { supportsReasoningEffort: true } }
-              : { id, name: id },
-          ),
+          models: profile.models.map((id) => buildGatewayModel(profile.id, id)),
         },
       ]),
   )

@@ -72,4 +72,45 @@ describe('LLM gateway model registration', () => {
 
     expect(routes).toEqual(['three-a-gpt::gpt-5.5', 'three-a-grok::grok-4'])
   })
+
+  it('projects DeepSeek V4 with its official thinking and tool-call compatibility', () => {
+    const providers = buildGatewayProviderConfigs('https://relay.example', [
+      {
+        id: 'deepseek',
+        display_name: 'DeepSeek 官方',
+        base_url: 'https://api.deepseek.com',
+        api_type: 'openai-completions',
+        models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+        enabled: true,
+        sort_order: 0,
+        has_key: true,
+      },
+    ])
+
+    expect(providers.deepseek.models).toEqual([
+      expect.objectContaining({
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+        contextWindow: 1_000_000,
+        maxTokens: 384_000,
+        thinkingLevelMap: {
+          minimal: 'low',
+          low: 'low',
+          medium: 'high',
+          high: 'high',
+          xhigh: 'xhigh',
+          max: 'max',
+        },
+        compat: {
+          supportsReasoningEffort: true,
+          requiresReasoningContentOnAssistantMessages: true,
+          thinkingFormat: 'deepseek',
+        },
+      }),
+      expect.objectContaining({ id: 'deepseek-v4-pro', reasoning: true }),
+    ])
+  })
 })

@@ -18,6 +18,16 @@ import {
   type RemotePairingCode,
 } from '../lib/api'
 import { createDefaultSettingsView } from '../../../shared/contracts'
+import {
+  DEEPSEEK_OFFICIAL_MODELS,
+  DEEPSEEK_PROFILE_ID,
+  createDeepSeekProfileWrite,
+} from '../../../shared/deepseek-profile'
+import {
+  favoriteRouteKey,
+  formatFavoriteModelRoutes,
+  parseFavoriteModelRoutes,
+} from '../../../shared/model-route'
 import { QRCodeSVG } from 'qrcode.react'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
@@ -210,6 +220,9 @@ export default function SettingsModal({
   const [llmProfilesError, setLlmProfilesError] = useState('')
   const [llmProfileDraft, setLlmProfileDraft] = useState<(LlmProfileWrite & { create: boolean }) | null>(null)
   const [llmProfileSaving, setLlmProfileSaving] = useState(false)
+  const [deepSeekApiKey, setDeepSeekApiKey] = useState('')
+  const [deepSeekSaving, setDeepSeekSaving] = useState(false)
+  const [deepSeekResult, setDeepSeekResult] = useState<ProviderConnectionResult | null>(null)
 
   async function detectSandbox() {
     setSandboxDetecting(true)
@@ -357,6 +370,63 @@ export default function SettingsModal({
     else {
       await loadLlmProfiles()
       if (result.warning) setLlmProfilesError(result.warning)
+    }
+  }
+
+  async function saveDeepSeekOfficial() {
+    const existing = llmProfiles.find((profile) => profile.id === DEEPSEEK_PROFILE_ID)
+    const apiKey = deepSeekApiKey.trim()
+    if (!existing && !apiKey) return
+    setDeepSeekSaving(true)
+    setDeepSeekResult(null)
+    try {
+      const profile = createDeepSeekProfileWrite(
+        apiKey,
+        existing?.sort_order ?? llmProfiles.length,
+      )
+      const result = await api.llmProfiles.save(
+        existing ? { create: false, profile } : { create: true, profile },
+      )
+      if ('error' in result) {
+        setDeepSeekResult({
+          ok: false,
+          message: 'DeepSeek 配置失败',
+          details: result.error,
+        })
+        return
+      }
+      setDeepSeekApiKey('')
+      await loadLlmProfiles()
+      setSettings((current) => {
+        const routes = parseFavoriteModelRoutes(current.favoriteModels, current.provider)
+        const seen = new Set(
+          routes.map((route) => favoriteRouteKey(route.provider, route.model)),
+        )
+        for (const model of DEEPSEEK_OFFICIAL_MODELS) {
+          const route = { provider: DEEPSEEK_PROFILE_ID, model }
+          const key = favoriteRouteKey(route.provider, route.model)
+          if (!seen.has(key)) {
+            seen.add(key)
+            routes.push(route)
+          }
+        }
+        return { ...current, favoriteModels: formatFavoriteModelRoutes(routes) }
+      })
+      setDeepSeekResult({
+        ok: true,
+        message: existing ? 'DeepSeek 官方线路已更新' : 'DeepSeek 官方线路已接入',
+        details:
+          result.warning ||
+          '点击底部“保存设置”后，两个 V4 模型会出现在聊天页的模型切换器中。',
+      })
+    } catch (error) {
+      setDeepSeekResult({
+        ok: false,
+        message: 'DeepSeek 配置失败',
+        details: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setDeepSeekSaving(false)
     }
   }
 
@@ -563,6 +633,57 @@ export default function SettingsModal({
                   </Button>
                 )}
                 <span className={styles.labelHint}>模型线路由云端统一下发，无需在本地配置。</span>
+              </div>
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  DeepSeek 官方 API
+                  {llmProfiles.some((profile) => profile.id === DEEPSEEK_PROFILE_ID) && (
+                    <Tag color="green">已接入</Tag>
+                  )}
+                  <span className={styles.labelHint}>
+                    Key 仅发送到 Pi Studio 云服务并加密保存，不会写入本机模型配置。
+                  </span>
+                </span>
+                <Input.Password
+                  value={deepSeekApiKey}
+                  onChange={(event) => {
+                    setDeepSeekApiKey(event.target.value)
+                    setDeepSeekResult(null)
+                  }}
+                  placeholder={
+                    llmProfiles.some((profile) => profile.id === DEEPSEEK_PROFILE_ID)
+                      ? '已配置；输入新 Key 可替换，留空可刷新线路配置'
+                      : 'sk-…（DeepSeek 开放平台 API Key）'
+                  }
+                />
+                <div className={styles.actionRow}>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={deepSeekSaving}
+                    disabled={
+                      !deepSeekApiKey.trim() &&
+                      !llmProfiles.some((profile) => profile.id === DEEPSEEK_PROFILE_ID)
+                    }
+                    onClick={saveDeepSeekOfficial}
+                  >
+                    {llmProfiles.some((profile) => profile.id === DEEPSEEK_PROFILE_ID)
+                      ? '更新线路'
+                      : '接入 DeepSeek'}
+                  </Button>
+                  <span className={styles.labelHint}>
+                    {DEEPSEEK_OFFICIAL_MODELS.join(' · ')}
+                  </span>
+                </div>
+                {deepSeekResult && (
+                  <Alert
+                    type={deepSeekResult.ok ? 'success' : 'error'}
+                    showIcon
+                    message={deepSeekResult.message}
+                    description={deepSeekResult.details}
+                  />
+                )}
               </div>
 
               {SHOW_ADVANCED_MODEL_CONFIG && (<>
