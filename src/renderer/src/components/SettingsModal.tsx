@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm } from 'antd'
+import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm, message } from 'antd'
 import { Eye, EyeOff, Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
 import {
   api,
@@ -213,6 +213,7 @@ export default function SettingsModal({
   const [remoteSnap, setRemoteSnap] = useState<RemoteControlSnapshot | null>(null)
   const [pairing, setPairing] = useState<RemotePairingCode | null>(null)
   const [pairingLoading, setPairingLoading] = useState(false)
+  const [pairingResetting, setPairingResetting] = useState(false)
   const [sandboxBuilding, setSandboxBuilding] = useState(false)
   const [sandboxBuildLog, setSandboxBuildLog] = useState('')
   const [llmProfiles, setLlmProfiles] = useState<LlmProviderProfile[]>([])
@@ -370,6 +371,22 @@ export default function SettingsModal({
     else {
       await loadLlmProfiles()
       if (result.warning) setLlmProfilesError(result.warning)
+    }
+  }
+
+  async function resetRemotePairings() {
+    setPairingResetting(true)
+    try {
+      const result = await api.remote.resetPairings()
+      if ('error' in result) {
+        message.error(result.error)
+        return
+      }
+      setPairing(null)
+      setRemoteSnap((current) => (current ? { ...current, controllers: 0 } : current))
+      message.success('已解除所有手机绑定，需要重新配对后才能控制这台电脑')
+    } finally {
+      setPairingResetting(false)
     }
   }
 
@@ -1083,6 +1100,20 @@ export default function SettingsModal({
                     )}
                   </div>
                 )}
+                <div className={styles.actionRow}>
+                  <Popconfirm
+                    title="解除所有已配对手机？"
+                    description="旧手机令牌会立即失效，之后需要重新生成配对码。"
+                    okText="解除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => void resetRemotePairings()}
+                  >
+                    <Button size="small" danger loading={pairingResetting}>
+                      解除所有已配对手机
+                    </Button>
+                  </Popconfirm>
+                </div>
                 <Alert
                   type="warning"
                   showIcon

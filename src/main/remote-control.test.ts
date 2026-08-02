@@ -167,6 +167,22 @@ describe('remote-control command protocol', () => {
     expect(mocks.listSessions).toHaveBeenCalledWith('/sessions', '/workspace')
   })
 
+  it('resets phone pairings with the installation token in the authorization header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 })
+    ;(globalThis as { fetch: typeof fetch }).fetch = fetchMock as typeof fetch
+
+    await expect(remoteControl.resetPairings()).resolves.toEqual({ ok: true })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://relay.example/remote/pair/reset',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { Authorization: 'Bearer host-token' },
+      }),
+    )
+    expect(fetchMock.mock.calls[0][0]).not.toContain('host-token')
+  })
+
   it('labels the current model in the initial host state', async () => {
     mocks.getState.mockResolvedValue({
       isStreaming: false,

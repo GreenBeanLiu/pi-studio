@@ -119,6 +119,7 @@ remote: {
   getStatus: () => Promise<RemoteControlSnapshot>
   setEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>
   generatePairingCode: () => Promise<RemotePairingCode | { error: string }>
+  resetPairings: () => Promise<{ ok: true } | { error: string }>
   onStatus: (cb: (snap: RemoteControlSnapshot) => void) => () => void
 }
 securityPolicy: {

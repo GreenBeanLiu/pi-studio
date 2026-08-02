@@ -81,6 +81,7 @@ const api = {
     getStatus: () => ipcRenderer.invoke('remote:getStatus'),
     setEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:setEnabled', enabled),
     generatePairingCode: () => ipcRenderer.invoke('remote:generatePairingCode'),
+    resetPairings: () => ipcRenderer.invoke('remote:resetPairings'),
     onStatus: (cb: (snap: RemoteControlSnapshot) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, snap: RemoteControlSnapshot): void => cb(snap)
       ipcRenderer.on('remote:status', handler)

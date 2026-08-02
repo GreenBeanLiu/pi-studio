@@ -303,6 +303,23 @@ class RemoteControlManager {
       return { error: errMsg(err) }
     }
   }
+
+  async resetPairings(): Promise<{ ok: true } | { error: string }> {
+    try {
+      const cred = await ensureCredential()
+      const origin = routineSyncOrigin().replace(/\/+$/, '')
+      const res = await fetch(`${origin}/remote/pair/reset`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cred.token}` },
+      })
+      if (!res.ok) return { error: `解除手机绑定失败 (${res.status})` }
+      this.controllers = 0
+      this.emit()
+      return { ok: true }
+    } catch (err) {
+      return { error: errMsg(err) }
+    }
+  }
 }
 
 export const remoteControl = new RemoteControlManager()

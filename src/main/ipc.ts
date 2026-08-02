@@ -104,6 +104,7 @@ export function registerIpcHandlers(): void {
     return remoteControl.snapshot()
   })
   ipcMain.handle('remote:generatePairingCode', () => remoteControl.generatePairingCode())
+  ipcMain.handle('remote:resetPairings', () => remoteControl.resetPairings())
 
   const sendAgentStatus = (win: BrowserWindow | null, event: AgentStatusEvent): void => {
     if (!win || win.isDestroyed()) return
