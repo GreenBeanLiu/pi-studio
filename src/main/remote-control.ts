@@ -206,6 +206,8 @@ class RemoteControlManager {
           const provider = String(msg.provider ?? '').trim()
           const model = String(msg.model ?? '').trim()
           if (!provider || !model) throw new Error('provider and model are required')
+          const state = await piClientManager.getState()
+          if (state?.isStreaming) throw new Error('cannot switch model while agent is running')
           const selected = await piClientManager.setModel(provider, model)
           this.reply(msg.id, selected)
           break

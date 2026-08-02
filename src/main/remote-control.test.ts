@@ -184,4 +184,20 @@ describe('remote-control command protocol', () => {
     )
     expect(mocks.setModel).toHaveBeenCalledWith('deepseek', 'deepseek-chat')
   })
+
+  it('rejects remote model switching while the agent is running', async () => {
+    mocks.getState.mockResolvedValue({ isStreaming: true })
+    const ws = await connect()
+
+    ws.receive({ id: 12, type: 'setModel', provider: 'openai', model: 'gpt-5.6' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 12,
+        error: 'cannot switch model while agent is running',
+      }),
+    )
+    expect(mocks.setModel).not.toHaveBeenCalled()
+  })
 })
