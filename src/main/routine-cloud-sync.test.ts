@@ -75,6 +75,32 @@ describe('routine cloud payloads', () => {
     })
   })
 
+  it('stores dressup image references in the cloud step config', () => {
+    const dressupRoutine: Routine = {
+      ...routine,
+      steps: [
+        {
+          id: 'dressup-step',
+          name: '换装视频',
+          type: 'dressup',
+          personRef: 'assets/person.png',
+          garmentRef: 'assets/garment.png',
+        },
+      ],
+    }
+    expect(routineWorkflowPayload(dressupRoutine)).toMatchObject({
+      steps: [
+        {
+          type: 'dressup',
+          config: {
+            person_ref: 'assets/person.png',
+            garment_ref: 'assets/garment.png',
+          },
+        },
+      ],
+    })
+  })
+
   it('maps completed runs and links step definitions', () => {
     const run: RoutineRun = {
       id: '58ce991c-f0b4-41f9-86e3-786cd643977a',
