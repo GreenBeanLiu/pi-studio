@@ -146,8 +146,10 @@ class RemoteControlManager {
   }
 
   /** 业务错误单独走 top-level error 字段,手机端据此 reject(而不是把 {error} 当成正常结果)。 */
-  private replyError(id: unknown, message: string): void {
-    if (id !== undefined && id !== null) this.send({ type: 'result', id, error: message })
+  private replyError(id: unknown, message: string, code?: string): void {
+    if (id !== undefined && id !== null) {
+      this.send({ type: 'result', id, error: message, ...(code ? { code } : {}) })
+    }
   }
 
   private async onControllerMessage(raw: string): Promise<void> {
@@ -207,7 +209,14 @@ class RemoteControlManager {
           const model = String(msg.model ?? '').trim()
           if (!provider || !model) throw new Error('provider and model are required')
           const state = await piClientManager.getState()
-          if (state?.isStreaming) throw new Error('cannot switch model while agent is running')
+          if (state?.isStreaming) {
+            this.replyError(
+              msg.id,
+              'cannot switch model while agent is running',
+              'MODEL_SWITCH_WHILE_RUNNING',
+            )
+            break
+          }
           const selected = await piClientManager.setModel(provider, model)
           this.reply(msg.id, selected)
           break
@@ -230,7 +239,7 @@ class RemoteControlManager {
           break
         }
         default:
-          this.replyError(msg.id, `unknown command: ${type}`)
+          this.replyError(msg.id, `unknown command: ${type}`, 'UNKNOWN_COMMAND')
           break
       }
     } catch (err) {

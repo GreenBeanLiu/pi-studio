@@ -196,6 +196,7 @@ describe('remote-control command protocol', () => {
         type: 'result',
         id: 12,
         error: 'cannot switch model while agent is running',
+        code: 'MODEL_SWITCH_WHILE_RUNNING',
       }),
     )
     expect(mocks.setModel).not.toHaveBeenCalled()
