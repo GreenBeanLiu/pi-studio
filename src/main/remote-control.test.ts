@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   newSession: vi.fn(),
   getState: vi.fn(),
   getMessages: vi.fn(),
+  getAvailableModels: vi.fn(),
+  setModel: vi.fn(),
+  saveSelectedModelRoute: vi.fn(),
   getWorkspacePath: vi.fn(),
   switchSession: vi.fn(),
   listSessions: vi.fn(),
@@ -22,6 +25,8 @@ vi.mock('./pi-client', () => ({
     newSession: mocks.newSession,
     getState: mocks.getState,
     getMessages: mocks.getMessages,
+    getAvailableModels: mocks.getAvailableModels,
+    setModel: mocks.setModel,
     getWorkspacePath: mocks.getWorkspacePath,
     switchSession: mocks.switchSession,
   },
@@ -32,6 +37,7 @@ vi.mock('./routine-cloud-sync', () => ({
   routineSyncOrigin: vi.fn().mockReturnValue('https://relay.example'),
 }))
 vi.mock('./app-log', () => ({ appendAppLog: vi.fn() }))
+vi.mock('./settings', () => ({ saveSelectedModelRoute: mocks.saveSelectedModelRoute }))
 
 import { remoteControl } from './remote-control'
 
@@ -154,5 +160,31 @@ describe('remote-control command protocol', () => {
       expect(ws.lastSent()).toEqual({ type: 'result', id: 9, data: sessions }),
     )
     expect(mocks.listSessions).toHaveBeenCalledWith('/sessions', '/workspace')
+  })
+
+  it('lists available models and applies a model selected by the phone', async () => {
+    const models = [
+      { provider: 'openai', id: 'gpt-5.6', contextWindow: 200_000, reasoning: true },
+      { provider: 'deepseek', id: 'deepseek-chat', contextWindow: 64_000, reasoning: false },
+    ]
+    mocks.getAvailableModels.mockResolvedValue(models)
+    mocks.setModel.mockResolvedValue({ provider: 'deepseek', id: 'deepseek-chat' })
+    const ws = await connect()
+
+    ws.receive({ id: 10, type: 'getAvailableModels' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 10, data: models }),
+    )
+
+    ws.receive({ id: 11, type: 'setModel', provider: 'deepseek', model: 'deepseek-chat' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 11,
+        data: { provider: 'deepseek', id: 'deepseek-chat' },
+      }),
+    )
+    expect(mocks.setModel).toHaveBeenCalledWith('deepseek', 'deepseek-chat')
+    expect(mocks.saveSelectedModelRoute).toHaveBeenCalledWith('deepseek', 'deepseek-chat')
   })
 })
