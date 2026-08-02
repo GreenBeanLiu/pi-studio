@@ -4,6 +4,7 @@ import { piClientManager } from './pi-client'
 import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog } from './app-log'
+import { ModelCatalogCoordinator } from './model-catalog'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { RemotePairingCode } from '../shared/ipc/contract'
 
@@ -202,7 +203,25 @@ class RemoteControlManager {
           this.reply(msg.id, await piClientManager.getMessages())
           break
         case 'getAvailableModels':
-          this.reply(msg.id, await piClientManager.getAvailableModels())
+          {
+            const models = await piClientManager.getAvailableModels()
+            let providerLabels: Record<string, string> = {}
+            try {
+              providerLabels = (await new ModelCatalogCoordinator().loadProviderLabels())
+                .providerLabels
+            } catch {
+              // Labels are presentation metadata; the model catalog remains usable without them.
+            }
+            this.reply(
+              msg.id,
+              models.map((model) => ({
+                ...model,
+                ...(providerLabels[model.provider]
+                  ? { providerLabel: providerLabels[model.provider] }
+                  : {}),
+              })),
+            )
+          }
           break
         case 'setModel': {
           const provider = String(msg.provider ?? '').trim()

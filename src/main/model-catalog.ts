@@ -69,6 +69,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function localProviderLabel(settings: LocalModelSettings): string | undefined {
+  if (settings.provider !== 'openai' || !settings.baseUrl.trim()) return undefined
+  try {
+    const hostname = new URL(settings.baseUrl).hostname.toLowerCase()
+    if (hostname === '3a-api.com' || hostname.endsWith('.3a-api.com')) return '3A API'
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
 function catalogCachePath(): string {
   return join(agentConfigDir(), 'model-catalog-cache.json')
 }
@@ -262,18 +273,28 @@ export class ModelCatalogCoordinator {
   }
 
   async loadProviderLabels(): Promise<ModelCatalogView> {
-    const connection = this.requireConnection()
+    const local = this.dependencies.loadLocalSettings()
+    const localLabel = localProviderLabel(local)
+    const connection = this.dependencies.getConnection()
     let profiles: LlmProviderProfile[]
-    try {
-      profiles = await this.fetchAndCacheProfiles(connection)
-    } catch (error) {
+    if (!connection.available) {
       profiles = validProfiles(this.dependencies.loadCachedProfiles())
-      if (profiles.length === 0) throw error
+      if (!localLabel && profiles.length === 0) {
+        throw new Error(connection.error || 'Pi Studio cloud service is not configured')
+      }
+    } else {
+      try {
+        profiles = await this.fetchAndCacheProfiles(connection)
+      } catch (error) {
+        profiles = validProfiles(this.dependencies.loadCachedProfiles())
+        if (!localLabel && profiles.length === 0) throw error
+      }
     }
     return {
-      providerLabels: Object.fromEntries(
-        profiles.map((profile) => [profile.id, profile.display_name]),
-      ),
+      providerLabels: {
+        ...Object.fromEntries(profiles.map((profile) => [profile.id, profile.display_name])),
+        ...(localLabel ? { [local.provider]: localLabel } : {}),
+      },
     }
   }
 

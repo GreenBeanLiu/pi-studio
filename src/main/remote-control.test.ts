@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getWorkspacePath: vi.fn(),
   switchSession: vi.fn(),
   listSessions: vi.fn(),
+  loadProviderLabels: vi.fn(),
 }))
 
 vi.mock('./pi-client', () => ({
@@ -36,6 +37,11 @@ vi.mock('./routine-cloud-sync', () => ({
   routineSyncOrigin: vi.fn().mockReturnValue('https://relay.example'),
 }))
 vi.mock('./app-log', () => ({ appendAppLog: vi.fn() }))
+vi.mock('./model-catalog', () => ({
+  ModelCatalogCoordinator: class {
+    loadProviderLabels = mocks.loadProviderLabels
+  },
+}))
 
 import { remoteControl } from './remote-control'
 
@@ -90,6 +96,7 @@ async function connect(): Promise<FakeWebSocket> {
 beforeEach(() => {
   FakeWebSocket.instances = []
   vi.clearAllMocks()
+  mocks.loadProviderLabels.mockResolvedValue({ providerLabels: {} })
   ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket
 })
 
@@ -166,12 +173,22 @@ describe('remote-control command protocol', () => {
       { provider: 'deepseek', id: 'deepseek-chat', contextWindow: 64_000, reasoning: false },
     ]
     mocks.getAvailableModels.mockResolvedValue(models)
+    mocks.loadProviderLabels.mockResolvedValue({
+      providerLabels: { openai: '3A API', deepseek: 'DeepSeek 官方' },
+    })
     mocks.setModel.mockResolvedValue({ provider: 'deepseek', id: 'deepseek-chat' })
     const ws = await connect()
 
     ws.receive({ id: 10, type: 'getAvailableModels' })
     await vi.waitFor(() =>
-      expect(ws.lastSent()).toEqual({ type: 'result', id: 10, data: models }),
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 10,
+        data: [
+          { ...models[0], providerLabel: '3A API' },
+          { ...models[1], providerLabel: 'DeepSeek 官方' },
+        ],
+      }),
     )
 
     ws.receive({ id: 11, type: 'setModel', provider: 'deepseek', model: 'deepseek-chat' })

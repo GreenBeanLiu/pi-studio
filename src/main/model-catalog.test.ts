@@ -210,6 +210,51 @@ describe('model catalog coordination', () => {
     })
   })
 
+  it('labels a legacy OpenAI-compatible 3A route as 3A API', async () => {
+    const catalog = new ModelCatalogCoordinator(
+      dependencies({
+        loadLocalSettings: () => ({
+          provider: 'openai',
+          baseUrl: 'https://www.3a-api.com',
+          heliconeEnabled: false,
+          customModelIds: [],
+          favoriteModelRoutes: [],
+        }),
+      }),
+    )
+
+    await expect(catalog.loadProviderLabels()).resolves.toEqual({
+      providerLabels: {
+        openai: '3A API',
+        'three-a-main': '3A Main',
+      },
+    })
+  })
+
+  it('keeps the local 3A label when the cloud catalog is unavailable', async () => {
+    const catalog = new ModelCatalogCoordinator(
+      dependencies({
+        loadLocalSettings: () => ({
+          provider: 'openai',
+          baseUrl: 'https://www.3a-api.com',
+          heliconeEnabled: false,
+          customModelIds: [],
+          favoriteModelRoutes: [],
+        }),
+        getConnection: () => ({
+          available: false,
+          relay: '',
+          key: null,
+          error: 'cloud unavailable',
+        }),
+      }),
+    )
+
+    await expect(catalog.loadProviderLabels()).resolves.toEqual({
+      providerLabels: { openai: '3A API' },
+    })
+  })
+
   it('loads provider labels from the last valid cache when the gateway is offline', async () => {
     const catalog = new ModelCatalogCoordinator(
       dependencies({
