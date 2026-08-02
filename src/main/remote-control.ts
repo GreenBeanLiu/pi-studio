@@ -4,7 +4,6 @@ import { piClientManager } from './pi-client'
 import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog } from './app-log'
-import { saveSelectedModelRoute } from './settings'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { RemotePairingCode } from '../shared/ipc/contract'
 
@@ -208,7 +207,6 @@ class RemoteControlManager {
           const model = String(msg.model ?? '').trim()
           if (!provider || !model) throw new Error('provider and model are required')
           const selected = await piClientManager.setModel(provider, model)
-          saveSelectedModelRoute(provider, model)
           this.reply(msg.id, selected)
           break
         }

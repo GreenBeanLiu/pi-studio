@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   getMessages: vi.fn(),
   getAvailableModels: vi.fn(),
   setModel: vi.fn(),
-  saveSelectedModelRoute: vi.fn(),
   getWorkspacePath: vi.fn(),
   switchSession: vi.fn(),
   listSessions: vi.fn(),
@@ -37,7 +36,6 @@ vi.mock('./routine-cloud-sync', () => ({
   routineSyncOrigin: vi.fn().mockReturnValue('https://relay.example'),
 }))
 vi.mock('./app-log', () => ({ appendAppLog: vi.fn() }))
-vi.mock('./settings', () => ({ saveSelectedModelRoute: mocks.saveSelectedModelRoute }))
 
 import { remoteControl } from './remote-control'
 
@@ -185,6 +183,5 @@ describe('remote-control command protocol', () => {
       }),
     )
     expect(mocks.setModel).toHaveBeenCalledWith('deepseek', 'deepseek-chat')
-    expect(mocks.saveSelectedModelRoute).toHaveBeenCalledWith('deepseek', 'deepseek-chat')
   })
 })

@@ -8,7 +8,7 @@ import type {
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
 import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
-import { loadSettings } from './settings'
+import { loadSettings, saveSelectedModelRoute } from './settings'
 import {
   prepareSandboxLaunch,
   sandboxSessionPathToContainer,
@@ -345,8 +345,10 @@ class PiClientManager {
     return this.require().getAvailableModels()
   }
 
-  setModel(provider: string, modelId: string): ReturnType<RpcClient['setModel']> {
-    return this.require().setModel(provider, modelId)
+  async setModel(provider: string, modelId: string): Promise<Awaited<ReturnType<RpcClient['setModel']>>> {
+    const selected = await this.require().setModel(provider, modelId)
+    saveSelectedModelRoute(provider, modelId)
+    return selected
   }
 
   setThinkingLevel(level: Parameters<RpcClient['setThinkingLevel']>[0]): ReturnType<RpcClient['setThinkingLevel']> {

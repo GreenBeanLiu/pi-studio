@@ -15,7 +15,6 @@ import {
   saveRemoteEnabled,
   addRecentWorkspace,
   removeRecentWorkspace,
-  saveSelectedModelRoute,
   type PiProvider,
 } from './settings'
 import { piClientManager, resolvePiCliPath, type AgentStatusEvent } from './pi-client'
@@ -655,11 +654,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
   ipcMain.handle('pi:getCommands', () => piClientManager.getCommands())
-  ipcMain.handle('pi:setModel', async (_e, provider: string, modelId: string) => {
-    const selected = await piClientManager.setModel(provider, modelId)
-    saveSelectedModelRoute(provider, modelId)
-    return selected
-  })
+  ipcMain.handle('pi:setModel', (_e, provider: string, modelId: string) =>
+    piClientManager.setModel(provider, modelId),
+  )
   // 这几个值原样透传给 agent,必须先确认落在枚举内(原来是 `level as never`)
   ipcMain.handle('pi:setThinkingLevel', (_e, level: unknown) =>
     piClientManager.setThinkingLevel(oneOf(level, THINKING_LEVELS, '推理等级') as never),
