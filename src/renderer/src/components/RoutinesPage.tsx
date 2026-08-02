@@ -42,6 +42,7 @@ import {
   ShieldCheck,
   FolderSearch,
   AppWindow,
+  Shirt,
 } from 'lucide-react'
 import {
   api,
@@ -91,6 +92,7 @@ const STEP_TYPE_META: Record<RoutineStepType, { label: string; icon: typeof Bot 
   imagegen: { label: '生图', icon: ImageIcon },
   'app-icon': { label: '应用图标', icon: AppWindow },
   model3d: { label: '3D 生成', icon: Box },
+  dressup: { label: '换装视频', icon: Shirt },
   review: { label: '人工审核', icon: ShieldCheck },
   notify: { label: '通知', icon: Bell },
   export: { label: '导出文章', icon: FileText },
@@ -120,6 +122,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   type,
   ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
   ...(type === 'model3d' ? { imageRef: '{{prev.imageUrl}}', provider: 'tripo' as const } : {}),
+  ...(type === 'dressup' ? { personRef: '', garmentRef: '', prompt: '' } : {}),
   ...(type === 'app-icon'
     ? {
         imageRef: '{{prev.imageUrl}}',
@@ -612,6 +615,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     !!s.name.trim() &&
     (s.type === 'notify'
       ? !!s.channelId
+      : s.type === 'dressup'
+        ? !!s.personRef?.trim() && !!s.garmentRef?.trim()
       : s.type === 'folder-input' || s.type === 'review' || s.type === 'export' || s.type === 'feishu-doc' || s.type === 'wechat-draft' || s.type === 'app-icon' || s.type === 'model3d'
         ? true
         : !!s.prompt?.trim())
@@ -662,6 +667,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
           ...(type === 'model3d'
             ? { imageRef: step.imageRef ?? '{{prev.imageUrl}}', provider: step.provider ?? ('tripo' as const) }
+            : {}),
+          ...(type === 'dressup'
+            ? { personRef: step.personRef ?? '', garmentRef: step.garmentRef ?? '', prompt: step.prompt ?? '' }
             : {}),
           ...(type === 'app-icon'
             ? {
@@ -926,6 +934,8 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                           ? '画什么(支持 {{prev.output}} 等变量)'
                           : step.type === 'model3d'
                           ? '文字描述(有上游图片时可留空 → 走图生 3D)'
+                          : step.type === 'dressup'
+                          ? '可选：补充试衣与视频动作要求'
                           : 'Instruction for this node'
                       }
                       autoSize={{ minRows: 3, maxRows: 8 }}
@@ -977,6 +987,25 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                     </div>
                     <span className={styles.hint}>
                       接在「生图」节点后即可图生 3D;glb 存到工作区 .pi-studio/models/
+                    </span>
+                  </>
+                )}
+                {step.type === 'dressup' && (
+                  <>
+                    <Input
+                      value={step.personRef ?? ''}
+                      onChange={(e) => updateStep(step.id, { personRef: e.target.value })}
+                      addonBefore="人物图"
+                      placeholder="工作区路径、图片 URL 或 {{prev.imageUrl}}"
+                    />
+                    <Input
+                      value={step.garmentRef ?? ''}
+                      onChange={(e) => updateStep(step.id, { garmentRef: e.target.value })}
+                      addonBefore="服装图"
+                      placeholder="工作区路径、图片 URL 或上游变量"
+                    />
+                    <span className={styles.hint}>
+                      执行 AI 试衣后调用 Kling 生成换装视频；本地 MP4 会作为工作流产物保存。
                     </span>
                   </>
                 )}

@@ -10,11 +10,20 @@ describe('routine node presets', () => {
         'article.draft',
         'article.approval',
         'media.app-icon-master',
+        'media.dressup-video',
         'output.wechat-html',
         'output.wechat-draft',
         'output.app-icon-bundle',
       ]),
     )
+  })
+
+  it('creates a dressup workflow node with independent person and garment inputs', () => {
+    expect(createRoutineStepFromPreset('media.dressup-video')).toMatchObject({
+      type: 'dressup',
+      personRef: '',
+      garmentRef: '',
+    })
   })
 
   it('creates independent steps and injects the selected notification channel', () => {

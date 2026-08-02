@@ -308,6 +308,21 @@ dressup: {
     cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void,
   ) => () => void
 }
+videoGen: {
+  health: () => Promise<VideoGenHealth>
+  generate: (payload: {
+    prompt: string
+    imageDataUrl?: string
+    duration?: 5 | 10 | 15
+    aspectRatio?: GrokVideoAspectRatio
+    resolution?: GrokVideoResolution
+  }) => Promise<VideoGenHistoryItem | { error: string }>
+  history: () => Promise<VideoGenHistoryItem[]>
+  historyDelete: (id: string) => Promise<{ ok: boolean }>
+  onProgress: (
+    cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void,
+  ) => () => void
+}
 update: {
   onAvailable: (cb: (data: { version: string }) => void) => () => void
   onDownloaded: (cb: (data: { version: string }) => void) => () => void
@@ -379,6 +394,28 @@ export type DressupHistoryItem = {
   createdAt: number
 }
 
+export type GrokVideoAspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
+export type GrokVideoResolution = '480p' | '720p'
+
+export type VideoGenHealth = {
+  configured: boolean
+  grokReady?: boolean
+  model?: string
+}
+
+export type VideoGenHistoryItem = {
+  id: string
+  provider: 'grok'
+  prompt: string
+  duration: 5 | 10 | 15
+  aspectRatio: string
+  resolution: string
+  videoUrl: string
+  filePath?: string
+  cloudVideoUrl?: string
+  createdAt: number
+}
+
 export type Model3DHistoryItem = {
   id: string
   prompt: string
@@ -427,7 +464,7 @@ export type RoutineNotify = 'always' | 'error' | 'never'
 
 export type AppIconPlatform = 'android' | 'ios' | 'macos' | 'windows'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'dressup' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -449,6 +486,8 @@ export type RoutineStep = {
   platforms?: AppIconPlatform[]
   /** app-icon:不透明底图背景色 */
   backgroundColor?: string
+  personRef?: string
+  garmentRef?: string
 }
 
 export type Routine = {

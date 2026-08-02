@@ -312,6 +312,26 @@ const api = {
     },
   },
 
+  videoGen: {
+    health: () => ipcRenderer.invoke('videoGen:health'),
+    generate: (payload: {
+      prompt: string
+      imageDataUrl?: string
+      duration?: 5 | 10 | 15
+      aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
+      resolution?: '480p' | '720p'
+    }) => ipcRenderer.invoke('videoGen:generate', payload),
+    history: () => ipcRenderer.invoke('videoGen:history'),
+    historyDelete: (id: string) => ipcRenderer.invoke('videoGen:historyDelete', id),
+    onProgress: (
+      cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void,
+    ) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
+      ipcRenderer.on('videoGen:progress', handler)
+      return () => ipcRenderer.off('videoGen:progress', handler)
+    },
+  },
+
   update: {
     onAvailable: (cb: (data: { version: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)

@@ -32,6 +32,7 @@ export type DressupHistoryItem = {
   duration: '5' | '10'
   /** 本地 mp4 的 file:// 地址,渲染进程用 <video> 播放 */
   videoUrl: string
+  filePath?: string
   /** R2 上的 mp4 公网地址,用于分享(用户自有 OSS) */
   cloudVideoUrl?: string
   createdAt: number
@@ -241,7 +242,7 @@ type WorkflowPayload = {
   prompt?: string
 }
 
-async function runWorkflow(payload: WorkflowPayload): Promise<DressupResult> {
+export async function runDressupWorkflow(payload: WorkflowPayload): Promise<DressupResult> {
   if (!payload.personDataUrl) return { error: '请提供人物照片' }
   if (!payload.garmentDataUrl) return { error: '请提供衣服图片' }
   if (!payload.firstFrameDataUrl) return { error: '首帧合成失败,请重试' }
@@ -292,6 +293,7 @@ async function runWorkflow(payload: WorkflowPayload): Promise<DressupResult> {
       mode: 'std',
       duration: '5',
       videoUrl: localFileUrl(mp4Path),
+      filePath: mp4Path,
       cloudVideoUrl: videoUrl,
       createdAt: Date.now(),
     }
@@ -320,7 +322,7 @@ export function registerDressup(): void {
     return { configured, ...(klingReady === undefined ? {} : { klingReady }) }
   })
   ipcMain.handle('dressup:generate', (_e, payload: GeneratePayload) => generate(payload))
-  ipcMain.handle('dressup:workflow', (_e, payload: WorkflowPayload) => runWorkflow(payload))
+  ipcMain.handle('dressup:workflow', (_e, payload: WorkflowPayload) => runDressupWorkflow(payload))
   ipcMain.handle('dressup:history', (): DressupHistoryItem[] => loadHistory())
   ipcMain.handle('dressup:historyDelete', (_e, id: string) => {
     saveHistory(loadHistory().filter((it) => it.id !== id))

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
 import { prepareAgentRuntime } from './agent-runtime-config'
@@ -18,6 +18,7 @@ import { syncWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { cloud3dGenerate } from './model3d'
 import { formatAppIconWarning, generateAppIconBundle } from './app-icon-bundle'
+import { runDressupWorkflow } from './dressup'
 import type { AppIconPlatform } from './app-icon-spec'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
@@ -55,7 +56,7 @@ export type RoutineSchedule = SchedulableSchedule
 
 export type RoutineNotify = 'always' | 'error' | 'never'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'dressup' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -83,6 +84,9 @@ export type RoutineStep = {
   platforms?: AppIconPlatform[]
   /** app-icon:需要不透明底图的平台使用的品牌背景色 */
   backgroundColor?: string
+  /** dressup:人物图与服装图，支持模板、工作区相对路径、data URL 或公网 URL */
+  personRef?: string
+  garmentRef?: string
 }
 
 export type Routine = {
@@ -215,6 +219,8 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
     ...(typeof step.appName === 'string' ? { appName: step.appName } : {}),
     ...(platforms !== undefined ? { platforms } : {}),
     ...(typeof step.backgroundColor === 'string' ? { backgroundColor: step.backgroundColor } : {}),
+    ...(typeof step.personRef === 'string' ? { personRef: step.personRef } : {}),
+    ...(typeof step.garmentRef === 'string' ? { garmentRef: step.garmentRef } : {}),
   }
 }
 
@@ -544,6 +550,61 @@ async function runModel3dStep(step: RoutineStep, ctx: RunContext): Promise<StepP
   }
 }
 
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+}
+
+async function routineImageDataUrl(workspacePath: string, reference: string): Promise<string> {
+  if (/^data:image\//i.test(reference)) return reference
+  if (/^https?:\/\//i.test(reference)) {
+    const response = await fetch(reference, { redirect: 'error', signal: AbortSignal.timeout(60_000) })
+    if (!response.ok) throw new Error(`下载工作流图片失败 HTTP ${response.status}`)
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? ''
+    if (!contentType.startsWith('image/')) throw new Error('工作流图片 URL 没有返回图片')
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.length > 20 * 1024 * 1024) throw new Error('工作流图片超过 20MB')
+    return `data:${contentType};base64,${bytes.toString('base64')}`
+  }
+  const root = resolve(workspacePath)
+  const target = isAbsolute(reference) ? resolve(reference) : resolve(root, reference)
+  const rel = relative(root, target)
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error('换装图片必须位于当前工作区内')
+  }
+  if (!existsSync(target)) throw new Error(`找不到换装图片: ${reference}`)
+  const mime = IMAGE_MIME_BY_EXTENSION[extname(target).toLowerCase()]
+  if (!mime) throw new Error('换装图片仅支持 PNG、JPG 或 WebP')
+  const bytes = readFileSync(target)
+  if (bytes.length > 20 * 1024 * 1024) throw new Error('工作流图片超过 20MB')
+  return `data:${mime};base64,${bytes.toString('base64')}`
+}
+
+async function runDressupStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+  const personRef = interpolate(step.personRef ?? '', ctx).trim()
+  const garmentRef = interpolate(step.garmentRef ?? '', ctx).trim()
+  if (!personRef || !garmentRef || personRef.includes('{{') || garmentRef.includes('{{')) {
+    throw new Error('换装视频节点需要人物图和服装图')
+  }
+  const [personDataUrl, garmentDataUrl] = await Promise.all([
+    routineImageDataUrl(routine.workspacePath, personRef),
+    routineImageDataUrl(routine.workspacePath, garmentRef),
+  ])
+  const result = await runDressupWorkflow({
+    personDataUrl,
+    garmentDataUrl,
+    firstFrameDataUrl: personDataUrl,
+    prompt: interpolate(step.prompt ?? '', ctx).trim() || undefined,
+  })
+  if ('error' in result) throw new Error(result.error)
+  return {
+    output: result.cloudVideoUrl ?? result.filePath ?? result.videoUrl,
+    ...(result.filePath ? { artifactPath: result.filePath } : {}),
+  }
+}
+
 async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
   const reviewId = randomUUID()
   const previous = ctx.prev
@@ -719,6 +780,8 @@ async function executeRoutine(
               ? await runAppIconStep(routine, step, ctx)
               : step.type === 'model3d'
               ? await runModel3dStep(step, ctx)
+              : step.type === 'dressup'
+              ? await runDressupStep(routine, step, ctx)
               : step.type === 'notify'
                 ? await runNotifyStep(routine, step, ctx, channels)
                 : step.type === 'review'
