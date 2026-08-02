@@ -43,6 +43,7 @@ import {
   FolderSearch,
   AppWindow,
   Shirt,
+  Images,
 } from 'lucide-react'
 import {
   api,
@@ -57,12 +58,14 @@ import {
   type RoutineSchedule,
   type RoutineReviewRequest,
   type Workspace,
+  type ImageGenHistoryItem,
 } from '../lib/api'
 import {
   createRoutineStepFromPreset,
   routineNodePresetOptions,
 } from '../lib/routine-node-presets'
 import { dressupVideoWorkflowTemplate } from '../lib/routine-workflow-templates'
+import { buildRoutineImageLibrary } from '../lib/routine-image-library'
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
@@ -115,6 +118,12 @@ type FormState = {
   notify: RoutineNotify
   notifyChannelId?: string
   pushEachStep?: boolean
+}
+
+type ImagePickerTarget = {
+  stepId: string
+  field: 'personRef' | 'garmentRef'
+  title: string
 }
 
 const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
@@ -351,6 +360,56 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 8px;
     align-items: center;
   `,
+  imageReferenceRow: css`
+    display: flex;
+    gap: 8px;
+    align-items: center;
+
+    .ant-input-group-wrapper {
+      min-width: 0;
+      flex: 1;
+    }
+  `,
+  imageLibrary: css`
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    max-height: 520px;
+    overflow-y: auto;
+    padding: 2px;
+  `,
+  imageLibraryItem: css`
+    appearance: none;
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadiusLG}px;
+    background: ${token.colorBgContainer};
+    color: ${token.colorText};
+    padding: 0;
+    overflow: hidden;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      border-color: ${token.colorPrimary};
+    }
+
+    img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      background: ${token.colorFillQuaternary};
+    }
+
+    span {
+      display: block;
+      padding: 7px 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+  `,
 
   /* ── 流程图 ── */
   flow: css`
@@ -515,6 +574,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   >({})
   const [reviewRequests, setReviewRequests] = useState<RoutineReviewRequest[]>([])
   const [reviewComment, setReviewComment] = useState('')
+  const [imagePicker, setImagePicker] = useState<ImagePickerTarget | null>(null)
+  const [imageLibrary, setImageLibrary] = useState<ImageGenHistoryItem[]>([])
+  const [imageLibraryLoading, setImageLibraryLoading] = useState(false)
   const reviewRequest = reviewRequests[0] ?? null
 
   async function refresh() {
@@ -651,6 +713,33 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
       ...form,
       steps: form.steps.map((step) => (step.id === id ? { ...step, ...patch } : step)),
     })
+  }
+
+  async function refreshImageLibrary(): Promise<void> {
+    setImageLibraryLoading(true)
+    try {
+      const result = await api.imageGen.history(100)
+      if (!Array.isArray(result)) {
+        message.error(result.error)
+        return
+      }
+      setImageLibrary(buildRoutineImageLibrary(result))
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setImageLibraryLoading(false)
+    }
+  }
+
+  function openImagePicker(target: ImagePickerTarget): void {
+    setImagePicker(target)
+    void refreshImageLibrary()
+  }
+
+  function selectLibraryImage(url: string): void {
+    if (!imagePicker) return
+    updateStep(imagePicker.stepId, { [imagePicker.field]: url })
+    setImagePicker(null)
   }
 
   function changeStepType(id: string, type: RoutineStepType) {
@@ -996,20 +1085,37 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                 )}
                 {step.type === 'dressup' && (
                   <>
-                    <Input
-                      value={step.personRef ?? ''}
-                      onChange={(e) => updateStep(step.id, { personRef: e.target.value })}
-                      addonBefore="人物图"
-                      placeholder="工作区路径、图片 URL 或 {{prev.imageUrl}}"
-                    />
-                    <Input
-                      value={step.garmentRef ?? ''}
-                      onChange={(e) => updateStep(step.id, { garmentRef: e.target.value })}
-                      addonBefore="服装图"
-                      placeholder="工作区路径、图片 URL 或上游变量"
-                    />
+                    <div className={styles.imageReferenceRow}>
+                      <Input
+                        value={step.personRef ?? ''}
+                        onChange={(e) => updateStep(step.id, { personRef: e.target.value })}
+                        addonBefore="人物图"
+                        placeholder="工作区路径、图片 URL 或 {{prev.imageUrl}}"
+                      />
+                      <Button
+                        icon={<Images size={14} />}
+                        onClick={() => openImagePicker({ stepId: step.id, field: 'personRef', title: '选择人物图' })}
+                      >
+                        选素材
+                      </Button>
+                    </div>
+                    <div className={styles.imageReferenceRow}>
+                      <Input
+                        value={step.garmentRef ?? ''}
+                        onChange={(e) => updateStep(step.id, { garmentRef: e.target.value })}
+                        addonBefore="服装图"
+                        placeholder="工作区路径、图片 URL 或上游变量"
+                      />
+                      <Button
+                        icon={<Images size={14} />}
+                        onClick={() => openImagePicker({ stepId: step.id, field: 'garmentRef', title: '选择服装图' })}
+                      >
+                        选素材
+                      </Button>
+                    </div>
                     <span className={styles.hint}>
-                      执行 AI 试衣后调用 Kling 生成换装视频；本地 MP4 会作为工作流产物保存。
+                      可先在左侧“生图”中批量生成人物或服装，再从生成记录中选择；也可继续填写路径或 URL。
+                      执行 AI 试衣后调用 Kling 生成换装视频，本地 MP4 会作为工作流产物保存。
                     </span>
                   </>
                 )}
@@ -1457,6 +1563,41 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
         )}
       </section>
       </div>
+      <Modal
+        open={!!imagePicker}
+        title={imagePicker?.title ?? '选择图片素材'}
+        width={720}
+        footer={
+          <Button loading={imageLibraryLoading} onClick={() => void refreshImageLibrary()}>
+            刷新生成记录
+          </Button>
+        }
+        onCancel={() => setImagePicker(null)}
+      >
+        {imageLibraryLoading && imageLibrary.length === 0 ? (
+          <Empty description="正在加载生成记录…" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : imageLibrary.length === 0 ? (
+          <Empty
+            description="暂无可选图片。请先到左侧“生图”页面生成人物图或服装图。"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
+        ) : (
+          <div className={styles.imageLibrary}>
+            {imageLibrary.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={styles.imageLibraryItem}
+                title={item.prompt || '生成图片'}
+                onClick={() => selectLibraryImage(item.url)}
+              >
+                <img src={item.url} alt={item.prompt || '生成图片'} loading="lazy" />
+                <span>{item.prompt || '未命名生成图片'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Modal>
       <Modal
         open={!!reviewRequest}
         title={reviewRequest ? `人工审核 · ${reviewRequest.stepName}` : '人工审核'}
