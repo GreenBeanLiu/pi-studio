@@ -78,6 +78,16 @@ export function embeddedNodeEnv(env: Record<string, string>): Record<string, str
 }
 
 /**
+ * 一轮是否还在跑。agent_end 之后 pi 可能还要重试或压缩后续跑,
+ * agent_settled 才是这一轮真正结束的点(和 AgentRuntimeTracker 保持同一口径)。
+ */
+export function nextRunActive(current: boolean, eventType: string): boolean {
+  if (eventType === 'agent_start') return true
+  if (eventType === 'agent_settled') return false
+  return current
+}
+
+/**
  * macOS registers the main app executable in Dock even in ELECTRON_RUN_AS_NODE mode.
  * Electron's LSUIElement Helper provides the same embedded Node runtime without a Dock icon.
  */
@@ -115,6 +125,8 @@ class PiClientManager {
   private sandboxMode: 'wsl' | 'docker' | null = null
   private activeRunId = 0
   private expectedStopRunIds = new Set<number>()
+  /** agent_start .. agent_settled 之间为 true —— 换会话前必须先收拾干净。 */
+  private runActive = false
 
   /** Pre-import the pi-coding-agent ESM graph so the first workspace open
    *  doesn't pay the module-load cost (hundreds of ms) on click. */
@@ -161,7 +173,11 @@ class PiClientManager {
 
     this.client = client
     this.workspacePath = cwd
-    this.unsubscribe = client.onEvent(onEvent)
+    this.runActive = false
+    this.unsubscribe = client.onEvent((event) => {
+      this.runActive = nextRunActive(this.runActive, event.type)
+      onEvent(event)
+    })
 
     let restoredSession = false
     if (restoreSessionFile) {
@@ -323,8 +339,23 @@ class PiClientManager {
     stdin.write(`${JSON.stringify(response)}\n`)
   }
 
-  newSession(): ReturnType<RpcClient['newSession']> {
-    return this.require().newSession()
+  /**
+   * pi 的 new_session / switch_session 会直接 dispose 当前会话,不管有没有正在跑的一轮:
+   * 实测流被掐断后 message_end / turn_end / agent_end / agent_settled 一个都不发,
+   * 那一轮就这么凭空消失(界面永远停在最后一步,会话文件也断在半句)。
+   * 先 abort 再切:abort 会把收尾事件正常发完,界面、运行记录和会话文件才对得上。
+   */
+  private async settleActiveRun(): Promise<boolean> {
+    if (!this.runActive || !this.client) return false
+    await this.client.abort().catch(() => {})
+    this.runActive = false
+    return true
+  }
+
+  async newSession(): Promise<{ cancelled: boolean; interruptedRun: boolean }> {
+    const interruptedRun = await this.settleActiveRun()
+    const result = (await this.require().newSession()) as { cancelled?: boolean } | undefined
+    return { cancelled: result?.cancelled === true, interruptedRun }
   }
 
   async getState(): Promise<Awaited<ReturnType<RpcClient['getState']>>> {
@@ -371,11 +402,13 @@ class PiClientManager {
     return this.require().compact()
   }
 
-  switchSession(sessionPath: string): ReturnType<RpcClient['switchSession']> {
+  async switchSession(sessionPath: string): Promise<{ cancelled: boolean; interruptedRun: boolean }> {
     const path = this.sandboxSessionPaths
       ? sandboxSessionPathToContainer(sessionPath)
       : sessionPath
-    return this.require().switchSession(path)
+    const interruptedRun = await this.settleActiveRun()
+    const result = (await this.require().switchSession(path)) as { cancelled?: boolean } | undefined
+    return { cancelled: result?.cancelled === true, interruptedRun }
   }
 
   getCommands(): ReturnType<RpcClient['getCommands']> {

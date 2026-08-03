@@ -148,7 +148,8 @@ memory: {
 }
 sessions: {
   list: () => Promise<SessionInfo[]>
-  switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
+  /** interruptedRun:切换前中止了正在进行的一轮(同一个 agent 一次只跑一个会话)。 */
+  switch: (sessionPath: string) => Promise<{ cancelled: boolean; interruptedRun?: boolean }>
   rename: (name: string) => Promise<void>
   delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
   exportCurrent: (
@@ -168,7 +169,7 @@ pi: {
   abort: () => Promise<void>
   bash: (command: string) => Promise<unknown>
   extensionUiResponse: (response: ExtensionUiResponse) => Promise<void>
-  newSession: () => Promise<{ cancelled: boolean }>
+  newSession: () => Promise<{ cancelled: boolean; interruptedRun?: boolean }>
   getState: () => Promise<RpcSessionState>
   getMessages: () => Promise<AgentMessage[]>
   getAvailableModels: () => Promise<ModelInfo[]>

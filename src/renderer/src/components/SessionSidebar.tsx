@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { message as antdMessage } from 'antd'
 import { createStyles } from 'antd-style'
 import { SquarePen, Trash2, Pencil, Check, X } from 'lucide-react'
 import { api, type Workspace, type SessionInfo } from '../lib/api'
@@ -206,6 +207,11 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
+/** 一个 agent 一次只跑一个会话:切走会先中止正在进行的一轮,得说一声。 */
+function notifyInterruptedRun(interruptedRun: boolean | undefined): void {
+  if (interruptedRun) antdMessage.warning('已中止上一个会话正在进行的运行')
+}
+
 export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
   const { styles, cx } = useStyles()
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -244,7 +250,8 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
     if (busy) return
     setBusy(true)
     try {
-      await api.pi.newSession()
+      const result = await api.pi.newSession()
+      notifyInterruptedRun(result.interruptedRun)
       await refresh()
       onSessionChanged()
     } finally {
@@ -258,6 +265,7 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
     try {
       const result = await api.sessions.switch(session.path)
       if (!result.cancelled) {
+        notifyInterruptedRun(result.interruptedRun)
         await refresh()
         onSessionChanged()
       }

@@ -3,7 +3,29 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath } from './pi-client'
+import { readFileSync } from 'node:fs'
+import { embeddedNodeEnv, loadRpcClient, nextRunActive, resolveEmbeddedNodePath } from './pi-client'
+
+// 2026-08-03:pi 的 new_session / switch_session 直接 dispose 当前会话。实测(本地假
+// SSE provider)正在跑的一轮会被掐断且一个事件都不发 —— message_end / turn_end /
+// agent_end / agent_settled 全没有,界面永远停在最后一步。abort 则会正常发完收尾事件。
+describe('run tracking across session switches', () => {
+  it('treats a run as live from agent_start until agent_settled', () => {
+    expect(nextRunActive(false, 'agent_start')).toBe(true)
+    // agent_end 之后还可能自动重试或压缩后续跑,不能就此当成结束
+    expect(nextRunActive(true, 'agent_end')).toBe(true)
+    expect(nextRunActive(true, 'message_end')).toBe(true)
+    expect(nextRunActive(true, 'agent_settled')).toBe(false)
+    expect(nextRunActive(false, 'tool_execution_end')).toBe(false)
+  })
+
+  it('aborts the live run before tearing the session down', () => {
+    const source = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
+    expect(source).toContain('await this.client.abort()')
+    // 两个入口都必须先收拾干净再切
+    expect(source.match(/await this\.settleActiveRun\(\)/g)).toHaveLength(2)
+  })
+})
 
 describe('embeddedNodeEnv', () => {
   it('marks the application executable as a Node-compatible runtime', () => {
