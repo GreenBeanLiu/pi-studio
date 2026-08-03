@@ -12,6 +12,7 @@ import type {
   RoutineReviewRequest,
   RoutineRun,
   RoutineStepProgress,
+  SessionActivity,
 } from '../shared/ipc/contract'
 
 const api = {
@@ -160,6 +161,11 @@ const api = {
       const handler = (_e: Electron.IpcRendererEvent, data: AgentStatusEvent) => cb(data)
       ipcRenderer.on('agent:status', handler)
       return () => ipcRenderer.off('agent:status', handler)
+    },
+    onSessionActivity: (cb: (event: SessionActivity) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: SessionActivity) => cb(data)
+      ipcRenderer.on('pi:sessionActivity', handler)
+      return () => ipcRenderer.off('pi:sessionActivity', handler)
     },
     getRuntimeSnapshot: () => ipcRenderer.invoke('pi:getRuntimeSnapshot'),
     onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => {

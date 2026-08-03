@@ -148,8 +148,7 @@ memory: {
 }
 sessions: {
   list: () => Promise<SessionInfo[]>
-  /** interruptedRun:切换前中止了正在进行的一轮(同一个 agent 一次只跑一个会话)。 */
-  switch: (sessionPath: string) => Promise<{ cancelled: boolean; interruptedRun?: boolean }>
+  switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
   rename: (name: string) => Promise<void>
   delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
   exportCurrent: (
@@ -169,7 +168,9 @@ pi: {
   abort: () => Promise<void>
   bash: (command: string) => Promise<unknown>
   extensionUiResponse: (response: ExtensionUiResponse) => Promise<void>
-  newSession: () => Promise<{ cancelled: boolean; interruptedRun?: boolean }>
+  newSession: () => Promise<{ cancelled: boolean }>
+  /** 后台会话(没在看的那些聊天)的运行状态变化。 */
+  onSessionActivity: (cb: (event: SessionActivity) => void) => () => void
   getState: () => Promise<RpcSessionState>
   getMessages: () => Promise<AgentMessage[]>
   getAvailableModels: () => Promise<ModelInfo[]>
@@ -735,6 +736,9 @@ export type PiRunFailedEvent = {
 }
 
 export type PiRuntimeEvent = AgentSessionEvent | ExtensionUiRequest | PiRunFailedEvent
+
+/** 每个聊天各自一个 agent 进程,后台那些只上报这个。 */
+export type SessionActivity = { sessionFile: string | null; running: boolean }
 
 export type AgentRuntimePhase =
   | 'closed'

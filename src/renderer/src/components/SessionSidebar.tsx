@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { message as antdMessage } from 'antd'
 import { createStyles } from 'antd-style'
 import { SquarePen, Trash2, Pencil, Check, X } from 'lucide-react'
 import { api, type Workspace, type SessionInfo } from '../lib/api'
@@ -118,6 +117,16 @@ const useStyles = createStyles(({ token, css }) => ({
     background: ${token.colorPrimary};
   `,
 
+  /* 后台会话还在跑:呼吸的绿点(每个聊天各自一个 agent 进程,切走也不会停) */
+  dotRunning: css`
+    background: ${token.colorSuccess};
+    animation: session-running-pulse 1.4s ease-in-out infinite;
+    @keyframes session-running-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+  `,
+
   itemBody: css`
     flex: 1;
     min-width: 0;
@@ -207,11 +216,6 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-/** 一个 agent 一次只跑一个会话:切走会先中止正在进行的一轮,得说一声。 */
-function notifyInterruptedRun(interruptedRun: boolean | undefined): void {
-  if (interruptedRun) antdMessage.warning('已中止上一个会话正在进行的运行')
-}
-
 export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
   const { styles, cx } = useStyles()
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -219,6 +223,8 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [busy, setBusy] = useState(false)
+  /** 后台还在跑的会话文件(前台那个的状态由 ChatPane 自己管) */
+  const [runningSessions, setRunningSessions] = useState<Set<string>>(new Set())
   const renameInputRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async () => {
@@ -242,6 +248,20 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
     })
   }, [refresh])
 
+  // 后台会话跑完了也要更新消息数/排序,它不走前台事件流
+  useEffect(() => {
+    return api.pi.onSessionActivity(({ sessionFile, running }) => {
+      if (!sessionFile) return
+      setRunningSessions((prev) => {
+        const next = new Set(prev)
+        if (running) next.add(sessionFile)
+        else next.delete(sessionFile)
+        return next
+      })
+      if (!running) refresh()
+    })
+  }, [refresh])
+
   useEffect(() => {
     if (renaming) renameInputRef.current?.focus()
   }, [renaming])
@@ -250,8 +270,7 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
     if (busy) return
     setBusy(true)
     try {
-      const result = await api.pi.newSession()
-      notifyInterruptedRun(result.interruptedRun)
+      await api.pi.newSession()
       await refresh()
       onSessionChanged()
     } finally {
@@ -265,7 +284,6 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
     try {
       const result = await api.sessions.switch(session.path)
       if (!result.cancelled) {
-        notifyInterruptedRun(result.interruptedRun)
         await refresh()
         onSessionChanged()
       }
@@ -307,13 +325,21 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
         {sessions.length === 0 && <div className={styles.empty}>还没有历史会话</div>}
         {sessions.map((s) => {
           const isActive = s.path === activePath
+          const isRunning = !isActive && runningSessions.has(s.path)
           return (
             <div
               key={s.path}
               className={cx(styles.item, isActive && styles.itemActive)}
               onClick={() => handleSwitch(s)}
+              title={isRunning ? '这个会话正在后台运行' : undefined}
             >
-              <div className={cx(styles.dot, isActive && styles.dotActive)} />
+              <div
+                className={cx(
+                  styles.dot,
+                  isActive && styles.dotActive,
+                  isRunning && styles.dotRunning,
+                )}
+              />
               <div className={styles.itemBody}>
                 {isActive && renaming ? (
                   <input

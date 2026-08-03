@@ -431,6 +431,10 @@ export function registerIpcHandlers(): void {
         async (stoppedWorkspacePath) => {
           await sealRunChanges(stoppedWorkspacePath, 'workspace replaced')
         },
+        // 后台会话不走完整事件流,只把"在跑/停了"报给侧栏
+        (activity) => {
+          if (win && !win.isDestroyed()) win.webContents.send('pi:sessionActivity', activity)
+        },
       )
     } catch (err) {
       agentRuntime.startFailed((err as Error).message ?? '启动工作区失败')
@@ -511,6 +515,9 @@ export function registerIpcHandlers(): void {
     }
     // Never delete the file the running agent is writing to
     if (resolve(state.sessionFile) === target) return { error: '不能删除当前会话' }
+    // 后台会话也各自占着一个 agent 进程,先收掉它再删文件
+    const release = await piClientManager.releaseSession(target)
+    if (!release.released) return { error: '该会话正在后台运行，先停止再删除' }
     deleteSession(target)
     return { ok: true }
   })

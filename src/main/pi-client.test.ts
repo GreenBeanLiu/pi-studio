@@ -4,12 +4,19 @@ import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { readFileSync } from 'node:fs'
-import { embeddedNodeEnv, loadRpcClient, nextRunActive, resolveEmbeddedNodePath } from './pi-client'
+import {
+  embeddedNodeEnv,
+  loadRpcClient,
+  nextRunActive,
+  pickEvictableAgent,
+  resolveEmbeddedNodePath,
+} from './pi-client'
 
 // 2026-08-03:pi 的 new_session / switch_session 直接 dispose 当前会话。实测(本地假
 // SSE provider)正在跑的一轮会被掐断且一个事件都不发 —— message_end / turn_end /
-// agent_end / agent_settled 全没有,界面永远停在最后一步。abort 则会正常发完收尾事件。
-describe('run tracking across session switches', () => {
+// agent_end / agent_settled 全没有,界面永远停在最后一步。所以改成一个聊天一个进程,
+// 切换只换看哪一个,谁都不用被中断。
+describe('one agent process per chat', () => {
   it('treats a run as live from agent_start until agent_settled', () => {
     expect(nextRunActive(false, 'agent_start')).toBe(true)
     // agent_end 之后还可能自动重试或压缩后续跑,不能就此当成结束
@@ -19,11 +26,26 @@ describe('run tracking across session switches', () => {
     expect(nextRunActive(false, 'tool_execution_end')).toBe(false)
   })
 
-  it('aborts the live run before tearing the session down', () => {
+  it('never reclaims the chat being viewed or one that is still running', () => {
+    const active = { runActive: false, lastActivatedAt: 300 }
+    const running = { runActive: true, lastActivatedAt: 100 }
+    const idleOld = { runActive: false, lastActivatedAt: 150 }
+    const idleNew = { runActive: false, lastActivatedAt: 200 }
+    expect(pickEvictableAgent([active, running, idleOld, idleNew], active)).toBe(idleOld)
+    // 只剩当前会话和在跑的会话时宁可超上限,也不能杀掉用户正在跑的一轮
+    expect(pickEvictableAgent([active, running], active)).toBeNull()
+    expect(pickEvictableAgent([], null)).toBeNull()
+  })
+
+  it('switches by activating another process instead of tearing a session down', () => {
     const source = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
-    expect(source).toContain('await this.client.abort()')
-    // 两个入口都必须先收拾干净再切
-    expect(source.match(/await this\.settleActiveRun\(\)/g)).toHaveLength(2)
+    // 切换/新建都只是起进程或换激活对象:既不中止当前这轮,也不碰 pi 的 new_session
+    // (abort 本身还留着 —— 那是停止按钮用的)
+    expect(source).not.toContain('settleActiveRun')
+    expect(source).not.toContain('client.newSession()')
+    expect(source).toContain('const existing = this.entries.find')
+    // 后台会话的审批请求要留到它回到前台再补发,否则没人应答会卡死
+    expect(source).toContain('entry.pendingUi.push(event)')
   })
 })
 
