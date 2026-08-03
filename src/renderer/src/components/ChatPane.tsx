@@ -144,6 +144,21 @@ const useStyles = createStyles(({ token, css }) => ({
     animation: slide-in-down 0.18s ease-out both;
   `,
 
+  retryBanner: css`
+    flex-shrink: 0;
+    margin: 12px 16px 0;
+    padding: 8px 14px;
+    border-radius: ${token.borderRadius}px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: ${token.colorWarningBg};
+    border: 1px solid ${token.colorWarningBorder};
+    color: ${token.colorWarningText};
+    animation: slide-in-down 0.18s ease-out both;
+  `,
+
   errorDismiss: css`
     background: none;
     border: none;
@@ -1386,6 +1401,13 @@ export default function ChatPane({
   const [autoFollow, setAutoFollow] = useState(true)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  // pi 的自动重试(默认 3 次、2/4/8s 退避)期间进程只是在 sleep,不显示出来
+  // 用户看到的就是"卡住了"。
+  const [retryNotice, setRetryNotice] = useState<{
+    attempt: number
+    maxAttempts: number
+    message: string
+  } | null>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // Index of the message currently being streamed (set by message_start),
@@ -1393,6 +1415,8 @@ export default function ChatPane({
   // (e.g. tool results) land in between.
   const streamingIndexRef = useRef<number | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
+  /** 本轮最后一条 assistant 消息的报错(stopReason === 'error'),正常结束时为 null。 */
+  const lastAssistantErrorRef = useRef<string | null>(null)
   const messagesStateRef = useRef(messages)
   const runRecordsRef = useRef(runRecords)
   messagesStateRef.current = messages
@@ -1448,6 +1472,7 @@ export default function ChatPane({
     // never arrives — reset streaming state here or the input stays disabled.
     setSending(false)
     setError(null)
+    setRetryNotice(null)
     streamingIndexRef.current = null
     if (!workspace || starting) {
       setMessages([])
@@ -1517,6 +1542,56 @@ export default function ChatPane({
   thinkingRef.current = thinking
 
   useEffect(() => {
+    /** 往指定运行记录里补一条时间线事件;没有目标 run 时静默跳过。 */
+    const appendRunEventTo = (
+      runId: string | null,
+      label: string,
+      detail: string | undefined,
+      status: RunStatus,
+    ): void => {
+      if (!runId) return
+      const timestamp = new Date().toISOString()
+      setRunRecords((prev) =>
+        prev.map((run) =>
+          run.id === runId
+            ? {
+                ...run,
+                timeline: [
+                  ...run.timeline,
+                  { id: `${runId}:${label}:${shortId()}`, type: 'event', label, detail, timestamp, status },
+                ],
+              }
+            : run,
+        ),
+      )
+    }
+
+    const appendRunEvent = (label: string, detail: string | undefined, status: RunStatus): void =>
+      appendRunEventTo(activeRunIdRef.current, label, detail, status)
+
+    /**
+     * 异常收尾:把这一轮标成失败并解锁输入框(正常路径走 agent_end)。
+     * 最终失败的 auto_retry_end 排在 agent_end 之后,那时 activeRunIdRef 已经清空,
+     * 所以回退到最新一条记录,失败原因才不会丢。
+     */
+    const failActiveRun = (label: string, detail: string | undefined): void => {
+      const runId = activeRunIdRef.current ?? runRecordsRef.current[0]?.id ?? null
+      appendRunEventTo(runId, label, detail, 'error')
+      if (runId) {
+        const timestamp = new Date().toISOString()
+        setRunRecords((prev) =>
+          prev.map((run) =>
+            run.id === runId && run.status !== 'aborted'
+              ? { ...run, status: 'error', endedAt: run.endedAt ?? timestamp }
+              : run,
+          ),
+        )
+      }
+      activeRunIdRef.current = null
+      setRetryNotice(null)
+      setSending(false)
+    }
+
     const off = api.pi.onEvent((event: PiRuntimeEvent) => {
       if (event.type === 'extension_ui_request') {
         const runId = activeRunIdRef.current
@@ -1580,11 +1655,19 @@ export default function ChatPane({
 
       switch (event.type) {
         case 'agent_start':
+          // 重试和压缩后的续跑都会再发一次 agent_start。上一轮还挂着就说明是同一个
+          // 提问的延续,记进同一条运行记录,而不是凭空多出几条"运行中"。
+          if (activeRunIdRef.current) {
+            appendRunEvent('继续本轮', undefined, 'running')
+            setSending(true)
+            break
+          }
           {
             const timestamp = new Date().toISOString()
             const id = `${timestamp}:run:${shortId()}`
             const model = currentModelRef.current
             activeRunIdRef.current = id
+            lastAssistantErrorRef.current = null
             setRunRecords((prev) =>
               [
                 ({
@@ -1615,6 +1698,22 @@ export default function ChatPane({
           setSending(true)
           break
         case 'agent_end':
+          // 自动重试会先发一轮 agent_end(willRetry=true)再退避重发 —— 这不是真结束。
+          // 照常收尾会误报"任务完成"、提前弹 diff 审阅,还会把运行记录标成 done。
+          if (event.willRetry) {
+            appendRunEvent('本轮出错，等待自动重试', undefined, 'running')
+            break
+          }
+          // 重试用尽(或没开重试)的失败也走 agent_end,只有最后一条 assistant 消息
+          // 带着 stopReason: 'error'。不分流的话它会被当成完成:弹"任务完成"通知、
+          // 弹 diff 审阅、运行记录标 done —— 用户唯一看得到的线索就是"没有回复"。
+          if (lastAssistantErrorRef.current) {
+            const failure = lastAssistantErrorRef.current
+            lastAssistantErrorRef.current = null
+            setError(`模型调用失败：${failure}`)
+            failActiveRun('模型调用失败', failure)
+            break
+          }
           let completedRunId: string | null = null
           let completedRunForMemory: RunRecord | undefined
           {
@@ -1747,6 +1846,42 @@ export default function ChatPane({
             }
           }
           break
+        case 'auto_retry_start':
+          // agent_end 已经把 sending 关掉了,重试期间要重新亮起来。
+          setSending(true)
+          setRetryNotice({
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            message: event.errorMessage,
+          })
+          appendRunEvent(
+            `自动重试 ${event.attempt}/${event.maxAttempts}`,
+            event.errorMessage,
+            'running',
+          )
+          break
+        case 'auto_retry_end':
+          setRetryNotice(null)
+          if (event.success) {
+            appendRunEvent(`重试成功（第 ${event.attempt} 次）`, undefined, 'done')
+            break
+          }
+          setError(`模型调用失败，重试 ${event.attempt} 次后放弃：${event.finalError ?? '未知错误'}`)
+          failActiveRun(`重试 ${event.attempt} 次后失败`, event.finalError)
+          break
+        case 'run_failed':
+          // 补丁事件:pi 在 prompt 预检之后抛的异常,原本会被 rpc 模式整个吞掉。
+          setError(`本轮运行异常结束：${event.message}`)
+          failActiveRun('运行异常结束', event.message)
+          break
+        case 'agent_settled':
+          // 兜底。settled 在每轮 finally 里必发,而 agent_end 在异常路径上不会到 ——
+          // 走到这里还挂着 run,就说明这轮没有正常结束过。
+          if (activeRunIdRef.current) {
+            setError('本轮运行意外结束（agent 没有发出结束事件），可重发最后一条消息继续。')
+            failActiveRun('运行意外结束', undefined)
+          }
+          break
         case 'message_start':
           setMessages((prev) => {
             streamingIndexRef.current = prev.length
@@ -1755,6 +1890,14 @@ export default function ChatPane({
           break
         case 'message_update':
         case 'message_end':
+          // 失败的一轮同样以 agent_end 收尾,区别只在最后一条 assistant 消息的
+          // stopReason —— 不记下来,收尾时就会把报错的一轮当成"任务完成"。
+          if (event.type === 'message_end' && event.message.role === 'assistant') {
+            lastAssistantErrorRef.current =
+              event.message.stopReason === 'error'
+                ? (event.message.errorMessage ?? '模型调用失败')
+                : null
+          }
           setMessages((prev) => {
             const idx = streamingIndexRef.current
             if (idx === null || idx >= prev.length) {
@@ -3016,6 +3159,13 @@ export default function ChatPane({
         <div className={styles.errorBanner}>
           <span style={{ flex: 1 }}>{error}</span>
           <button className={styles.errorDismiss} onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+      {retryNotice && (
+        <div className={styles.retryBanner}>
+          <span style={{ flex: 1 }}>
+            {`模型调用失败，正在自动重试（${retryNotice.attempt}/${retryNotice.maxAttempts}）：${retryNotice.message}`}
+          </span>
         </div>
       )}
       {agentIssue && (

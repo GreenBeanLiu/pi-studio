@@ -1,5 +1,18 @@
+diff --git a/dist/modes/rpc/rpc-client.d.ts b/dist/modes/rpc/rpc-client.d.ts
+index 4bcf34884d5d3f9c202f9b5c588e080c1e138a6f..7c8e507a428954b943b52b2b7cad431b1d1c3e81 100644
+--- a/dist/modes/rpc/rpc-client.d.ts
++++ b/dist/modes/rpc/rpc-client.d.ts
+@@ -13,6 +13,8 @@ import type { RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+ export interface RpcClientOptions {
+     /** Path to the CLI entry point (default: searches for dist/cli.js) */
+     cliPath?: string;
++    /** Node-compatible executable used to launch the CLI */
++    runtimePath?: string;
+     /** Working directory for the agent */
+     cwd?: string;
+     /** Environment variables */
 diff --git a/dist/modes/rpc/rpc-client.js b/dist/modes/rpc/rpc-client.js
-index af2b28976950551bcaa6526b48f1faae0c5b0a81..d9c92f9394070037892af97f5aa0a6691ec3d611 100644
+index af2b28976950551bcaa6526b48f1faae0c5b0a81..e94e95127ee34e2a8705433e44494c712f39b90b 100644
 --- a/dist/modes/rpc/rpc-client.js
 +++ b/dist/modes/rpc/rpc-client.js
 @@ -39,7 +39,7 @@ export class RpcClient {
@@ -11,15 +24,25 @@ index af2b28976950551bcaa6526b48f1faae0c5b0a81..d9c92f9394070037892af97f5aa0a669
              cwd: this.options.cwd,
              env: { ...process.env, ...this.options.env },
              stdio: ["pipe", "pipe", "pipe"],
-diff --git a/dist/modes/rpc/rpc-client.d.ts b/dist/modes/rpc/rpc-client.d.ts
-index e381740c06a4ef6fec756c5c88d97f1720732ad7..9a1f59eb6b982568b3a63f8b8db00a55bbc67c71 100644
---- a/dist/modes/rpc/rpc-client.d.ts
-+++ b/dist/modes/rpc/rpc-client.d.ts
-@@ -11,5 +11,7 @@ export interface RpcClientOptions {
-     /** Path to the CLI entry point (default: searches for dist/cli.js) */
-     cliPath?: string;
-+    /** Node-compatible executable used to launch the CLI */
-+    runtimePath?: string;
-     /** Working directory for the agent */
-     cwd?: string;
-     /** Environment variables */
+diff --git a/dist/modes/rpc/rpc-mode.js b/dist/modes/rpc/rpc-mode.js
+index e064f7fb2d7fdc03d67674b7cbfb7d4c7460beec..b447cfeffd8ebb65e0eba73686b2199588c89404 100644
+--- a/dist/modes/rpc/rpc-mode.js
++++ b/dist/modes/rpc/rpc-mode.js
+@@ -311,9 +311,16 @@ export async function runRpcMode(runtimeHost) {
+                     },
+                 })
+                     .catch((e) => {
++                    const message = e instanceof Error ? e.message : String(e);
+                     if (!preflightSucceeded) {
+-                        output(error(id, "prompt", e.message));
++                        output(error(id, "prompt", message));
++                        return;
+                     }
++                    // Once preflight has answered, a later rejection has no exit: the
++                    // response was already sent and the event stream never gets an
++                    // agent_end — the host just sees the turn vanish. Emit an event so
++                    // embedders can report it. Consumed by pi-studio's ChatPane.
++                    output({ type: "run_failed", scope: "prompt", message });
+                 });
+                 return undefined;
+             }

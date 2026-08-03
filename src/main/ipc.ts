@@ -409,7 +409,9 @@ export function registerIpcHandlers(): void {
         runtime.model,
         async (agentEvent) => {
           agentRuntime.agentEvent(agentEvent)
-          if (agentEvent.type === 'agent_end') {
+          // willRetry 的 agent_end 只是重试前的一段间隙,这时封存基线,重试里新写的
+          // 文件就落在任何一次运行变更之外 —— 回滚兜不住它们。
+          if (agentEvent.type === 'agent_end' && !agentEvent.willRetry) {
             await sealRunChanges(workspacePath, 'agent ended')
           }
           if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
