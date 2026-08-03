@@ -183,29 +183,76 @@ async function expectOk(response: Response, action: string): Promise<void> {
   throw new Error(`${action} failed (${response.status}): ${detail.slice(0, 300)}`)
 }
 
+/**
+ * 403 表示这条记录归属另一个装机/账号 —— 解除配对再重新配对就会留下这种孤儿记录
+ * (旧账号还挂着 workflow,新装机怎么写都没权限)。重试多少次都是同一个 403。
+ */
+export function isDisownedStatus(status: number): boolean {
+  return status === 403
+}
+
+/** 本次进程里已确认写不动的记录,跳过它们,别再拿一条坏记录堵住整份快照。 */
+const disownedIds = new Set<string>()
+
+/** 把本轮攒下的可重试失败合成一个错误(有失败才重试整份快照);全成功返回 null。 */
+export function aggregateSyncFailure(failures: readonly string[]): Error | null {
+  if (failures.length === 0) return null
+  if (failures.length === 1) return new Error(failures[0])
+  return new Error(`${failures[0]} (+${failures.length - 1} more)`)
+}
+
+/** @returns 可重试的错误信息;记录归属问题(403)按永久失败跳过,返回 null。 */
+async function pushRecord(
+  id: string,
+  path: string,
+  payload: Record<string, unknown>,
+  action: string,
+  credential: InstallationCredential,
+): Promise<string | null> {
+  if (disownedIds.has(id)) return null
+  const response = await cloudRequest(path, { method: 'PUT', body: JSON.stringify(payload) }, credential)
+  if (response.ok) return null
+  const detail = (await response.text().catch(() => '')).slice(0, 300)
+  if (!isDisownedStatus(response.status)) {
+    return `${action} failed (${response.status}): ${detail}`
+  }
+  disownedIds.add(id)
+  appendAppLog('warn', 'routines.cloudSync', 'Remote record belongs to another installation; skipping', {
+    id,
+    action,
+    detail,
+  })
+  recordSyncState('disowned_records', [...disownedIds].join(','))
+  return null
+}
+
 async function syncSnapshot(snapshot: RoutineStoreSnapshot): Promise<void> {
   const credential = await ensureCredential()
+  // 单条失败先攒着继续推下一条:2026-08-03 就是一条孤儿 workflow 的 403 把
+  // 所有例程和运行记录的同步堵了一整天。
+  const failures: string[] = []
+
   for (const routine of snapshot.routines) {
-    await expectOk(
-      await cloudRequest(
-        `/pi/workflows/${encodeURIComponent(routine.id)}`,
-        { method: 'PUT', body: JSON.stringify(routineWorkflowPayload(routine)) },
-        credential,
-      ),
+    const failure = await pushRecord(
+      routine.id,
+      `/pi/workflows/${encodeURIComponent(routine.id)}`,
+      routineWorkflowPayload(routine),
       'Saving remote workflow',
+      credential,
     )
+    if (failure) failures.push(failure)
   }
 
   const routines = new Map(snapshot.routines.map((routine) => [routine.id, routine]))
   for (const run of snapshot.runs) {
-    await expectOk(
-      await cloudRequest(
-        `/pi/workflow-runs/${encodeURIComponent(run.id)}`,
-        { method: 'PUT', body: JSON.stringify(routineRunPayload(run, routines)) },
-        credential,
-      ),
+    const failure = await pushRecord(
+      run.id,
+      `/pi/workflow-runs/${encodeURIComponent(run.id)}`,
+      routineRunPayload(run, routines),
       'Saving remote workflow run',
+      credential,
     )
+    if (failure) failures.push(failure)
   }
 
   for (const intent of deleteOutbox?.claimWorkflowDeletes(
@@ -222,6 +269,9 @@ async function syncSnapshot(snapshot: RoutineStoreSnapshot): Promise<void> {
     )
     deleteOutbox?.ackWorkflowDelete(intent.id)
   }
+
+  const aggregated = aggregateSyncFailure(failures)
+  if (aggregated) throw aggregated
 }
 
 let pendingSnapshot: RoutineStoreSnapshot | null = null

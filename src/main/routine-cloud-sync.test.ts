@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  aggregateSyncFailure,
   cloudStepId,
+  isDisownedStatus,
   routineRunPayload,
   routineWorkflowPayload,
 } from './routine-cloud-sync'
@@ -99,6 +102,27 @@ describe('routine cloud payloads', () => {
         },
       ],
     })
+  })
+
+  // 2026-08-03:解除配对后重新配对留下 3 条归属旧账号的 workflow,第一条 403 就
+  // 抛出中断整份快照 —— 例程和运行记录的同步整整坏了一天,每 5 分钟重试一次同样的 403。
+  it('treats an ownership rejection as permanent and everything else as retryable', () => {
+    expect(isDisownedStatus(403)).toBe(true)
+    expect(isDisownedStatus(500)).toBe(false)
+    expect(isDisownedStatus(429)).toBe(false)
+  })
+
+  it('reports every retryable failure once instead of stopping at the first', () => {
+    expect(aggregateSyncFailure([])).toBeNull()
+    expect(aggregateSyncFailure(['boom'])?.message).toBe('boom')
+    expect(aggregateSyncFailure(['boom', 'bang', 'crash'])?.message).toBe('boom (+2 more)')
+  })
+
+  it('keeps pushing the rest of the snapshot after a record fails', () => {
+    const source = readFileSync(new URL('./routine-cloud-sync.ts', import.meta.url), 'utf8')
+    // 收集失败再统一抛出,而不是碰到第一条就 await expectOk 直接中断循环
+    expect(source).toContain('if (failure) failures.push(failure)')
+    expect(source).toContain('if (disownedIds.has(id)) return null')
   })
 
   it('maps completed runs and links step definitions', () => {
