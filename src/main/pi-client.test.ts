@@ -10,6 +10,7 @@ import {
   nextRunActive,
   pickEvictableAgent,
   resolveEmbeddedNodePath,
+  sessionKey,
 } from './pi-client'
 
 // 2026-08-03:pi 的 new_session / switch_session 直接 dispose 当前会话。实测(本地假
@@ -35,6 +36,14 @@ describe('one agent process per chat', () => {
     // 只剩当前会话和在跑的会话时宁可超上限,也不能杀掉用户正在跑的一轮
     expect(pickEvictableAgent([active, running], active)).toBeNull()
     expect(pickEvictableAgent([], null)).toBeNull()
+  })
+
+  it('recognises the same session file however the caller spelled it', () => {
+    // 手机端传来的路径没走桌面的 parseSessionPath;认不出来就会给同一个会话再起一个进程
+    const a = sessionKey('C:\\Users\\me\\sessions\\--D--Works--\\s.jsonl')
+    const b = sessionKey('C:/Users/me/sessions/--D--Works--/s.jsonl')
+    expect(a).toBe(b)
+    expect(sessionKey(null)).toBeNull()
   })
 
   it('switches by activating another process instead of tearing a session down', () => {

@@ -3,7 +3,7 @@ import { hostname } from 'os'
 import { piClientManager } from './pi-client'
 import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
-import { appendAppLog } from './app-log'
+import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { RemotePairingCode } from '../shared/ipc/contract'
@@ -262,6 +262,17 @@ class RemoteControlManager {
         case 'switchSession':
           this.reply(msg.id, await piClientManager.switchSession(String(msg.path ?? '')))
           break
+        // 只能重命名当前会话:pi 的 set_session_name 作用于活动会话(桌面端同理)
+        case 'renameSession': {
+          const name = String(msg.name ?? '').trim()
+          if (!name) {
+            this.replyError(msg.id, 'session name is required', 'INVALID_NAME')
+            break
+          }
+          await piClientManager.setSessionName(name)
+          this.reply(msg.id)
+          break
+        }
         // 会话列表只能由桌面提供:RpcClient 没有 list API,是扫 sessions 目录扫出来的
         // (同 ipc.ts 的 'sessions:list')。列表按当前工作区 cwd 过滤。
         case 'listSessions': {
@@ -278,6 +289,12 @@ class RemoteControlManager {
           break
       }
     } catch (err) {
+      // 远程指令失败过去只回给手机、桌面这边一点痕迹都不留,手机上又只显示一句
+      // 通用提示 —— 出问题时两头都查不到。这里落一条日志。
+      appendAppLog('warn', 'remote.command', 'Remote command failed', {
+        type,
+        error: normalizeError(err),
+      })
       this.replyError(msg.id, errMsg(err))
     }
   }

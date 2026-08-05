@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   setModel: vi.fn(),
   getWorkspacePath: vi.fn(),
   switchSession: vi.fn(),
+  setSessionName: vi.fn(),
   listSessions: vi.fn(),
   loadCachedProviderLabels: vi.fn(),
 }))
@@ -29,6 +30,7 @@ vi.mock('./pi-client', () => ({
     setModel: mocks.setModel,
     getWorkspacePath: mocks.getWorkspacePath,
     switchSession: mocks.switchSession,
+    setSessionName: mocks.setSessionName,
   },
 }))
 vi.mock('./pi-sessions', () => ({ listSessions: mocks.listSessions }))
@@ -36,7 +38,10 @@ vi.mock('./routine-cloud-sync', () => ({
   ensureCredential: vi.fn().mockResolvedValue({ token: 'host-token' }),
   routineSyncOrigin: vi.fn().mockReturnValue('https://relay.example'),
 }))
-vi.mock('./app-log', () => ({ appendAppLog: vi.fn() }))
+vi.mock('./app-log', () => ({
+  appendAppLog: vi.fn(),
+  normalizeError: (err: unknown) => ({ message: err instanceof Error ? err.message : String(err) }),
+}))
 vi.mock('./model-catalog', () => ({
   ModelCatalogCoordinator: class {
     loadCachedProviderLabels = mocks.loadCachedProviderLabels
@@ -150,6 +155,26 @@ describe('remote-control command protocol', () => {
     await vi.waitFor(() =>
       expect(ws.lastSent()).toEqual({ type: 'result', id: 8, error: 'No workspace is open' }),
     )
+  })
+
+  it('renames the current session and rejects an empty name', async () => {
+    mocks.setSessionName.mockResolvedValue(undefined)
+    const ws = await connect()
+
+    ws.receive({ id: 20, type: 'renameSession', name: '  发布流程  ' })
+    await vi.waitFor(() => expect(mocks.setSessionName).toHaveBeenCalledWith('发布流程'))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 20, data: { ok: true } })
+
+    ws.receive({ id: 21, type: 'renameSession', name: '   ' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 21,
+        error: 'session name is required',
+        code: 'INVALID_NAME',
+      }),
+    )
+    expect(mocks.setSessionName).toHaveBeenCalledTimes(1)
   })
 
   it('lists sessions for the current workspace', async () => {

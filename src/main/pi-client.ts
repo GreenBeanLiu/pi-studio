@@ -116,6 +116,17 @@ export function resolveEmbeddedNodePath(
 /** 同时保活的 agent 进程上限(每个约 150MB)。超了就回收最久没用的空闲会话。 */
 export const MAX_LIVE_AGENTS = 4
 
+/**
+ * 会话文件的比较键。手机端传来的路径没经过 main 的规范化(桌面 IPC 走 parseSessionPath),
+ * 分隔符或大小写差一点就会认不出"这个会话已经有进程了",于是又起一个 —— 两个 agent
+ * 同时往同一个 jsonl 里写。Windows 上路径不区分大小写。
+ */
+export function sessionKey(sessionFile: string | null): string | null {
+  if (!sessionFile) return null
+  const normalized = resolve(sessionFile)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
 type EvictionCandidate = { runActive: boolean; lastActivatedAt: number }
 
 /**
@@ -358,7 +369,8 @@ class PiClientManager {
    * 正在跑的一轮不给收 —— 调用方应据此拒绝删除。
    */
   async releaseSession(sessionFile: string): Promise<{ released: boolean; running: boolean }> {
-    const entry = this.entries.find((candidate) => candidate.sessionFile === sessionFile)
+    const wanted = sessionKey(sessionFile)
+    const entry = this.entries.find((candidate) => sessionKey(candidate.sessionFile) === wanted)
     if (!entry) return { released: true, running: false }
     if (entry.runActive) return { released: false, running: true }
     await this.stopEntry(entry, 'session deleted')
@@ -481,7 +493,8 @@ class PiClientManager {
   /** 切聊天 = 换看哪个进程;没有进程的会话就现起一个来接管。 */
   async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
     if (!this.launch) throw new Error('No workspace is open')
-    const existing = this.entries.find((entry) => entry.sessionFile === sessionPath)
+    const wanted = sessionKey(sessionPath)
+    const existing = this.entries.find((entry) => sessionKey(entry.sessionFile) === wanted)
     if (existing) {
       this.activate(existing)
       return { cancelled: false }
