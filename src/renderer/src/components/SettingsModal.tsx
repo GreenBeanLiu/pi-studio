@@ -370,11 +370,19 @@ export default function SettingsModal({
     if ('error' in result) setLlmProfilesError(result.error)
     else {
       await loadLlmProfiles()
-      // 上游 /models 会列出分组里其实跑不了的模型,刷新时探活剔除 —— 不说一声的话
-      // 用户只会看见模型莫名其妙少了几个。
+      // 刷新只做减法:探活剔除调不通的,新模型只报不加(上游一个分组里混着图像和
+      // 视频模型,整表覆盖会把它们灌进聊天列表)。两边都得说一声,否则用户只会
+      // 看见模型莫名其妙少了几个、或者压根不知道上游出了新模型。
       const dropped = result.profile?.unavailable_models ?? []
+      const discovered = result.profile?.new_models ?? []
       if (dropped.length > 0) {
-        message.warning(`上游列出但实际调用不通，已剔除：${dropped.join('、')}`)
+        message.warning(`实际调用不通，已剔除：${dropped.join('、')}`)
+      }
+      if (discovered.length > 0) {
+        message.info(`上游新增（未自动添加，可手动填入）：${discovered.join('、')}`)
+      }
+      if (dropped.length === 0 && discovered.length === 0) {
+        message.success('模型列表已是最新，全部可用')
       }
       if (result.warning) setLlmProfilesError(result.warning)
     }
