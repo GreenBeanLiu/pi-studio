@@ -370,6 +370,12 @@ export default function SettingsModal({
     if ('error' in result) setLlmProfilesError(result.error)
     else {
       await loadLlmProfiles()
+      // 上游 /models 会列出分组里其实跑不了的模型,刷新时探活剔除 —— 不说一声的话
+      // 用户只会看见模型莫名其妙少了几个。
+      const dropped = result.profile?.unavailable_models ?? []
+      if (dropped.length > 0) {
+        message.warning(`上游列出但实际调用不通，已剔除：${dropped.join('、')}`)
+      }
       if (result.warning) setLlmProfilesError(result.warning)
     }
   }
