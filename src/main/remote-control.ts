@@ -7,7 +7,11 @@ import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { NO_WORKSPACE_ERROR } from './pi-client'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import type { RemotePairingCode, RoutineReviewRequest } from '../shared/ipc/contract'
+import type {
+  ImageGenHistoryItem,
+  RemotePairingCode,
+  RoutineReviewRequest,
+} from '../shared/ipc/contract'
 import type { RoutineSchedule, RoutineStepProgress } from './routines'
 import type { Workspace } from '../shared/contracts'
 
@@ -76,6 +80,9 @@ export const SUPPORTED_COMMANDS = [
   'listRoutines',
   'runRoutine',
   'toggleRoutine',
+  'imageGenHealth',
+  'imageGenerate',
+  'imageGenHistory',
   'listPendingReviews',
   'respondReview',
   'switchSession',
@@ -136,6 +143,23 @@ export type RemoteRoutineHost = {
   toggle: (id: string, enabled: boolean) => { ok: true } | { error: string; code: string }
 }
 
+/**
+ * 生图。注意结果**只回 R2 公网链接**:桌面的 ImageGenResult 还带一个 dataUrl(整张图
+ * 的 base64,一张几 MB),那个绝不能进 WebSocket 帧 —— 手机自己去 CDN 拉图就行。
+ */
+export type RemoteImageHost = {
+  health: () => Promise<{ ok: boolean; model: string }>
+  generate: (payload: {
+    prompt: string
+    model?: string
+    n?: number
+    size?: string
+    aspectRatio?: string
+    referenceUrls?: string[]
+  }) => Promise<{ urls: string[] } | { error: string }>
+  history: (limit: number) => Promise<ImageGenHistoryItem[] | { error: string }>
+}
+
 /** 同理由 routines.ts 注入:pendingReviews 归它管,反向 import 会成环。 */
 export type RemoteReviewHost = {
   list: () => RoutineReviewRequest[]
@@ -162,6 +186,7 @@ class RemoteControlManager {
   private workspaceHost: RemoteWorkspaceHost | null = null
   private reviewHost: RemoteReviewHost | null = null
   private routineHost: RemoteRoutineHost | null = null
+  private imageHost: RemoteImageHost | null = null
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
@@ -187,6 +212,15 @@ class RemoteControlManager {
   private requireRoutineHost(): RemoteRoutineHost {
     if (!this.routineHost) throw new Error('routine control is unavailable')
     return this.routineHost
+  }
+
+  setImageHost(host: RemoteImageHost): void {
+    this.imageHost = host
+  }
+
+  private requireImageHost(): RemoteImageHost {
+    if (!this.imageHost) throw new Error('image generation is unavailable')
+    return this.imageHost
   }
 
   private requireReviewHost(): RemoteReviewHost {
@@ -419,6 +453,45 @@ class RemoteControlManager {
         case 'listWorkspaces':
           this.reply(msg.id, this.requireWorkspaceHost().list())
           break
+        case 'imageGenHealth':
+          this.reply(msg.id, await this.requireImageHost().health())
+          break
+        case 'imageGenerate': {
+          const prompt = String(msg.prompt ?? '').trim()
+          if (!prompt) {
+            this.replyError(msg.id, 'prompt is required', 'INVALID_PROMPT')
+            break
+          }
+          const references = Array.isArray(msg.referenceUrls)
+            ? msg.referenceUrls.filter((item): item is string => typeof item === 'string')
+            : undefined
+          const result = await this.requireImageHost().generate({
+            prompt,
+            ...(typeof msg.model === 'string' ? { model: msg.model } : {}),
+            ...(typeof msg.n === 'number' ? { n: msg.n } : {}),
+            ...(typeof msg.size === 'string' ? { size: msg.size } : {}),
+            ...(typeof msg.aspectRatio === 'string' ? { aspectRatio: msg.aspectRatio } : {}),
+            ...(references?.length ? { referenceUrls: references } : {}),
+          })
+          if ('error' in result) {
+            this.replyError(msg.id, result.error, 'IMAGE_GEN_FAILED')
+            break
+          }
+          // 只挑 urls,不整个透传 —— ImageGenResult 里还有个几 MB 的 dataUrl,
+          // 哪天有人把原始结果塞进来,这一行是最后一道闸
+          this.reply(msg.id, { urls: result.urls })
+          break
+        }
+        case 'imageGenHistory': {
+          const limit = typeof msg.limit === 'number' ? msg.limit : 40
+          const history = await this.requireImageHost().history(limit)
+          if ('error' in history) {
+            this.replyError(msg.id, history.error, 'IMAGE_HISTORY_FAILED')
+            break
+          }
+          this.reply(msg.id, history)
+          break
+        }
         // 工作流不依赖工作区(store 在 userData,agent 节点自己按需拉 RpcClient),
         // 所以这几条在桌面没开工作目录时照样可用。
         case 'listRoutines':

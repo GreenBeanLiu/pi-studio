@@ -302,6 +302,11 @@ describe('remote-control command protocol', () => {
       run: () => ({ ok: true }),
       toggle: () => ({ ok: true }),
     })
+    remoteControl.setImageHost({
+      health: async () => ({ ok: true, model: 'gpt-image-2' }),
+      generate: async () => ({ urls: [] }),
+      history: async () => [],
+    })
     const ws = await connect()
 
     for (const [index, command] of SUPPORTED_COMMANDS.entries()) {
@@ -310,6 +315,74 @@ describe('remote-control command protocol', () => {
       await vi.waitFor(() => expect(ws.lastSent().id).toBe(id))
       expect(ws.lastSent()).not.toMatchObject({ code: 'UNKNOWN_COMMAND' })
     }
+  })
+
+  // 一张图的 base64 有几 MB。它进了 WebSocket 帧,中转和手机一起遭殃 —— 结果只能带链接。
+  it('sends generated images as links, never as base64', async () => {
+    const generate = vi.fn().mockResolvedValue({
+      urls: ['https://cdn.example/a.png'],
+      dataUrl: `data:image/png;base64,${'A'.repeat(5000)}`,
+      publicUrl: 'https://cdn.example/a.png',
+    })
+    remoteControl.setImageHost({
+      health: async () => ({ ok: true, model: 'gpt-image-2' }),
+      generate,
+      history: async () => [],
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 80, type: 'imageGenerate', prompt: '一只猫', n: 1, aspectRatio: '1:1' })
+
+    await vi.waitFor(() =>
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: '一只猫', n: 1, aspectRatio: '1:1' }),
+      ),
+    )
+    expect(ws.lastSent()).toEqual({
+      type: 'result',
+      id: 80,
+      data: { urls: ['https://cdn.example/a.png'] },
+    })
+    expect(JSON.stringify(ws.lastSent())).not.toContain('base64')
+  })
+
+  it('refuses an empty prompt and passes a generation failure through', async () => {
+    remoteControl.setImageHost({
+      health: async () => ({ ok: true, model: '' }),
+      generate: async () => ({ error: '云端中继 429' }),
+      history: async () => ({ error: '连不上云端历史服务' }),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 81, type: 'imageGenerate', prompt: '   ' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 81,
+        error: 'prompt is required',
+        code: 'INVALID_PROMPT',
+      }),
+    )
+
+    ws.receive({ id: 82, type: 'imageGenerate', prompt: '猫' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 82,
+        error: '云端中继 429',
+        code: 'IMAGE_GEN_FAILED',
+      }),
+    )
+
+    ws.receive({ id: 83, type: 'imageGenHistory' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 83,
+        error: '连不上云端历史服务',
+        code: 'IMAGE_HISTORY_FAILED',
+      }),
+    )
   })
 
   it('gives the phone a routine list, a manual run and an on/off switch', async () => {

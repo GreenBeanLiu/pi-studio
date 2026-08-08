@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { appendAppLog } from './app-log'
 import { getCloudConnection } from './cloud-connection'
 import { resolveCloudImageResult } from './image-gen-result'
+import { remoteControl } from './remote-control'
 
 // 本地 ComfyUI 引擎已移除(2026-07-17):生图全走云端(TrailAI 中继)。
 // Provider 调度、Hatchet 执行和 R2 归档均在服务端。
@@ -339,6 +340,56 @@ export function registerImageGenHandlers(): void {
       }
     },
   )
+
+  // 手机端。和 IPC 走同一批函数,只有两处不同:
+  //  1) downloadResult:false —— 手机拿 URL 就够,让桌面白下一份几 MB 的 base64 纯属浪费;
+  //  2) 只回 urls,dataUrl 一律不带 —— 那玩意进不了 WebSocket 帧。
+  remoteControl.setImageHost({
+    health: async () => {
+      const cloud = getCloudConnection()
+      const res = cloud.available ? await probeCloud('/imagegen/health', 3000) : null
+      const body = res ? ((await res.json()) as Record<string, unknown>) : null
+      return {
+        ok: !!body?.ok,
+        model: typeof body?.model === 'string' ? body.model : '',
+      }
+    },
+    generate: async (payload) => {
+      // engine 是遗留字段(cloudGenerate 只认 model),但类型上必填 —— 按模型名推,
+      // 别随手塞一个和 model 对不上的值
+      const model = (payload.model ?? '').toLowerCase()
+      const engine = model.includes('gemini') ? 'gemini' : model.includes('grok') ? 'grok' : 'openai'
+      const result = await generateImage({
+        ...payload,
+        engine,
+        model: payload.model as CloudImageModel | undefined,
+        size: payload.size as ImageGenSize | undefined,
+        aspectRatio: payload.aspectRatio as GeminiImageAspectRatio | undefined,
+        downloadResult: false,
+      })
+      if ('error' in result) return { error: result.error }
+      const urls = result.urls?.length
+        ? result.urls
+        : result.publicUrl
+          ? [result.publicUrl]
+          : []
+      // R2 没配好时只有本地 base64,手机拿不到 —— 说清楚,别回一个空数组让人干等
+      if (!urls.length) return { error: '生成成功但云端没有返回可访问的图片链接' }
+      return { urls }
+    },
+    history: async (limit) => {
+      const n = Math.min(Math.max(limit, 1), 200)
+      const cloud = getCloudConnection()
+      if (!cloud.available) return { error: cloud.error ?? '云端图像服务未配置' }
+      try {
+        const r = await cloudFetch(`/imagegen/history?limit=${n}&grouped=true`)
+        if (!r.ok) return { error: `历史接口 ${r.status}` }
+        return (await r.json()) as ImageGenHistoryItem[]
+      } catch {
+        return { error: '连不上云端历史服务' }
+      }
+    },
+  })
 
   ipcMain.handle(
     'imageGen:historyDeleteBatch',
