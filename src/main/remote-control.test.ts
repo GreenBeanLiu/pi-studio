@@ -75,7 +75,10 @@ class FakeWebSocket {
     this.sent.push(data)
   }
 
+  closed = false
+
   close(): void {
+    this.closed = true
     this.emit('close')
   }
 
@@ -261,6 +264,34 @@ describe('remote-control command protocol', () => {
         code: 'OPEN_WORKSPACE_FAILED',
       }),
     )
+  })
+
+  // NAT 超时/Wi-Fi 漫游不产生 close,中转早把这个 host 踢了、手机显示离线,
+  // 而桌面 socket 还是 ESTABLISHED —— 只靠 close 事件重连的话永远醒不过来。
+  it('pings the relay and reconnects once the link goes silent', async () => {
+    vi.useFakeTimers()
+    try {
+      const ws = await connect()
+      const sentBefore = ws.sent.length
+
+      await vi.advanceTimersByTimeAsync(25_000)
+      expect(JSON.parse(ws.sent[sentBefore])).toEqual({ type: 'ping' })
+
+      // 一直没有任何回包 —— 越过判死线后应主动关掉这条,交给重连
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ws.closed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('treats a pong as liveness, not as an unknown command', async () => {
+    const ws = await connect()
+    const sentBefore = ws.sent.length
+
+    ws.receive({ type: 'pong' })
+
+    await vi.waitFor(() => expect(ws.sent.length).toBe(sentBefore))
   })
 
   it('keeps non-agent desktop events off the chat event channel', async () => {

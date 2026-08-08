@@ -53,10 +53,10 @@ export type RemoteControlSnapshot = {
   lastError: string
 }
 
-/**
- * 开工作区的实际逻辑在 ipc.ts(要拉 runtime 配置、装扩展、挂一堆事件回调),
- * 这里只拿注入进来的入口用 —— remote-control 反向 import ipc 会成环。
- */
+/** 每隔这么久发一次 ping;超过 DEAD 还没收到任何消息就当这条链路已经死了。 */
+const HEARTBEAT_INTERVAL_MS = 25_000
+const HEARTBEAT_DEAD_MS = 60_000
+
 /**
  * 手机据此隐藏这台桌面还不支持的功能。指令是一条条加上去的,靠 UNKNOWN_COMMAND
  * 一个个试出来,只能在用户点下去之后才发现「这个按钮在这台电脑上没用」。
@@ -98,6 +98,10 @@ export const HOST_EVENT_CHANNELS = [
   'routines:reviewCancelled',
 ] as const
 
+/**
+ * 开工作区的实际逻辑在 ipc.ts(要拉 runtime 配置、装扩展、挂一堆事件回调),
+ * 这里只拿注入进来的入口用 —— remote-control 反向 import ipc 会成环。
+ */
 export type RemoteWorkspaceHost = {
   list: () => { current: string | null; recent: Workspace[] }
   open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
@@ -182,6 +186,8 @@ class RemoteControlManager {
   private lastError = ''
   private controllers = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private lastInboundAt = 0
   private statusListener: ((snap: RemoteControlSnapshot) => void) | null = null
   private workspaceHost: RemoteWorkspaceHost | null = null
   private reviewHost: RemoteReviewHost | null = null
@@ -270,6 +276,36 @@ class RemoteControlManager {
     }
   }
 
+  /**
+   * 应用层心跳。
+   *
+   * 桌面这条连接的唯一重连触发本来是 close 事件,但 NAT 超时、Wi-Fi 漫游、运营商掐
+   * 空闲连接都**不产生 close** —— 中转早把这个 host 踢出房间、手机显示「桌面离线」,
+   * 桌面这边 socket 还是 ESTABLISHED,于是永远不重连。实测遇到过。
+   */
+  private startHeartbeat(): void {
+    this.stopHeartbeat()
+    this.lastInboundAt = Date.now()
+    this.heartbeatTimer = setInterval(() => {
+      if (Date.now() - this.lastInboundAt > HEARTBEAT_DEAD_MS) {
+        appendAppLog('warn', 'remote', 'Remote control link went silent; reconnecting')
+        this.stopHeartbeat()
+        try {
+          this.ws?.close()
+        } catch {
+          /* 关不掉也无妨,重连会顶掉它 */
+        }
+        return
+      }
+      this.send({ type: 'ping' })
+    }, HEARTBEAT_INTERVAL_MS)
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    this.heartbeatTimer = null
+  }
+
   private scheduleReconnect(): void {
     if (!this.enabled || this.reconnectTimer) return
     this.reconnectTimer = setTimeout(() => {
@@ -294,12 +330,15 @@ class RemoteControlManager {
         this.controllers = 0
         this.setStatus('connected')
         appendAppLog('info', 'remote', 'Remote control host connected')
+        this.startHeartbeat()
       })
       ws.addEventListener('message', (e) => {
+        this.lastInboundAt = Date.now()
         void this.onControllerMessage(typeof e.data === 'string' ? e.data : String(e.data))
       })
       ws.addEventListener('close', () => {
         if (this.ws === ws) this.ws = null
+        this.stopHeartbeat()
         this.controllers = 0
         if (this.enabled) {
           this.setStatus('connecting')
@@ -362,6 +401,7 @@ class RemoteControlManager {
     const type = String(msg.type ?? '')
 
     // 中转的连接通知
+    if (type === 'pong') return
     if (type === 'controller_online') {
       this.controllers += 1
       this.emit()
