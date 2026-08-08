@@ -170,6 +170,9 @@ const MAX_RUNS_KEPT = 100
 const MAX_CONCURRENT = 2
 const MAX_STEP_OUTPUT_CHARS = 60_000
 const REVIEW_TIMEOUT_MS = 30 * 60 * 1000
+/** 发给手机的运行历史条数和每条正文长度 —— 一帧 WebSocket 装得下,手机上也看得完 */
+const REMOTE_RUNS_KEPT = 30
+const REMOTE_RUN_SUMMARY_CHARS = 600
 
 const storePath = (): string => join(app.getPath('userData'), 'routines.json')
 const databasePath = (): string => join(app.getPath('userData'), 'routines.sqlite3')
@@ -1073,29 +1076,42 @@ export function registerRoutines(): void {
   })
 
   ipcMain.handle('routines:toggle', (_e, id: string, enabled: boolean) => {
-    const r = store.routines.find((x) => x.id === id)
-    if (r) {
-      r.enabled = enabled
-      if (!enabled) {
-        scheduler.cancel(id)
-        cancelPendingReviews(id, '工作流已停用，审核请求已取消')
-      }
-      saveStore(store)
-    }
+    setRoutineEnabled(id, enabled)
     return store.routines
   })
 
-  ipcMain.handle('routines:runNow', (_e, id: string) => {
+  // 手机和桌面共用。失败带上 code —— 「不存在」「正在跑」「到并发上限了」在手机上
+  // 该给三种不同的提示,光靠一句中文字符串区分不了。
+  const runRoutineNow = (id: string): { ok: true } | { error: string; code: string } => {
     const r = store.routines.find((x) => x.id === id)
-    if (!r) return { error: '任务不存在' }
-    if (scheduler.has(r.id)) return { error: '该任务正在执行或排队' }
-    if (!scheduler.hasCapacity()) return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务` }
+    if (!r) return { error: '任务不存在', code: 'ROUTINE_NOT_FOUND' }
+    if (scheduler.has(r.id)) return { error: '该任务正在执行或排队', code: 'ROUTINE_BUSY' }
+    if (!scheduler.hasCapacity()) {
+      return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务`, code: 'ROUTINE_LIMIT' }
+    }
     r.lastRunAt = Date.now()
     triggerSources.set(r.id, 'manual')
     saveStore(store)
     scheduler.enqueue(r)
     return { ok: true }
-  })
+  }
+
+  const setRoutineEnabled = (
+    id: string,
+    enabled: boolean,
+  ): { ok: true } | { error: string; code: string } => {
+    const r = store.routines.find((x) => x.id === id)
+    if (!r) return { error: '任务不存在', code: 'ROUTINE_NOT_FOUND' }
+    r.enabled = enabled
+    if (!enabled) {
+      scheduler.cancel(id)
+      cancelPendingReviews(id, '工作流已停用，审核请求已取消')
+    }
+    saveStore(store)
+    return { ok: true }
+  }
+
+  ipcMain.handle('routines:runNow', (_e, id: string) => runRoutineNow(id))
 
   ipcMain.handle('routines:state', () => ({
     ...scheduler.getState(),
@@ -1112,5 +1128,36 @@ export function registerRoutines(): void {
   remoteControl.setReviewHost({
     list: () => [...pendingReviews.values()].map((pending) => pending.request),
     respond: respondToReview,
+  })
+
+  remoteControl.setRoutineHost({
+    list: () => ({
+      routines: store.routines.map((routine) => ({
+        id: routine.id,
+        name: routine.name,
+        enabled: routine.enabled,
+        stepCount: routine.steps.length,
+        schedule: routine.schedule,
+        workspacePath: routine.workspacePath,
+        createdAt: routine.createdAt,
+        ...(routine.lastRunAt ? { lastRunAt: routine.lastRunAt } : {}),
+      })),
+      // 手机上只回看最近这些;每步产物(steps)一律不带,那才是 store 的大头
+      runs: store.runs.slice(-REMOTE_RUNS_KEPT).reverse().map((run) => ({
+        id: run.id,
+        routineId: run.routineId,
+        routineName: run.routineName,
+        startedAt: run.startedAt,
+        endedAt: run.endedAt,
+        status: run.status,
+        ...(run.triggerSource ? { triggerSource: run.triggerSource } : {}),
+        summary: run.summary.slice(0, REMOTE_RUN_SUMMARY_CHARS),
+        ...(run.error ? { error: run.error.slice(0, REMOTE_RUN_SUMMARY_CHARS) } : {}),
+      })),
+      ...scheduler.getState(),
+      progress: [...liveStepProgress.values()].flatMap((steps) => [...steps.values()]),
+    }),
+    run: runRoutineNow,
+    toggle: setRoutineEnabled,
   })
 }

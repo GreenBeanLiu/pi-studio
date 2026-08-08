@@ -8,6 +8,7 @@ import { ModelCatalogCoordinator } from './model-catalog'
 import { NO_WORKSPACE_ERROR } from './pi-client'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { RemotePairingCode, RoutineReviewRequest } from '../shared/ipc/contract'
+import type { RoutineSchedule, RoutineStepProgress } from './routines'
 import type { Workspace } from '../shared/contracts'
 
 function errMsg(err: unknown): string {
@@ -72,6 +73,9 @@ export const SUPPORTED_COMMANDS = [
   'getWorkspace',
   'listWorkspaces',
   'openWorkspace',
+  'listRoutines',
+  'runRoutine',
+  'toggleRoutine',
   'listPendingReviews',
   'respondReview',
   'switchSession',
@@ -90,6 +94,46 @@ export const HOST_EVENT_CHANNELS = [
 export type RemoteWorkspaceHost = {
   list: () => { current: string | null; recent: Workspace[] }
   open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
+}
+
+/**
+ * 发给手机的工作流摘要。**不能**把 store 原样搬过去:一次运行的 steps 里每步产物
+ * 上限 60_000 字,还留着最近 100 次运行,整个 store 是几十 MB 级别的,塞进一帧
+ * WebSocket 既慢又没用 —— 手机上要看的就是「叫什么、开没开、上次跑得怎么样」。
+ */
+export type RemoteRoutineSummary = {
+  id: string
+  name: string
+  enabled: boolean
+  stepCount: number
+  schedule: RoutineSchedule
+  workspacePath: string
+  createdAt: number
+  lastRunAt?: number
+}
+
+export type RemoteRoutineRunSummary = {
+  id: string
+  routineId: string
+  routineName: string
+  startedAt: number
+  endedAt: number
+  status: 'ok' | 'error' | 'timeout'
+  triggerSource?: 'manual' | 'schedule'
+  summary: string
+  error?: string
+}
+
+export type RemoteRoutineHost = {
+  list: () => {
+    routines: RemoteRoutineSummary[]
+    runs: RemoteRoutineRunSummary[]
+    runningIds: string[]
+    queuedIds: string[]
+    progress: RoutineStepProgress[]
+  }
+  run: (id: string) => { ok: true } | { error: string; code: string }
+  toggle: (id: string, enabled: boolean) => { ok: true } | { error: string; code: string }
 }
 
 /** 同理由 routines.ts 注入:pendingReviews 归它管,反向 import 会成环。 */
@@ -117,6 +161,7 @@ class RemoteControlManager {
   private statusListener: ((snap: RemoteControlSnapshot) => void) | null = null
   private workspaceHost: RemoteWorkspaceHost | null = null
   private reviewHost: RemoteReviewHost | null = null
+  private routineHost: RemoteRoutineHost | null = null
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
@@ -133,6 +178,15 @@ class RemoteControlManager {
 
   setReviewHost(host: RemoteReviewHost): void {
     this.reviewHost = host
+  }
+
+  setRoutineHost(host: RemoteRoutineHost): void {
+    this.routineHost = host
+  }
+
+  private requireRoutineHost(): RemoteRoutineHost {
+    if (!this.routineHost) throw new Error('routine control is unavailable')
+    return this.routineHost
   }
 
   private requireReviewHost(): RemoteReviewHost {
@@ -365,6 +419,30 @@ class RemoteControlManager {
         case 'listWorkspaces':
           this.reply(msg.id, this.requireWorkspaceHost().list())
           break
+        // 工作流不依赖工作区(store 在 userData,agent 节点自己按需拉 RpcClient),
+        // 所以这几条在桌面没开工作目录时照样可用。
+        case 'listRoutines':
+          this.reply(msg.id, this.requireRoutineHost().list())
+          break
+        case 'runRoutine':
+        case 'toggleRoutine': {
+          const routineId = String(msg.routineId ?? '').trim()
+          if (!routineId) {
+            this.replyError(msg.id, 'routineId is required', 'INVALID_ROUTINE')
+            break
+          }
+          const host = this.requireRoutineHost()
+          const result =
+            type === 'runRoutine'
+              ? host.run(routineId)
+              : host.toggle(routineId, msg.enabled !== false)
+          if ('error' in result) {
+            this.replyError(msg.id, result.error, result.code)
+            break
+          }
+          this.reply(msg.id)
+          break
+        }
         // reviewRequested 是广播,手机当时不在线就永远收不到。重连后靠这条补齐,
         // 否则一个还剩十几分钟才超时的审核在手机上是隐形的。
         case 'listPendingReviews':

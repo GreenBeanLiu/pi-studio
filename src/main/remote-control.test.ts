@@ -297,6 +297,11 @@ describe('remote-control command protocol', () => {
     mocks.listSessions.mockResolvedValue([])
     remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open: vi.fn() })
     remoteControl.setReviewHost({ list: () => [], respond: () => ({ ok: true }) })
+    remoteControl.setRoutineHost({
+      list: () => ({ routines: [], runs: [], runningIds: [], queuedIds: [], progress: [] }),
+      run: () => ({ ok: true }),
+      toggle: () => ({ ok: true }),
+    })
     const ws = await connect()
 
     for (const [index, command] of SUPPORTED_COMMANDS.entries()) {
@@ -305,6 +310,76 @@ describe('remote-control command protocol', () => {
       await vi.waitFor(() => expect(ws.lastSent().id).toBe(id))
       expect(ws.lastSent()).not.toMatchObject({ code: 'UNKNOWN_COMMAND' })
     }
+  })
+
+  it('gives the phone a routine list, a manual run and an on/off switch', async () => {
+    const snapshot = {
+      routines: [
+        {
+          id: 'r1',
+          name: '每日日报',
+          enabled: true,
+          stepCount: 3,
+          schedule: { type: 'daily' as const, time: '09:00' },
+          workspacePath: '/Users/me/Works',
+          createdAt: 1,
+          lastRunAt: 2,
+        },
+      ],
+      runs: [],
+      runningIds: ['r1'],
+      queuedIds: [],
+      progress: [
+        { routineId: 'r1', stepId: 's2', stepIndex: 1, totalSteps: 3, status: 'running' as const },
+      ],
+    }
+    const run = vi.fn().mockReturnValue({ ok: true })
+    const toggle = vi.fn().mockReturnValue({ ok: true })
+    remoteControl.setRoutineHost({ list: () => snapshot, run, toggle })
+    const ws = await connect()
+
+    ws.receive({ id: 70, type: 'listRoutines' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 70, data: snapshot }),
+    )
+
+    ws.receive({ id: 71, type: 'runRoutine', routineId: 'r1' })
+    await vi.waitFor(() => expect(run).toHaveBeenCalledWith('r1'))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 71, data: { ok: true } })
+
+    ws.receive({ id: 72, type: 'toggleRoutine', routineId: 'r1', enabled: false })
+    await vi.waitFor(() => expect(toggle).toHaveBeenCalledWith('r1', false))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 72, data: { ok: true } })
+  })
+
+  // 「不存在」「正在跑」「到并发上限」在手机上是三种不同的提示
+  it('passes the reason a manual run was refused through to the phone', async () => {
+    remoteControl.setRoutineHost({
+      list: () => ({ routines: [], runs: [], runningIds: [], queuedIds: [], progress: [] }),
+      run: () => ({ error: '该任务正在执行或排队', code: 'ROUTINE_BUSY' }),
+      toggle: () => ({ ok: true }),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 73, type: 'runRoutine', routineId: 'r1' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 73,
+        error: '该任务正在执行或排队',
+        code: 'ROUTINE_BUSY',
+      }),
+    )
+
+    ws.receive({ id: 74, type: 'runRoutine' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 74,
+        error: 'routineId is required',
+        code: 'INVALID_ROUTINE',
+      }),
+    )
   })
 
   // review 节点阻塞整条工作流,超时就是全挂 —— 手机必须能应,也必须能在重连后补上
