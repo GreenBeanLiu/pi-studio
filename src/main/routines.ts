@@ -299,8 +299,19 @@ type StepProduct = {
 type RunContext = {
   routine: Routine
   triggerTime: string
+  /** 可直接进文件名的时间戳:{{trigger.time}} 是本地化文本,带冒号和斜杠,进不了路径。 */
+  triggerStamp: string
   products: Map<string, StepProduct> // key = step name
   prev?: StepProduct
+}
+
+/** YYYYMMDD-HHmmss,本地时区。Windows 也能当目录名。 */
+function pathStamp(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  )
 }
 
 /**
@@ -316,6 +327,7 @@ function interpolate(template: string, ctx: RunContext): string {
     if (token === 'routine.workspace') return ctx.routine.workspacePath
     if (token === 'routine.input') return ctx.routine.input ?? ''
     if (token === 'trigger.time') return ctx.triggerTime
+    if (token === 'trigger.stamp') return ctx.triggerStamp
     if (token.startsWith('steps.')) {
       const rest = token.slice('steps.'.length)
       const dot = rest.lastIndexOf('.')
@@ -478,7 +490,7 @@ async function runAppIconStep(
   const source = interpolate((step.imageRef ?? '{{prev.imageUrl}}').trim(), ctx).trim()
   if (!source || source.includes('{{')) throw new Error('应用图标节点需要上游生图链接或工作区内的母图路径')
   const outputPath = interpolate(
-    step.path?.trim() || '.pi-studio/app-icons/app-icon-bundle',
+    step.path?.trim() || '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
     ctx,
   )
   const result = await generateAppIconBundle({
@@ -757,9 +769,11 @@ async function executeRoutine(
     ? (channels.find((c) => c.id === routine.notifyChannelId && c.type !== 'wechat-official') ??
         channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official'))
     : undefined
+  const triggeredAt = new Date()
   const ctx: RunContext = {
     routine,
-    triggerTime: new Date().toLocaleString(),
+    triggerTime: triggeredAt.toLocaleString(),
+    triggerStamp: pathStamp(triggeredAt),
     products: new Map(),
   }
 

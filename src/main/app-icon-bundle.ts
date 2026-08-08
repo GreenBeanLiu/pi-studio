@@ -666,6 +666,22 @@ function assertOwnedOutputRoot(workspacePath: string, outputRoot: string): void 
   assertSafeOutputRoot(workspacePath, outputRoot)
 }
 
+/**
+ * 同名目录直接覆盖会把上一次生成的整包连同 .zip 一起删掉 —— 想留住上一版结果,
+ * 用户只能每跑一次就手动改一次文件夹名。目录或 .zip 已被占用就顺延一个序号,
+ * 两者都空着才用这个名字。
+ */
+function availableOutputRoot(outputRoot: string): string {
+  const taken = (candidate: string): boolean =>
+    existsSync(candidate) || existsSync(`${candidate}.zip`)
+  if (!taken(outputRoot)) return outputRoot
+  for (let index = 2; index <= 999; index += 1) {
+    const candidate = `${outputRoot}-${index}`
+    if (!taken(candidate)) return candidate
+  }
+  throw new Error('同名图标输出目录过多，请先清理 .pi-studio/app-icons/')
+}
+
 function replaceArchiveSafely(workspacePath: string, archivePath: string, data: Buffer): void {
   const ownedRoot = resolve(workspacePath, '.pi-studio', 'app-icons')
   if (!isContainedPath(archivePath, ownedRoot)) throw new Error('图标 ZIP 路径必须位于工作区图标目录内')
@@ -722,7 +738,9 @@ export async function generateAppIconBundle(
   )
   if (platforms.length === 0) throw new Error('至少选择一个图标平台')
 
-  const outputRoot = resolve(options.workspacePath, options.outputPath)
+  const requestedRoot = resolve(options.workspacePath, options.outputPath)
+  assertOwnedOutputRoot(options.workspacePath, requestedRoot)
+  const outputRoot = availableOutputRoot(requestedRoot)
   assertOwnedOutputRoot(options.workspacePath, outputRoot)
   const inputSource = await loadSource(options.source.trim(), options.workspacePath)
   const prepared = prepareAppIconLayers(
@@ -808,7 +826,7 @@ export async function generateAppIconBundle(
       })),
     )
 
-    if (existsSync(outputRoot)) rmSync(outputRoot, { recursive: true, force: true })
+    // outputRoot 已由 availableOutputRoot 挑成空位,这里不再删任何既有产物。
     renameSync(stagingRoot, outputRoot)
     staged = false
     replaceArchiveSafely(options.workspacePath, archivePath, archive)

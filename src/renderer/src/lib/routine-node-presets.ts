@@ -181,7 +181,7 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
       type: 'app-icon',
       imageRef: '{{prev.imageUrl}}',
       appName: '',
-      path: '.pi-studio/app-icons/{{routine.name}}',
+      path: '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
       backgroundColor: '',
       platforms: ['android', 'ios', 'macos', 'windows'],
     },

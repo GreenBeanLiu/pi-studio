@@ -166,6 +166,8 @@ describe('generateAppIconBundle', () => {
     expect(automaticManifest.backgroundColorSource).toBe('sampled-edge')
     expect(automaticManifest.adaptiveIconMode).toBe('layered')
 
+    // 重跑同一个输出名不能吃掉上一次的结果:之前直接 rmSync 覆盖,想留住上一版
+    // 只能每次手动改文件夹名。现在顺延到 focus-flow-2,原包和原 zip 都还在。
     const rebuilt = await generateAppIconBundle({
       source: '.pi-studio/app-icons/focus-flow/source/master.png',
       workspacePath: workspace,
@@ -174,8 +176,22 @@ describe('generateAppIconBundle', () => {
       backgroundColor: '#2563EB',
       platforms: ['windows'],
     })
+    expect(rebuilt.outputPath).toBe(join(workspace, '.pi-studio/app-icons/focus-flow-2'))
+    expect(rebuilt.archivePath).toBe(join(workspace, '.pi-studio/app-icons/focus-flow-2.zip'))
     expect(existsSync(join(rebuilt.outputPath, 'android'))).toBe(false)
     expect(existsSync(join(rebuilt.outputPath, 'windows', 'app.ico'))).toBe(true)
+    expect(existsSync(join(result.outputPath, 'android'))).toBe(true)
+    expect(existsSync(result.archivePath)).toBe(true)
+
+    const third = await generateAppIconBundle({
+      source: '.pi-studio/app-icons/focus-flow/source/master.png',
+      workspacePath: workspace,
+      outputPath: '.pi-studio/app-icons/focus-flow',
+      appName: 'FocusFlow',
+      backgroundColor: '#2563EB',
+      platforms: ['windows'],
+    })
+    expect(third.outputPath).toBe(join(workspace, '.pi-studio/app-icons/focus-flow-3'))
   })
 
   it('rejects output traversal and invalid colors', async () => {
