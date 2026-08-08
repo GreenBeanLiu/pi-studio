@@ -5,7 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@earendil-works/pi-coding-agent@0.80.7': c9bafeb3c15b79545c0242fa0a7cb40c9a0ac34183c3714c5f0ed8e7099176c3
+  '@earendil-works/pi-coding-agent@0.80.7':
+    hash: c9bafeb3c15b79545c0242fa0a7cb40c9a0ac34183c3714c5f0ed8e7099176c3
+    path: patches/@earendil-works__pi-coding-agent@0.80.7.patch
 
 importers:
 
