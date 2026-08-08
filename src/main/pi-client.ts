@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { basename, dirname, join, resolve } from 'path'
+import { basename, dirname, join, resolve, win32 } from 'path'
 import { createRequire } from 'module'
 import type {
   AgentSessionEvent,
@@ -116,6 +116,9 @@ export function resolveEmbeddedNodePath(
 /** 同时保活的 agent 进程上限(每个约 150MB)。超了就回收最久没用的空闲会话。 */
 export const MAX_LIVE_AGENTS = 4
 
+/** Windows 盘符或 UNC 路径。一个账户下 Mac 和 Windows 都能被同一台手机控制。 */
+const WINDOWS_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/
+
 /**
  * 会话文件的比较键。手机端传来的路径没经过 main 的规范化(桌面 IPC 走 parseSessionPath),
  * 分隔符或大小写差一点就会认不出"这个会话已经有进程了",于是又起一个 —— 两个 agent
@@ -123,8 +126,12 @@ export const MAX_LIVE_AGENTS = 4
  */
 export function sessionKey(sessionFile: string | null): string | null {
   if (!sessionFile) return null
-  const normalized = resolve(sessionFile)
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  if (process.platform === 'win32') return resolve(sessionFile).toLowerCase()
+  // mac / Linux 上 resolve() 不认反斜杠,会把整条 Windows 路径当成一个文件名,
+  // 还会给它拼上 cwd —— 手机端把那台 Windows 电脑的会话路径发过来时就认不出
+  // "这个会话已经有进程了"。用 win32 的解析规则处理,两种写法才会落到同一个键。
+  if (WINDOWS_PATH.test(sessionFile)) return win32.resolve(sessionFile).toLowerCase()
+  return resolve(sessionFile)
 }
 
 type EvictionCandidate = { runActive: boolean; lastActivatedAt: number }

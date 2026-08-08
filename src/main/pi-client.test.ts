@@ -39,10 +39,19 @@ describe('one agent process per chat', () => {
   })
 
   it('recognises the same session file however the caller spelled it', () => {
-    // 手机端传来的路径没走桌面的 parseSessionPath;认不出来就会给同一个会话再起一个进程
+    // 手机端传来的路径没走桌面的 parseSessionPath;认不出来就会给同一个会话再起一个进程。
+    // 这里在 mac 上跑也必须成立:同一个账户下手机可以控制 Windows 那台电脑,
+    // 而 mac 的 resolve() 不认反斜杠,会把整条路径当成一个文件名再拼上 cwd。
     const a = sessionKey('C:\\Users\\me\\sessions\\--D--Works--\\s.jsonl')
     const b = sessionKey('C:/Users/me/sessions/--D--Works--/s.jsonl')
     expect(a).toBe(b)
+    expect(a).not.toContain('/Users/glanger')
+    // 大小写和 .. 也要归一
+    expect(sessionKey('c:/USERS/me/x/../sessions/S.JSONL')).toBe(
+      sessionKey('C:\\Users\\me\\sessions\\s.jsonl'),
+    )
+    // POSIX 路径照旧
+    expect(sessionKey('/Users/me/sessions/s.jsonl')).toBe('/Users/me/sessions/s.jsonl')
     expect(sessionKey(null)).toBeNull()
   })
 
