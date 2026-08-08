@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'fs'
 import { createHash, randomUUID } from 'crypto'
-import { dirname, isAbsolute, relative, resolve } from 'path'
+import { basename, dirname, isAbsolute, relative, resolve } from 'path'
 import { isContainedPath } from '../shared/ipc/validators'
 import {
   ANDROID_ADAPTIVE_SPECS,
@@ -37,6 +37,8 @@ export type AppIconBundleOptions = {
   appName?: string
   backgroundColor?: string
   platforms: readonly AppIconPlatform[]
+  /** 同一个工作流最多保留几次生成;<=0 或不传就一直堆着。 */
+  keepHistory?: number
 }
 
 export type AppIconBundleResult = {
@@ -45,6 +47,8 @@ export type AppIconBundleResult = {
   fileCount: number
   platforms: AppIconPlatform[]
   warnings: string[]
+  /** 本次按保留上限清掉的历史目录名。 */
+  removedHistory: string[]
 }
 
 export type PreparedAppIconLayers = {
@@ -682,6 +686,56 @@ function availableOutputRoot(outputRoot: string): string {
   throw new Error('同名图标输出目录过多，请先清理 .pi-studio/app-icons/')
 }
 
+/**
+ * 同一个工作流的历次生成:去掉结尾的时间戳和重名序号,剩下的就是"家族名"。
+ * `icons-20260808-083000` 和 `icons-20260808-091500-2` 同属 `icons`,
+ * 而 `other-app-20260808-083000` 不会被算进来 —— 不能拿别的工作流的产物去凑数。
+ */
+const HISTORY_SUFFIX = /(?:-(?:\d{8}-\d{6}|\d+))+$/
+
+function historyFamilyOf(name: string): string {
+  return name.replace(HISTORY_SUFFIX, '')
+}
+
+/** 只认自己写出来的包:manifest 对不上就绝不删,免得误伤用户手放进去的目录。 */
+function bundleCreatedAt(dir: string): number | null {
+  try {
+    const manifest = JSON.parse(readFileSync(resolve(dir, 'manifest.json'), 'utf8')) as {
+      generator?: unknown
+      createdAt?: unknown
+    }
+    if (manifest.generator !== 'pi-studio') return null
+    const createdAt = typeof manifest.createdAt === 'string' ? Date.parse(manifest.createdAt) : NaN
+    return Number.isNaN(createdAt) ? statSync(dir).mtimeMs : createdAt
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 按保留上限清理同一家族的历史生成。时间戳目录会一直堆下去,而这些包不小
+ * (四个平台六十多个文件),留个上限才不至于把工作区撑爆。
+ */
+function pruneIconHistory(workspacePath: string, outputRoot: string, keep: number): string[] {
+  if (!Number.isFinite(keep) || keep <= 0) return []
+  const parent = dirname(outputRoot)
+  const family = historyFamilyOf(basename(outputRoot))
+  const bundles = readdirSync(parent, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && historyFamilyOf(entry.name) === family)
+    .map((entry) => resolve(parent, entry.name))
+    .filter((dir) => isContainedPath(dir, resolve(workspacePath, '.pi-studio', 'app-icons')))
+    .map((dir) => ({ dir, createdAt: bundleCreatedAt(dir) }))
+    .filter((item): item is { dir: string; createdAt: number } => item.createdAt !== null)
+    .sort((a, b) => b.createdAt - a.createdAt)
+  const removed: string[] = []
+  for (const stale of bundles.slice(keep)) {
+    rmSync(stale.dir, { recursive: true, force: true })
+    rmSync(`${stale.dir}.zip`, { force: true })
+    removed.push(basename(stale.dir))
+  }
+  return removed
+}
+
 function replaceArchiveSafely(workspacePath: string, archivePath: string, data: Buffer): void {
   const ownedRoot = resolve(workspacePath, '.pi-studio', 'app-icons')
   if (!isContainedPath(archivePath, ownedRoot)) throw new Error('图标 ZIP 路径必须位于工作区图标目录内')
@@ -834,11 +888,19 @@ export async function generateAppIconBundle(
     if (staged && existsSync(stagingRoot)) rmSync(stagingRoot, { recursive: true, force: true })
   }
 
+  // 清理放在产物落地之后:先保住这一次,再回头删旧的,中途失败也不会两头空。
+  const removedHistory = pruneIconHistory(
+    options.workspacePath,
+    outputRoot,
+    options.keepHistory ?? 0,
+  )
+
   return {
     outputPath: outputRoot,
     archivePath,
     fileCount: listFiles(outputRoot).length,
     platforms,
     warnings: prepared.warnings,
+    removedHistory,
   }
 }

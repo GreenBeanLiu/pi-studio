@@ -85,6 +85,8 @@ export type RoutineStep = {
   platforms?: AppIconPlatform[]
   /** app-icon:需要不透明底图的平台使用的品牌背景色 */
   backgroundColor?: string
+  /** app-icon:同一个工作流最多保留几次生成;留空或 <=0 就一直堆着 */
+  keepHistory?: number
   /** dressup:人物图与服装图，支持模板、工作区相对路径、data URL 或公网 URL */
   personRef?: string
   garmentRef?: string
@@ -502,9 +504,13 @@ async function runAppIconStep(
     platforms: step.platforms?.length
       ? step.platforms
       : ['android', 'ios', 'macos', 'windows'],
+    keepHistory: step.keepHistory,
   })
+  const cleaned = result.removedHistory.length
+    ? `\n\n按保留上限清理了 ${result.removedHistory.length} 次历史生成: ${result.removedHistory.join('、')}`
+    : ''
   return {
-    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}${result.warnings.length ? `\n\n检测警告:\n${result.warnings.map((warning) => `- ${formatAppIconWarning(warning)}`).join('\n')}` : ''}`,
+    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}${result.warnings.length ? `\n\n检测警告:\n${result.warnings.map((warning) => `- ${formatAppIconWarning(warning)}`).join('\n')}` : ''}${cleaned}`,
     artifactPath: result.archivePath,
   }
 }

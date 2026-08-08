@@ -489,6 +489,8 @@ export type RoutineStep = {
   platforms?: AppIconPlatform[]
   /** app-icon:不透明底图背景色 */
   backgroundColor?: string
+  /** app-icon:同一个工作流最多保留几次生成;留空或 <=0 就一直堆着 */
+  keepHistory?: number
   personRef?: string
   garmentRef?: string
 }

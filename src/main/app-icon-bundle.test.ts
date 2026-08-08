@@ -194,6 +194,77 @@ describe('generateAppIconBundle', () => {
     expect(third.outputPath).toBe(join(workspace, '.pi-studio/app-icons/focus-flow-3'))
   })
 
+  it('keeps only the newest N bundles of the same workflow', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pi-studio-icons-'))
+    dirs.push(workspace)
+    writeFileSync(join(workspace, 'master.png'), 'fixture')
+    const base = {
+      source: 'master.png',
+      workspacePath: workspace,
+      appName: 'FocusFlow',
+      backgroundColor: '#2563EB',
+      platforms: ['windows'] as const,
+      keepHistory: 2,
+    }
+
+    // 别的工作流的产物,不能被算进保留名额,更不能被删
+    const other = await generateAppIconBundle({
+      ...base,
+      outputPath: '.pi-studio/app-icons/other-app-20260808-070000',
+    })
+    // 手放进去的目录:没有 pi-studio manifest,一律不碰
+    const manual = join(workspace, '.pi-studio/app-icons/focus-flow-20260808-069999')
+    mkdirSync(manual, { recursive: true })
+    writeFileSync(join(manual, 'notes.txt'), 'keep me')
+
+    const stamps = ['20260808-080000', '20260808-081000', '20260808-082000']
+    const runs: string[] = []
+    for (const stamp of stamps) {
+      const run = await generateAppIconBundle({
+        ...base,
+        outputPath: `.pi-studio/app-icons/focus-flow-${stamp}`,
+      })
+      runs.push(run.outputPath)
+    }
+
+    const last = await generateAppIconBundle({
+      ...base,
+      outputPath: '.pi-studio/app-icons/focus-flow-20260808-083000',
+    })
+    // 第四次落地后,只留最新两次
+    expect(existsSync(last.outputPath)).toBe(true)
+    expect(existsSync(runs[2])).toBe(true)
+    expect(existsSync(runs[1])).toBe(false)
+    expect(existsSync(`${runs[1]}.zip`)).toBe(false)
+    expect(existsSync(runs[0])).toBe(false)
+    // 每次生成都顺手裁一刀,所以最老的那次在第三轮就没了,最后一轮只需要再删一个
+    expect(last.removedHistory).toEqual(['focus-flow-20260808-081000'])
+    // 别人的东西一件不动
+    expect(existsSync(other.outputPath)).toBe(true)
+    expect(existsSync(other.archivePath)).toBe(true)
+    expect(existsSync(join(manual, 'notes.txt'))).toBe(true)
+  })
+
+  it('keeps every bundle when no retention limit is set', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pi-studio-icons-'))
+    dirs.push(workspace)
+    writeFileSync(join(workspace, 'master.png'), 'fixture')
+    const first = await generateAppIconBundle({
+      source: 'master.png',
+      workspacePath: workspace,
+      outputPath: '.pi-studio/app-icons/keep-all-20260808-080000',
+      platforms: ['windows'],
+    })
+    const second = await generateAppIconBundle({
+      source: 'master.png',
+      workspacePath: workspace,
+      outputPath: '.pi-studio/app-icons/keep-all-20260808-081000',
+      platforms: ['windows'],
+    })
+    expect(existsSync(first.outputPath)).toBe(true)
+    expect(second.removedHistory).toEqual([])
+  })
+
   it('rejects output traversal and invalid colors', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'pi-studio-icons-'))
     dirs.push(workspace)
