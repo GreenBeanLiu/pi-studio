@@ -49,7 +49,7 @@ vi.mock('./model-catalog', () => ({
   },
 }))
 
-import { remoteControl } from './remote-control'
+import { HOST_EVENT_CHANNELS, SUPPORTED_COMMANDS, remoteControl } from './remote-control'
 
 type Listener = (event: { data?: string }) => void
 
@@ -261,6 +261,49 @@ describe('remote-control command protocol', () => {
         code: 'OPEN_WORKSPACE_FAILED',
       }),
     )
+  })
+
+  it('keeps non-agent desktop events off the chat event channel', async () => {
+    const ws = await connect()
+
+    remoteControl.forwardHostEvent('routines:stepProgress', { routineId: 'r1', stepIndex: 2 })
+
+    expect(ws.lastSent()).toEqual({
+      type: 'hostEvent',
+      channel: 'routines:stepProgress',
+      payload: { routineId: 'r1', stepIndex: 2 },
+    })
+  })
+
+  it('advertises the commands it supports', async () => {
+    const ws = await connect()
+
+    ws.receive({ id: 50, type: 'capabilities' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 50,
+        data: { commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS] },
+      }),
+    )
+  })
+
+  // 指令是一条条加的,清单漏一条,手机就会把一个其实可用的功能藏起来 —— 而且
+  // 没人会注意到,因为不报错。让每条声明过的指令都真的走到 switch 里。
+  it('answers every command it advertises', async () => {
+    mocks.getWorkspacePath.mockReturnValue('/workspace')
+    mocks.getState.mockResolvedValue({ isStreaming: false, sessionFile: null })
+    mocks.listSessions.mockResolvedValue([])
+    remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open: vi.fn() })
+    const ws = await connect()
+
+    for (const [index, command] of SUPPORTED_COMMANDS.entries()) {
+      const id = `cap-${index}`
+      ws.receive({ id, type: command })
+      await vi.waitFor(() => expect(ws.lastSent().id).toBe(id))
+      expect(ws.lastSent()).not.toMatchObject({ code: 'UNKNOWN_COMMAND' })
+    }
   })
 
   it('resets phone pairings with the installation token in the authorization header', async () => {

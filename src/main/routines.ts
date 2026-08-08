@@ -22,6 +22,7 @@ import { runDressupWorkflow } from './dressup'
 import type { AppIconPlatform } from './app-icon-spec'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
+import { remoteControl } from './remote-control'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
 import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
@@ -373,6 +374,9 @@ function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
+  // 手机也是一块屏。人工审核节点尤其要出去 —— 它是阻塞式的,没人应就超时把整条
+  // 工作流拖死,而人多半不在电脑前。
+  remoteControl.forwardHostEvent(channel, payload)
 }
 
 /** agent 节点专属:RpcClient 只在第一次遇到 agent 节点时才拉起(纯生图/通知流程不需要 API Key) */

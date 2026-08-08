@@ -52,6 +52,39 @@ export type RemoteControlSnapshot = {
  * 开工作区的实际逻辑在 ipc.ts(要拉 runtime 配置、装扩展、挂一堆事件回调),
  * 这里只拿注入进来的入口用 —— remote-control 反向 import ipc 会成环。
  */
+/**
+ * 手机据此隐藏这台桌面还不支持的功能。指令是一条条加上去的,靠 UNKNOWN_COMMAND
+ * 一个个试出来,只能在用户点下去之后才发现「这个按钮在这台电脑上没用」。
+ *
+ * 改动指令表时这里要一起改 —— 有回归测试盯着,漏了会红。
+ */
+export const SUPPORTED_COMMANDS = [
+  'capabilities',
+  'prompt',
+  'steer',
+  'followUp',
+  'abort',
+  'newSession',
+  'getState',
+  'getMessages',
+  'getAvailableModels',
+  'setModel',
+  'getWorkspace',
+  'listWorkspaces',
+  'openWorkspace',
+  'switchSession',
+  'renameSession',
+  'listSessions',
+] as const
+
+/** hostEvent 会用到的 channel。手机认不出的一律丢掉。 */
+export const HOST_EVENT_CHANNELS = [
+  'routines:stepProgress',
+  'routines:runFinished',
+  'routines:reviewRequested',
+  'routines:reviewCancelled',
+] as const
+
 export type RemoteWorkspaceHost = {
   list: () => { current: string | null; recent: Workspace[] }
   open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
@@ -180,6 +213,16 @@ class RemoteControlManager {
     this.send({ type: 'event', event })
   }
 
+  /**
+   * agent 之外的桌面事件(工作流进度、人工审核、生图结果)。这些不能挤进 `event`
+   * 那条通道 —— 手机把它直接当成聊天消息流塞进会话里,混进去就是脏数据。
+   * 带 channel 分发,手机认不出的 channel 直接丢掉,老版本手机因此天然安全降级。
+   */
+  forwardHostEvent(channel: string, payload: unknown): void {
+    if (this.status !== 'connected') return
+    this.send({ type: 'hostEvent', channel, payload })
+  }
+
   private send(obj: unknown): void {
     try {
       this.ws?.send(JSON.stringify(obj))
@@ -223,6 +266,12 @@ class RemoteControlManager {
     // 手机指令 → piClientManager
     try {
       switch (type) {
+        case 'capabilities':
+          this.reply(msg.id, {
+            commands: [...SUPPORTED_COMMANDS],
+            hostEvents: [...HOST_EVENT_CHANNELS],
+          })
+          break
         case 'prompt':
           await piClientManager.prompt(String(msg.text ?? ''), msg.images as ImageContent[] | undefined)
           this.reply(msg.id)
