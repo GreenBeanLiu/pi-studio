@@ -296,6 +296,7 @@ describe('remote-control command protocol', () => {
     mocks.getState.mockResolvedValue({ isStreaming: false, sessionFile: null })
     mocks.listSessions.mockResolvedValue([])
     remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open: vi.fn() })
+    remoteControl.setReviewHost({ list: () => [], respond: () => ({ ok: true }) })
     const ws = await connect()
 
     for (const [index, command] of SUPPORTED_COMMANDS.entries()) {
@@ -304,6 +305,59 @@ describe('remote-control command protocol', () => {
       await vi.waitFor(() => expect(ws.lastSent().id).toBe(id))
       expect(ws.lastSent()).not.toMatchObject({ code: 'UNKNOWN_COMMAND' })
     }
+  })
+
+  // review 节点阻塞整条工作流,超时就是全挂 —— 手机必须能应,也必须能在重连后补上
+  it('hands pending reviews to the phone and applies its decision', async () => {
+    const request = {
+      reviewId: 'rv1',
+      routineId: 'r1',
+      routineName: '公众号草稿',
+      stepId: 's3',
+      stepName: '人工确认',
+      message: '确认后继续',
+      preview: '草稿正文…',
+    }
+    const respond = vi.fn().mockReturnValue({ ok: true })
+    remoteControl.setReviewHost({ list: () => [request], respond })
+    const ws = await connect()
+
+    ws.receive({ id: 60, type: 'listPendingReviews' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 60, data: [request] }),
+    )
+
+    ws.receive({ id: 61, type: 'respondReview', reviewId: 'rv1', decision: 'reject', comment: '图不对' })
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledWith('rv1', 'reject', '图不对'))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 61, data: { ok: true } })
+  })
+
+  it('separates an expired review from a malformed one', async () => {
+    remoteControl.setReviewHost({
+      list: () => [],
+      respond: () => ({ error: '审核请求已过期或工作流已结束' }),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 62, type: 'respondReview', reviewId: 'rv1', decision: 'maybe' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 62,
+        error: 'reviewId and a valid decision are required',
+        code: 'INVALID_REVIEW',
+      }),
+    )
+
+    ws.receive({ id: 63, type: 'respondReview', reviewId: 'gone', decision: 'approve' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 63,
+        error: '审核请求已过期或工作流已结束',
+        code: 'REVIEW_GONE',
+      }),
+    )
   })
 
   it('resets phone pairings with the installation token in the authorization header', async () => {

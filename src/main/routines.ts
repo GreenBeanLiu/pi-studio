@@ -179,6 +179,8 @@ let jsonDeleteOutbox: JsonWorkflowDeleteOutbox | null = null
 
 type PendingReview = {
   routineId: string
+  // 手机可能在广播之后才连上来(锁屏、切后台、换网),没有原始请求就补不回去
+  request: RoutineReviewRequest
   approve: () => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
@@ -188,6 +190,19 @@ const pendingReviews = new Map<string, PendingReview>()
 // 保留当前运行中工作流的最新节点状态。页面切换会卸载 RoutinesPage，
 // 回来时通过 routines:state 恢复这份快照，而不是等下一次事件广播。
 const liveStepProgress = new Map<string, Map<string, RoutineStepProgress>>()
+
+/** 桌面和手机走同一条路:审核只能应一次,谁先点谁生效。 */
+function respondToReview(
+  reviewId: string,
+  decision: 'approve' | 'reject',
+  comment?: string,
+): { ok: true } | { error: string } {
+  const pending = pendingReviews.get(reviewId)
+  if (!pending) return { error: '审核请求已过期或工作流已结束' }
+  if (decision === 'approve') pending.approve()
+  else pending.reject(new Error(comment?.trim() || '人工审核拒绝'))
+  return { ok: true }
+}
 
 function cancelPendingReviews(routineId: string, reason: string): void {
   for (const [reviewId, pending] of pendingReviews) {
@@ -653,6 +668,7 @@ async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContex
     }, REVIEW_TIMEOUT_MS)
     pendingReviews.set(reviewId, {
       routineId: routine.id,
+      request,
       timer,
       approve: () => {
         clearTimeout(timer)
@@ -1088,15 +1104,13 @@ export function registerRoutines(): void {
 
   ipcMain.handle(
     'routines:reviewRespond',
-    (_e, reviewId: string, decision: 'approve' | 'reject', comment?: string) => {
-      const pending = pendingReviews.get(reviewId)
-      if (!pending) return { error: '审核请求已过期或工作流已结束' }
-      if (decision === 'approve') {
-        pending.approve()
-      } else {
-        pending.reject(new Error(comment?.trim() || '人工审核拒绝'))
-      }
-      return { ok: true }
-    },
+    (_e, reviewId: string, decision: 'approve' | 'reject', comment?: string) =>
+      respondToReview(reviewId, decision, comment),
   )
+
+  // review 节点是阻塞式的,超时就把整条工作流拖死 —— 人在不在电脑前不该决定它的生死
+  remoteControl.setReviewHost({
+    list: () => [...pendingReviews.values()].map((pending) => pending.request),
+    respond: respondToReview,
+  })
 }

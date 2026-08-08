@@ -7,7 +7,7 @@ import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { NO_WORKSPACE_ERROR } from './pi-client'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import type { RemotePairingCode } from '../shared/ipc/contract'
+import type { RemotePairingCode, RoutineReviewRequest } from '../shared/ipc/contract'
 import type { Workspace } from '../shared/contracts'
 
 function errMsg(err: unknown): string {
@@ -72,6 +72,8 @@ export const SUPPORTED_COMMANDS = [
   'getWorkspace',
   'listWorkspaces',
   'openWorkspace',
+  'listPendingReviews',
+  'respondReview',
   'switchSession',
   'renameSession',
   'listSessions',
@@ -90,6 +92,16 @@ export type RemoteWorkspaceHost = {
   open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
 }
 
+/** 同理由 routines.ts 注入:pendingReviews 归它管,反向 import 会成环。 */
+export type RemoteReviewHost = {
+  list: () => RoutineReviewRequest[]
+  respond: (
+    reviewId: string,
+    decision: 'approve' | 'reject',
+    comment?: string,
+  ) => { ok: true } | { error: string }
+}
+
 /**
  * 手机远程控制的 host 端:用装机 token 连中转 WebSocket(role=host),把手机
  * (controller)发来的指令分发给 piClientManager,并把 agent 事件转发回手机。
@@ -104,6 +116,7 @@ class RemoteControlManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private statusListener: ((snap: RemoteControlSnapshot) => void) | null = null
   private workspaceHost: RemoteWorkspaceHost | null = null
+  private reviewHost: RemoteReviewHost | null = null
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
@@ -116,6 +129,15 @@ class RemoteControlManager {
   private requireWorkspaceHost(): RemoteWorkspaceHost {
     if (!this.workspaceHost) throw new Error('workspace control is unavailable')
     return this.workspaceHost
+  }
+
+  setReviewHost(host: RemoteReviewHost): void {
+    this.reviewHost = host
+  }
+
+  private requireReviewHost(): RemoteReviewHost {
+    if (!this.reviewHost) throw new Error('review control is unavailable')
+    return this.reviewHost
   }
 
   snapshot(): RemoteControlSnapshot {
@@ -343,6 +365,28 @@ class RemoteControlManager {
         case 'listWorkspaces':
           this.reply(msg.id, this.requireWorkspaceHost().list())
           break
+        // reviewRequested 是广播,手机当时不在线就永远收不到。重连后靠这条补齐,
+        // 否则一个还剩十几分钟才超时的审核在手机上是隐形的。
+        case 'listPendingReviews':
+          this.reply(msg.id, this.requireReviewHost().list())
+          break
+        case 'respondReview': {
+          const reviewId = String(msg.reviewId ?? '').trim()
+          const decision = String(msg.decision ?? '')
+          if (!reviewId || (decision !== 'approve' && decision !== 'reject')) {
+            this.replyError(msg.id, 'reviewId and a valid decision are required', 'INVALID_REVIEW')
+            break
+          }
+          const comment = msg.comment === undefined ? undefined : String(msg.comment)
+          const result = this.requireReviewHost().respond(reviewId, decision, comment)
+          // 桌面上先点了、或者已经超时 —— 手机要能分辨出「这条已经没了」而不是失败重试
+          if ('error' in result) {
+            this.replyError(msg.id, result.error, 'REVIEW_GONE')
+            break
+          }
+          this.reply(msg.id)
+          break
+        }
         case 'openWorkspace': {
           const path = String(msg.path ?? '').trim()
           if (!path) {
