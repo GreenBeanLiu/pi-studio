@@ -5,11 +5,22 @@ import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
+import { NO_WORKSPACE_ERROR } from './pi-client'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { RemotePairingCode } from '../shared/ipc/contract'
+import type { Workspace } from '../shared/contracts'
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * 手机端要能把「桌面没开工作目录」和别的失败分开:前者是一步就能自救的
+ * (发 openWorkspace),后者只能提示。笼统回一句 error 的时候,手机上只会显示
+ * 「读取模型列表失败」这种看不出所以然的话。
+ */
+function remoteErrorCode(err: unknown): string | undefined {
+  return errMsg(err) === NO_WORKSPACE_ERROR ? 'NO_WORKSPACE' : undefined
 }
 
 function cachedProviderLabels(): Record<string, string> {
@@ -38,6 +49,15 @@ export type RemoteControlSnapshot = {
 }
 
 /**
+ * 开工作区的实际逻辑在 ipc.ts(要拉 runtime 配置、装扩展、挂一堆事件回调),
+ * 这里只拿注入进来的入口用 —— remote-control 反向 import ipc 会成环。
+ */
+export type RemoteWorkspaceHost = {
+  list: () => { current: string | null; recent: Workspace[] }
+  open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
+}
+
+/**
  * 手机远程控制的 host 端:用装机 token 连中转 WebSocket(role=host),把手机
  * (controller)发来的指令分发给 piClientManager,并把 agent 事件转发回手机。
  * 事件转发靠 workspace:open 的 onEvent 搭车(见 ipc.ts 调 forwardEvent),不改 piClientManager。
@@ -50,9 +70,19 @@ class RemoteControlManager {
   private controllers = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private statusListener: ((snap: RemoteControlSnapshot) => void) | null = null
+  private workspaceHost: RemoteWorkspaceHost | null = null
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
+  }
+
+  setWorkspaceHost(host: RemoteWorkspaceHost): void {
+    this.workspaceHost = host
+  }
+
+  private requireWorkspaceHost(): RemoteWorkspaceHost {
+    if (!this.workspaceHost) throw new Error('workspace control is unavailable')
+    return this.workspaceHost
   }
 
   snapshot(): RemoteControlSnapshot {
@@ -259,6 +289,25 @@ class RemoteControlManager {
         case 'getWorkspace':
           this.reply(msg.id, { workspacePath: piClientManager.getWorkspacePath() })
           break
+        // 桌面冷启动后没人点「打开工作区」的话,上面每条指令都会抛 NO_WORKSPACE,
+        // 而人不在电脑前 —— 这两条是手机自己把工作区开起来的唯一出路。
+        case 'listWorkspaces':
+          this.reply(msg.id, this.requireWorkspaceHost().list())
+          break
+        case 'openWorkspace': {
+          const path = String(msg.path ?? '').trim()
+          if (!path) {
+            this.replyError(msg.id, 'workspace path is required', 'INVALID_PATH')
+            break
+          }
+          const result = await this.requireWorkspaceHost().open(path)
+          if ('error' in result) {
+            this.replyError(msg.id, result.error, 'OPEN_WORKSPACE_FAILED')
+            break
+          }
+          this.reply(msg.id, { workspacePath: path, recent: result.recentWorkspaces })
+          break
+        }
         case 'switchSession':
           this.reply(msg.id, await piClientManager.switchSession(String(msg.path ?? '')))
           break
@@ -295,7 +344,7 @@ class RemoteControlManager {
         type,
         error: normalizeError(err),
       })
-      this.replyError(msg.id, errMsg(err))
+      this.replyError(msg.id, errMsg(err), remoteErrorCode(err))
     }
   }
 

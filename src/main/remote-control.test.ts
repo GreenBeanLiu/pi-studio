@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./pi-client', () => ({
+  NO_WORKSPACE_ERROR: 'No workspace is open',
   piClientManager: {
     prompt: mocks.prompt,
     steer: mocks.steer,
@@ -147,13 +148,31 @@ describe('remote-control command protocol', () => {
   })
 
   it('returns command failures in the top-level error field', async () => {
-    mocks.prompt.mockRejectedValue(new Error('No workspace is open'))
+    mocks.prompt.mockRejectedValue(new Error('agent is busy'))
     const ws = await connect()
 
     ws.receive({ id: 8, type: 'prompt', text: 'run' })
 
     await vi.waitFor(() =>
-      expect(ws.lastSent()).toEqual({ type: 'result', id: 8, error: 'No workspace is open' }),
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 8, error: 'agent is busy' }),
+    )
+  })
+
+  // 手机端据此弹「打开工作目录」而不是笼统报一句失败 —— 桌面冷启动后没人点
+  // 「打开工作区」时,每条指令都会走到这里。
+  it('codes a closed workspace so the phone can offer to open one', async () => {
+    mocks.getAvailableModels.mockRejectedValue(new Error('No workspace is open'))
+    const ws = await connect()
+
+    ws.receive({ id: 30, type: 'getAvailableModels' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 30,
+        error: 'No workspace is open',
+        code: 'NO_WORKSPACE',
+      }),
     )
   })
 
@@ -190,6 +209,58 @@ describe('remote-control command protocol', () => {
       expect(ws.lastSent()).toEqual({ type: 'result', id: 9, data: sessions }),
     )
     expect(mocks.listSessions).toHaveBeenCalledWith('/sessions', '/workspace')
+  })
+
+  it('lets the phone list and open workspaces while none is open', async () => {
+    const recent = [{ path: '/Users/me/Works', name: 'Works', lastOpenedAt: '2026-08-08T00:00:00Z' }]
+    const open = vi.fn().mockResolvedValue({ ok: true, recentWorkspaces: recent })
+    mocks.getWorkspacePath.mockReturnValue(null)
+    remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent }), open })
+    const ws = await connect()
+
+    ws.receive({ id: 40, type: 'listWorkspaces' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 40,
+        data: { current: null, recent },
+      }),
+    )
+
+    ws.receive({ id: 41, type: 'openWorkspace', path: '  /Users/me/Works  ' })
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith('/Users/me/Works'))
+    expect(ws.lastSent()).toEqual({
+      type: 'result',
+      id: 41,
+      data: { workspacePath: '/Users/me/Works', recent },
+    })
+  })
+
+  it('reports a rejected workspace path and a failed open separately', async () => {
+    const open = vi.fn().mockResolvedValue({ error: '启动工作区失败' })
+    remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open })
+    const ws = await connect()
+
+    ws.receive({ id: 42, type: 'openWorkspace', path: '   ' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 42,
+        error: 'workspace path is required',
+        code: 'INVALID_PATH',
+      }),
+    )
+    expect(open).not.toHaveBeenCalled()
+
+    ws.receive({ id: 43, type: 'openWorkspace', path: '/broken' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 43,
+        error: '启动工作区失败',
+        code: 'OPEN_WORKSPACE_FAILED',
+      }),
+    )
   })
 
   it('resets phone pairings with the installation token in the authorization header', async () => {

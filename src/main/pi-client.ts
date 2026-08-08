@@ -35,6 +35,12 @@ export type SessionActivityListener = (event: SessionActivityEvent) => void
 
 type RpcClient = RpcClientType
 
+/**
+ * 没打开工作区时每条 RPC 都抛这个。手机端要按它区分「桌面没开工作目录」和
+ * 别的失败(见 remote-control 的 NO_WORKSPACE),所以文案单独拎出来共用。
+ */
+export const NO_WORKSPACE_ERROR = 'No workspace is open'
+
 type AgentProcessLike = {
   stderr?: {
     on: (event: 'data', listener: (chunk: Buffer | string) => void) => void
@@ -385,7 +391,7 @@ class PiClientManager {
   }
 
   private require(): RpcClient {
-    if (!this.active) throw new Error('No workspace is open')
+    if (!this.active) throw new Error(NO_WORKSPACE_ERROR)
     return this.active.client
   }
 
