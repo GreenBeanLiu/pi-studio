@@ -338,6 +338,11 @@ describe('remote-control command protocol', () => {
       generate: async () => ({ urls: [] }),
       history: async () => [],
     })
+    remoteControl.setVideoHost({
+      health: async () => ({ ok: true, model: 'kling-v1' }),
+      list: () => [],
+      start: vi.fn(),
+    })
     const ws = await connect()
 
     for (const [index, command] of SUPPORTED_COMMANDS.entries()) {
@@ -412,6 +417,59 @@ describe('remote-control command protocol', () => {
         id: 83,
         error: '连不上云端历史服务',
         code: 'IMAGE_HISTORY_FAILED',
+      }),
+    )
+  })
+
+  // 视频一次要跑 5~20 分钟。挂一条长请求等着的话,手机切后台或换网就断了、结果就丢了,
+  // 所以发起必须立刻返回,进度和结果走 video:job 事件。
+  it('returns a video job immediately instead of holding the request', async () => {
+    const job = {
+      id: 'v1',
+      prompt: '一只橘猫趴在窗台上',
+      duration: 5,
+      aspectRatio: '16:9',
+      mode: 'std',
+      status: 'running' as const,
+      stage: 'submitting',
+      createdAt: 1,
+    }
+    const start = vi.fn().mockReturnValue(job)
+    remoteControl.setVideoHost({
+      health: async () => ({ ok: true, model: 'kling-v1' }),
+      list: () => [job],
+      start,
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 90, type: 'klingVideoStart', prompt: '一只橘猫趴在窗台上', duration: 5 })
+
+    await vi.waitFor(() =>
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只橘猫趴在窗台上', duration: 5 })),
+    )
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 90, data: job })
+
+    // 重连后要能把还在跑的补回来 —— 事件是一次性的,断线期间推的那些收不到
+    ws.receive({ id: 91, type: 'listVideoJobs' })
+    await vi.waitFor(() => expect(ws.lastSent()).toEqual({ type: 'result', id: 91, data: [job] }))
+  })
+
+  it('rejects a video request with no prompt', async () => {
+    remoteControl.setVideoHost({
+      health: async () => ({ ok: true, model: 'kling-v1' }),
+      list: () => [],
+      start: vi.fn(),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 92, type: 'klingVideoStart', prompt: '   ' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 92,
+        error: 'prompt is required',
+        code: 'INVALID_PROMPT',
       }),
     )
   })

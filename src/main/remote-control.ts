@@ -83,6 +83,9 @@ export const SUPPORTED_COMMANDS = [
   'imageGenHealth',
   'imageGenerate',
   'imageGenHistory',
+  'klingVideoHealth',
+  'klingVideoStart',
+  'listVideoJobs',
   'listPendingReviews',
   'respondReview',
   'switchSession',
@@ -92,6 +95,7 @@ export const SUPPORTED_COMMANDS = [
 
 /** hostEvent 会用到的 channel。手机认不出的一律丢掉。 */
 export const HOST_EVENT_CHANNELS = [
+  'video:job',
   'routines:stepProgress',
   'routines:runFinished',
   'routines:reviewRequested',
@@ -164,6 +168,38 @@ export type RemoteImageHost = {
   history: (limit: number) => Promise<ImageGenHistoryItem[] | { error: string }>
 }
 
+/**
+ * 可灵文生视频。一次生成 5~20 分钟 —— 不能像生图那样挂一条长请求等着,手机切个后台
+ * 或者换个网就断了,结果就丢了。所以发起即返回一个 job,进度和结果走 hostEvent 推;
+ * 手机重连后用 list 把还在跑的和刚跑完的补回来。
+ */
+export type RemoteVideoJob = {
+  id: string
+  prompt: string
+  duration: number
+  aspectRatio: string
+  mode: string
+  status: 'running' | 'done' | 'error'
+  /** submitting / running / uploading —— 来自云端 SSE */
+  stage?: string
+  videoUrl?: string
+  durationSec?: number | null
+  error?: string
+  createdAt: number
+}
+
+export type RemoteVideoHost = {
+  health: () => Promise<{ ok: boolean; model: string }>
+  list: () => RemoteVideoJob[]
+  /** 立刻返回 job(status=running),真正的生成在后台跑。 */
+  start: (payload: {
+    prompt: string
+    duration?: number
+    aspectRatio?: string
+    mode?: string
+  }) => RemoteVideoJob
+}
+
 /** 同理由 routines.ts 注入:pendingReviews 归它管,反向 import 会成环。 */
 export type RemoteReviewHost = {
   list: () => RoutineReviewRequest[]
@@ -193,6 +229,7 @@ class RemoteControlManager {
   private reviewHost: RemoteReviewHost | null = null
   private routineHost: RemoteRoutineHost | null = null
   private imageHost: RemoteImageHost | null = null
+  private videoHost: RemoteVideoHost | null = null
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
@@ -227,6 +264,15 @@ class RemoteControlManager {
   private requireImageHost(): RemoteImageHost {
     if (!this.imageHost) throw new Error('image generation is unavailable')
     return this.imageHost
+  }
+
+  setVideoHost(host: RemoteVideoHost): void {
+    this.videoHost = host
+  }
+
+  private requireVideoHost(): RemoteVideoHost {
+    if (!this.videoHost) throw new Error('video generation is unavailable')
+    return this.videoHost
   }
 
   private requireReviewHost(): RemoteReviewHost {
@@ -493,6 +539,30 @@ class RemoteControlManager {
         case 'listWorkspaces':
           this.reply(msg.id, this.requireWorkspaceHost().list())
           break
+        case 'klingVideoHealth':
+          this.reply(msg.id, await this.requireVideoHost().health())
+          break
+        case 'listVideoJobs':
+          this.reply(msg.id, this.requireVideoHost().list())
+          break
+        case 'klingVideoStart': {
+          const prompt = String(msg.prompt ?? '').trim()
+          if (!prompt) {
+            this.replyError(msg.id, 'prompt is required', 'INVALID_PROMPT')
+            break
+          }
+          // 立刻回 job,不等生成 —— 进度和结果稍后走 video:job 事件推过来
+          this.reply(
+            msg.id,
+            this.requireVideoHost().start({
+              prompt,
+              ...(typeof msg.duration === 'number' ? { duration: msg.duration } : {}),
+              ...(typeof msg.aspectRatio === 'string' ? { aspectRatio: msg.aspectRatio } : {}),
+              ...(typeof msg.mode === 'string' ? { mode: msg.mode } : {}),
+            }),
+          )
+          break
+        }
         case 'imageGenHealth':
           this.reply(msg.id, await this.requireImageHost().health())
           break
