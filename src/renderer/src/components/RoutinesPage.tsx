@@ -290,6 +290,7 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
   colTitle: css`
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     font-size: 15px;

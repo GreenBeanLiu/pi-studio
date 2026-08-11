@@ -18,18 +18,22 @@ function templateStepId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+const MANUAL_WORKFLOW_DEFAULTS = {
+  scheduleType: 'manual' as const,
+  minutes: 60,
+  minute: 0,
+  time: '09:00',
+  day: 1,
+  notify: 'error' as const,
+  pushEachStep: false,
+}
+
 export function dressupVideoWorkflowTemplate(workspacePath: string): RoutineWorkflowTemplate {
   return {
     name: 'AI 换装视频',
     input: '选择人物图和服装图，可补充想要的试衣效果与视频动作。',
     workspacePath,
-    scheduleType: 'manual',
-    minutes: 60,
-    minute: 0,
-    time: '09:00',
-    day: 1,
-    notify: 'error',
-    pushEachStep: false,
+    ...MANUAL_WORKFLOW_DEFAULTS,
     steps: [
       {
         id: templateStepId(),
@@ -48,13 +52,7 @@ export function memeWorkflowTemplate(workspacePath: string): RoutineWorkflowTemp
     name: '表情包生成',
     input: '描述主题、情绪、使用场景和必须出现的短文案，例如：加班到深夜，嘴硬但崩溃，用于群聊回复。',
     workspacePath,
-    scheduleType: 'manual',
-    minutes: 60,
-    minute: 0,
-    time: '09:00',
-    day: 1,
-    notify: 'error',
-    pushEachStep: false,
+    ...MANUAL_WORKFLOW_DEFAULTS,
     steps: [
       {
         id: templateStepId(),
