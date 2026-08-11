@@ -62,7 +62,7 @@ import {
   createRoutineStepFromPreset,
   routineNodePresetOptions,
 } from '../lib/routine-node-presets'
-import { dressupVideoWorkflowTemplate } from '../lib/routine-workflow-templates'
+import { dressupVideoWorkflowTemplate, memeWorkflowTemplate } from '../lib/routine-workflow-templates'
 import RoutineImageReferencePicker from './RoutineImageReferencePicker'
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -876,6 +876,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           </Button>
           <Button size="small" onClick={() => setForm(dressupVideoWorkflowTemplate(workspace?.path ?? ''))}>
             换装模板
+          </Button>
+          <Button size="small" onClick={() => setForm(memeWorkflowTemplate(workspace?.path ?? ''))}>
+            表情包模板
           </Button>
         </div>
 
