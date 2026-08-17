@@ -338,3 +338,24 @@ Subagent 与后台 chat 则统一注册为 `Job`：owner session、parent lineag
 | 7 | per-call policy + Job/Subagent registry | 非交互 fail closed；后台任务有 owner、终态和资源回收证据 |
 
 不建议现在做三件事：不把 pi-studio 整体迁移到 Cordis；不直接嵌入 DeepSeek Harness 作为第二套 agent 内核；不为了追求“插件化”把每个现有函数拆成 package。先统一事件、生命周期、安全和评测契约，收益最大，也最容易在现有产品中渐进落地。
+
+## 11. 实施状态（2026-08-17）
+
+第 10 节七项均已落地，未发版。
+
+| 顺序 | 交付 | 落点 |
+| --- | --- | --- |
+| 1 | guard/sandbox 真值 + Routine settled | `80f6321` |
+| 2 | `PiRuntime` + capability handshake | `8a15003`、`185e546` |
+| 3 | `RunProfileCompiler` | `8a15003`（`run-profile.ts`） |
+| 4 | main 侧事件规范化 + tool/approval 投影 | `185e546`（`session-projection.ts`、`approval-audit.ts`） |
+| 5 | WorkflowRun + node registry + durable step journal | `e409b82`（`workflow-run.ts`、`workflow-node-registry.ts`） |
+| 6 | eval driver + record/replay | `0d99a58`（`eval-driver.ts`、`pi-replay-eval-engine.ts`，见 [eval-driver.md](../eval-driver.md)） |
+| 7 | per-call policy fail-closed + Job/Subagent registry | `4e63689`、`1b2d1f1` |
+
+第 7 项的两点落法与原计划有出入，记在这里免得下次重复推导：
+
+- **没有引入 `ToolExecutionEnvelope` 类型。** pi 的工具在子进程内执行，宿主唯一能拦的决策点是 extension UI 请求；`ToolExecutionProjection` 和 `ApprovalProjection` 已经带齐 `callId/sessionId/runId/tool/action/policy/outcome/time`，再包一层 envelope 只是改名。真正缺的是**决策点本身**：`approval-gateway.ts` 给出单调合并（任一 deny 不可被后续 allow 覆盖、空规则集也 fail closed）、`approvalPasses` 只认 `allowed-once`，以及无人值守运行的 `UnattendedApprovalGate`。
+- **无人值守运行此前会挂死而不是 fail closed。** routine / code-model / blender-model 都没有人监听 `extension_ui_request`，而 pi 的 `confirm/select/input/editor` 会一直 pending（`editor` 连 timeout 和 abort 都没有），于是整轮卡到外层 deadline，最后报一个与真实原因无关的“执行超时”。现在由 `CompiledRunProfile.kind` 决定是否装 gate（`startPiRuntime` 里装，新调用点忘不掉），gate 回 `{cancelled:true}`——这是四种阻塞方法都认的应答——并把拒绝记进运行报告。
+- **`AgentJobRegistry` 的关键不变量是 `done` 表示资源真的放掉了。** 旧 `stopEntry` 先把 entry 从数组里摘掉再 `client.dispose().catch(() => {})`，`dispose()` 本身也没有 deadline：停不下来的 pi 进程会让 `evictIfNeeded` 连带 `spawn` 一起挂住，而 `liveAgentCount()` 立刻就报它没了。现在收尾是有界的（优雅停 → 强杀 → `orphaned` 带证据），orphaned 算在 `live()` 里，`agentJobs()` 经 `diagnostics:getLogs` 进诊断包。
+- **子代理登记为没有资源的逻辑 job**（`parentId` = 父聊天的 job）。它们跑在 pi 进程内部，宿主拿不到进程，但血缘和终态可以观察；一轮 settled 还挂着的按中断收尾，不会永远停在 running。
