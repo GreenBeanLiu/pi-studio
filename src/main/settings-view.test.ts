@@ -12,7 +12,6 @@ const settings: SettingsData = {
   selectedModelRoute: null,
   tavilyApiKey: '',
   heliconeApiKey: '',
-  securityGuardEnabled: true,
   sandboxEnabled: false,
   subagentsEnabled: true,
   remoteEnabled: false,

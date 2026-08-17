@@ -6,9 +6,8 @@ import { loadSettings } from './settings'
 import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
 import { runProfileCompiler } from './run-profile'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
-import { syncWebSearchExtension } from './web-search-extension'
-import { syncSecurityGuardExtension } from './security-guard-extension'
-import { syncWorkspaceMemoryExtension } from './workspace-memory'
+import { prepareReviewedWebSearchExtension } from './web-search-extension'
+import { prepareReviewedWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { cloud3dGenerate } from './model3d'
 import { formatAppIconWarning, generateAppIconBundle } from './app-icon-bundle'
@@ -368,11 +367,11 @@ type AgentSession = {
 async function ensureAgentClient(routine: Routine, session: AgentSession): Promise<NonNullable<AgentSession['client']>> {
   if (session.client) return session.client
   const settings = loadSettings()
-  syncWebSearchExtension(!!settings.tavilyApiKey)
-  // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
-  syncSecurityGuardExtension(false)
-  syncWorkspaceMemoryExtension()
-  const profile = await runProfileCompiler.compile('routine', routine.workspacePath)
+  const extensions = [
+    prepareReviewedWorkspaceMemoryExtension(),
+    prepareReviewedWebSearchExtension(!!settings.tavilyApiKey),
+  ].filter((extension): extension is string => extension !== null)
+  const profile = await runProfileCompiler.compile('routine', routine.workspacePath, { extensions })
   const client = await startPiRuntime(profile)
   session.client = client
   return client

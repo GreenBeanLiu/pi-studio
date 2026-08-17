@@ -2,13 +2,17 @@ import { createHash } from 'crypto'
 import type { AgentRuntimeConfig } from './agent-runtime-config'
 import { prepareAgentRuntime } from './agent-runtime-config'
 import { resolvePiCliPath } from './pi-process'
-import { prepareSandboxLaunch } from './sandbox'
+import { prepareSandboxLaunch, sandboxAgentPath } from './sandbox'
 import { loadSettings } from './settings'
 import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
 import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import { appendAppLog } from './app-log'
 
 export type RunProfileKind = 'chat' | 'routine' | 'code-model' | 'blender-model'
+
+export type RunProfileCompileOptions = {
+  extensions?: string[]
+}
 
 export type CompiledRunProfile = {
   kind: RunProfileKind
@@ -95,37 +99,63 @@ function securitySnapshot(
   }
 }
 
-function runArgs(kind: RunProfileKind): string[] {
-  if (kind !== 'code-model' && kind !== 'blender-model') return []
+function isolatedArgs(extensions: string[], tools: string): string[] {
   return [
     '--no-extensions',
     '--no-skills',
     '--no-prompt-templates',
     '--no-context-files',
+    ...extensions.flatMap((extension) => ['--extension', extension]),
     '--tools',
-    'read,edit,write',
+    tools,
   ]
+}
+
+function runArgs(kind: RunProfileKind, options: RunProfileCompileOptions): string[] {
+  if (kind === 'routine') {
+    return isolatedArgs(
+      [...new Set(options.extensions ?? [])],
+      'read,edit,write,grep,find,ls,web_search',
+    )
+  }
+  if (kind === 'code-model' || kind === 'blender-model') {
+    return isolatedArgs([], 'read,edit,write')
+  }
+  return []
 }
 
 export class RunProfileCompiler {
   constructor(private readonly dependencies: RunProfileCompilerDependencies = DEFAULT_DEPENDENCIES) {}
 
-  async compile(kind: RunProfileKind, cwd: string): Promise<CompiledRunProfile> {
+  async compile(
+    kind: RunProfileKind,
+    cwd: string,
+    options: RunProfileCompileOptions = {},
+  ): Promise<CompiledRunProfile> {
     const settings = this.dependencies.loadSettings()
     const runtime = await this.dependencies.prepareRuntime()
     const prepared = settings.sandboxEnabled
       ? await this.dependencies.prepareSandbox(cwd, runtime.env)
       : { cliPath: this.dependencies.resolveCliPath(), env: runtime.env, mode: null }
     const security = securitySnapshot(kind, prepared.mode)
+    const sandboxMode = prepared.mode
+    const profileOptions = sandboxMode
+      ? {
+          ...options,
+          extensions: options.extensions?.map((extension) =>
+            sandboxAgentPath(extension, sandboxMode),
+          ),
+        }
+      : options
     const base = {
       kind,
       cwd,
       provider: runtime.provider,
       model: runtime.model,
       cliPath: prepared.cliPath,
-      args: runArgs(kind),
+      args: runArgs(kind, profileOptions),
       thinkingLevel: DEFAULT_THINKING_LEVEL,
-      sandboxMode: prepared.mode,
+      sandboxMode,
       security,
     } satisfies Omit<CompiledRunProfile, 'profileDigest' | 'env'>
     const compiled = {

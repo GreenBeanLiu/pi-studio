@@ -14,7 +14,8 @@ import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
  *                       │        └── error
  *                       └─────────── error
  *
- * 快照只管生命周期;消息流仍由聊天域自己处理(不把 token 流塞进全局)。
+ * 快照只管生命周期；实时 token 流仍由聊天域处理，settled 后的消息读模型由
+ * SessionProjectionTracker 从持久 session 重建。
  */
 
 export type AgentRuntimePhase =

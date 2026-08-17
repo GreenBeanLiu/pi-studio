@@ -114,6 +114,51 @@ describe('RunProfileCompiler', () => {
     ])
   })
 
+  it('compiles unattended routines from explicit reviewed capabilities only', async () => {
+    const compiler = new RunProfileCompiler({
+      loadSettings: () => ({ sandboxEnabled: false }),
+      prepareRuntime: async () => ({ provider: 'openai', env: {}, gatewayProfiles: [] }),
+      prepareSandbox: async () => {
+        throw new Error('unused')
+      },
+      resolveCliPath: () => 'C:\\pi\\cli.js',
+    })
+
+    const profile = await compiler.compile('routine', 'D:\\repo', {
+      extensions: ['C:\\pi-studio\\workspace-memory.ts', 'C:\\pi-studio\\web-search.ts'],
+    })
+
+    expect(profile.args).toEqual([
+      '--no-extensions',
+      '--no-skills',
+      '--no-prompt-templates',
+      '--no-context-files',
+      '--extension',
+      'C:\\pi-studio\\workspace-memory.ts',
+      '--extension',
+      'C:\\pi-studio\\web-search.ts',
+      '--tools',
+      'read,edit,write,grep,find,ls,web_search',
+    ])
+  })
+
+  it('maps explicit routine extensions into the WSL sandbox filesystem', async () => {
+    const compiler = new RunProfileCompiler({
+      loadSettings: () => ({ sandboxEnabled: true }),
+      prepareRuntime: async () => ({ provider: 'openai', env: {}, gatewayProfiles: [] }),
+      prepareSandbox: async () => ({ cliPath: 'C:\\shim.cjs', env: {}, mode: 'wsl' }),
+      resolveCliPath: () => 'unused',
+    })
+
+    const profile = await compiler.compile('routine', 'D:\\repo', {
+      extensions: ['C:\\Users\\me\\pi-agent\\extensions\\workspace-memory.ts'],
+    })
+
+    expect(profile.args).toContain(
+      '/mnt/c/Users/me/pi-agent/extensions/workspace-memory.ts',
+    )
+  })
+
   it('fingerprints capability configuration without hashing secret values', async () => {
     const compilerFor = (apiKey: string) =>
       new RunProfileCompiler({

@@ -169,7 +169,6 @@ export type ParsedSettingsSave = {
   favoriteModels: string
   tavilyApiKey: string
   heliconeApiKey: string
-  securityGuardEnabled: boolean
   sandboxEnabled: boolean
   subagentsEnabled: boolean
   remoteEnabled: boolean
@@ -194,7 +193,6 @@ export function parseSettingsSave(value: unknown): ParsedSettingsSave {
     favoriteModels: stringField(value.favoriteModels, '常用模型'),
     tavilyApiKey: stringField(value.tavilyApiKey, 'Tavily Key'),
     heliconeApiKey: stringField(value.heliconeApiKey, 'Helicone Key'),
-    securityGuardEnabled: boolField(value.securityGuardEnabled, true, '安全守卫开关'),
     sandboxEnabled: boolField(value.sandboxEnabled, false, '沙箱开关'),
     subagentsEnabled: boolField(value.subagentsEnabled, false, '子代理开关'),
     remoteEnabled: boolField(value.remoteEnabled, false, '远程控制开关'),

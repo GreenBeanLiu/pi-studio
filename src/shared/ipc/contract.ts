@@ -122,18 +122,6 @@ remote: {
   resetPairings: () => Promise<{ ok: true } | { error: string }>
   onStatus: (cb: (snap: RemoteControlSnapshot) => void) => () => void
 }
-securityPolicy: {
-  load: () => Promise<SecurityPolicyLoadResult>
-  save: (
-    policy: SecurityPolicy,
-  ) => Promise<
-    | ({ ok: true } & SecurityPolicyLoadResult)
-    | { error: string }
-  >
-  addRule: (
-    payload: { target: SecurityPolicyRuleTarget; rule: string },
-  ) => Promise<({ ok: true } & SecurityPolicyLoadResult) | { error: string }>
-}
 workspace: {
   list: () => Promise<Workspace[]>
   pickDirectory: () => Promise<string | null>
@@ -185,6 +173,8 @@ pi: {
   onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
   getRuntimeSnapshot: () => Promise<AgentRuntimeSnapshot>
   onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => () => void
+  getSessionProjection: () => Promise<SessionProjectionSnapshot>
+  onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => () => void
 }
 routines: {
   list: () => Promise<{ routines: Routine[]; runs: RoutineRun[] }>
@@ -617,28 +607,6 @@ export type WorkspaceMemory = {
   content: string
 }
 
-export type SecurityPolicy = {
-  commandAllowlist: string[]
-  commandBlocklist: string[]
-  writeAllowlist: string[]
-  writeBlocklist: string[]
-  requireConfirmationForDangerousCommands: boolean
-  blockProtectedPaths: boolean
-  blockOutsideWorkspace: boolean
-}
-
-export type SecurityPolicyRuleTarget =
-  | 'commandAllowlist'
-  | 'commandBlocklist'
-  | 'writeAllowlist'
-  | 'writeBlocklist'
-
-export type SecurityPolicyLoadResult = {
-  scope: 'default' | 'workspace'
-  workspacePath?: string
-  policy: SecurityPolicy
-}
-
 export type QueueMode = 'all' | 'one-at-a-time'
 
 export type RpcSessionState = {
@@ -770,6 +738,15 @@ export type AgentRuntimeSnapshot = {
   profileDigest: string | null
   activeRun: { startedAt: number } | null
   error: { message: string } | null
+}
+
+export type SessionProjectionSnapshot = {
+  revision: number
+  workspacePath: string | null
+  sessionFile: string | null
+  source: 'durable-session'
+  messages: AgentMessage[]
+  updatedAt: string | null
 }
 
 export type AgentStatusEvent =

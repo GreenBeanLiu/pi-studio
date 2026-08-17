@@ -99,7 +99,7 @@ type MemorySuggestion = {
   content: string
 }
 
-type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'remembered' | 'blocked' | 'error'
+type ApprovalStatus = 'pending' | 'allowed' | 'denied' | 'error'
 
 type ToolApprovalRequest = {
   id: string
@@ -113,7 +113,7 @@ type ToolApprovalRequest = {
   error?: string
 }
 
-type ApprovalDecision = 'allow-once' | 'deny' | 'remember-allow' | 'remember-block'
+type ApprovalDecision = 'allow-once' | 'deny'
 
 const useStyles = createStyles(({ token, css }) => ({
   pane: css`
@@ -1203,15 +1203,9 @@ function parseApprovalMessage(message: string): Pick<ToolApprovalRequest, 'comma
   }
 }
 
-function approvalRuleFromCommand(command: string): string {
-  return command.trim().replace(/\s+/g, ' ').slice(0, 240)
-}
-
 function approvalStatusLabel(status: ApprovalStatus): string {
   if (status === 'pending') return '等待确认'
   if (status === 'allowed') return '已允许'
-  if (status === 'remembered') return '已允许并记住'
-  if (status === 'blocked') return '已拒绝并阻止'
   if (status === 'error') return '处理失败'
   return '已拒绝'
 }
@@ -1484,7 +1478,7 @@ export default function ChatPane({
       activeRunIdRef.current = null
       return
     }
-    api.pi.getMessages().then(setMessages).catch(() => {})
+    api.pi.getSessionProjection().then((projection) => setMessages(projection.messages)).catch(() => {})
     api.pi.getAvailableModels().then(setModels).catch(() => {})
     api.pi.getCommands().then(setCommands).catch(() => {})
     void refreshModelSwitcherState()
@@ -1503,6 +1497,14 @@ export default function ChatPane({
       })
       .catch(() => {})
   }, [workspace?.path, refreshModelSwitcherState])
+
+  useEffect(() => {
+    return api.pi.onSessionProjection((projection) => {
+      if (projection.workspacePath !== workspace?.path) return
+      streamingIndexRef.current = null
+      setMessages(projection.messages)
+    })
+  }, [workspace?.path])
 
   // 主进程拥有收藏模型补录策略；渲染层只触发幂等协调并刷新展示数据。
   const syncedCustomModelsRef = useRef(false)
@@ -1773,10 +1775,8 @@ export default function ChatPane({
             )
           }
           setSending(false)
-          // 子代理等工具的完整 details 只权威存在持久化的 toolResult 里,实时
-          // tool_execution_end / message 事件不一定带上 —— 整轮结束刷新一次 messages,
-          // 让 SubagentCard 从 details 拿到最终状态(否则卡在"运行中")。
-          api.pi.getMessages().then(setMessages).catch(() => {})
+          // 完整 toolResult 由 main 在 agent_settled 后从持久 session 重建 projection；
+          // projection 广播会替换实时消息，补齐 subagent details 等持久字段。
           api.git
             .diff()
             .then((result) => {
@@ -2128,31 +2128,14 @@ export default function ChatPane({
       if (approval.status !== 'pending') return
 
       try {
-        if (decision === 'remember-allow' || decision === 'remember-block') {
-          if (!approval.command) {
-            throw new Error('这个审批没有可记住的命令')
-          }
-          const rule = approvalRuleFromCommand(approval.command)
-          const target = decision === 'remember-allow' ? 'commandAllowlist' : 'commandBlocklist'
-          const result = await api.securityPolicy.addRule({ target, rule })
-          if ('error' in result) throw new Error(result.error)
-        }
-
-        const confirmed = decision === 'allow-once' || decision === 'remember-allow'
+        const confirmed = decision === 'allow-once'
         await api.pi.extensionUiResponse({
           type: 'extension_ui_response',
           id: approval.id,
           confirmed,
         })
 
-        const nextStatus: ApprovalStatus =
-          decision === 'allow-once'
-            ? 'allowed'
-            : decision === 'remember-allow'
-              ? 'remembered'
-              : decision === 'remember-block'
-                ? 'blocked'
-                : 'denied'
+        const nextStatus: ApprovalStatus = confirmed ? 'allowed' : 'denied'
         updateApproval(approval.id, { status: nextStatus })
         appendApprovalTimeline(
           approval,
@@ -2217,8 +2200,9 @@ export default function ChatPane({
     if (!workspace) return
 
     try {
-      const [state, appVersion, settings, logs] = await Promise.all([
+      const [state, runtimeSnapshot, appVersion, settings, logs] = await Promise.all([
         api.pi.getState().catch(() => null),
+        api.pi.getRuntimeSnapshot().catch(() => null),
         api.app.version().catch(() => 'unknown'),
         api.settings.load().catch(() => null),
         api.diagnostics.getLogs().catch((err) => ({
@@ -2242,12 +2226,12 @@ export default function ChatPane({
               apiKeyConfigured: !!settings.apiKey,
               tavilyConfigured: !!settings.tavilyApiKey,
               heliconeConfigured: !!settings.heliconeApiKey,
-              securityGuardEnabled: settings.securityGuardEnabled,
               subagentsEnabled: settings.subagentsEnabled,
             }
           : null,
         session: sanitizeForDiagnostics(state),
         runtime: {
+          authority: sanitizeForDiagnostics(runtimeSnapshot),
           sending,
           compacting,
           thinking,
@@ -3299,24 +3283,8 @@ export default function ChatPane({
                     <Button size="small" onClick={() => decideApproval(approval, 'deny')}>
                       拒绝
                     </Button>
-                    <Button
-                      size="small"
-                      danger
-                      disabled={!approval.command}
-                      onClick={() => decideApproval(approval, 'remember-block')}
-                    >
-                      加入阻止
-                    </Button>
                     <Button size="small" onClick={() => decideApproval(approval, 'allow-once')}>
                       允许一次
-                    </Button>
-                    <Button
-                      size="small"
-                      type="primary"
-                      disabled={!approval.command}
-                      onClick={() => decideApproval(approval, 'remember-allow')}
-                    >
-                      始终允许
                     </Button>
                   </div>
                 </div>

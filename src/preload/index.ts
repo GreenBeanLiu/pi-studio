@@ -13,6 +13,7 @@ import type {
   RoutineRun,
   RoutineStepProgress,
   SessionActivity,
+  SessionProjectionSnapshot,
 } from '../shared/ipc/contract'
 
 const api = {
@@ -90,13 +91,6 @@ const api = {
     },
   },
 
-  securityPolicy: {
-    load: () => ipcRenderer.invoke('securityPolicy:load'),
-    save: (policy: unknown) => ipcRenderer.invoke('securityPolicy:save', policy),
-    addRule: (payload: { target: string; rule: string }) =>
-      ipcRenderer.invoke('securityPolicy:addRule', payload),
-  },
-
   workspace: {
     list: () => ipcRenderer.invoke('workspace:list'),
     pickDirectory: () => ipcRenderer.invoke('workspace:pickDirectory'),
@@ -172,6 +166,12 @@ const api = {
       const handler = (_e: Electron.IpcRendererEvent, data: AgentRuntimeSnapshot) => cb(data)
       ipcRenderer.on('agent:runtime', handler)
       return () => ipcRenderer.off('agent:runtime', handler)
+    },
+    getSessionProjection: () => ipcRenderer.invoke('pi:getSessionProjection'),
+    onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: SessionProjectionSnapshot) => cb(data)
+      ipcRenderer.on('pi:sessionProjection', handler)
+      return () => ipcRenderer.off('pi:sessionProjection', handler)
     },
   },
 

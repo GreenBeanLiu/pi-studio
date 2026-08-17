@@ -18,7 +18,6 @@ import {
   type PiProvider,
 } from './settings'
 import { piClientManager, resolvePiCliPath, type AgentStatusEvent } from './pi-client'
-import { syncSecurityGuardExtension } from './security-guard-extension'
 import { syncSubagentWorkflow } from './subagent-workflow'
 import {
   acceptGitRunChanges,
@@ -36,13 +35,6 @@ import {
   saveWorkspaceMemory,
   syncWorkspaceMemoryExtension,
 } from './workspace-memory'
-import {
-  appendSecurityPolicyRule,
-  loadSecurityPolicy,
-  saveSecurityPolicy,
-  type SecurityPolicy,
-  type SecurityPolicyRuleTarget,
-} from './security-policy'
 import { registerImageGenHandlers } from './image-gen'
 import { getCloudConnection, getDraftCloudConnection } from './cloud-connection'
 import { fetchLlmCatalog, listEnabledLlmRoutes } from './llm-gateway'
@@ -71,6 +63,8 @@ import { registerBlenderModel } from './blender-model'
 import { remoteControl } from './remote-control'
 import { createSettingsView } from './settings-view'
 import { AgentRuntimeTracker } from './agent-runtime'
+import { SessionProjectionTracker } from './session-projection'
+import { removeLegacySecurityGuardExtension } from './legacy-extension-cleanup'
 
 // Agent Runtime 权威快照:renderer 重挂载/reload 后先取快照,再订阅变化
 const agentRuntime = new AgentRuntimeTracker((snapshot) => {
@@ -78,6 +72,36 @@ const agentRuntime = new AgentRuntimeTracker((snapshot) => {
     if (!win.isDestroyed()) win.webContents.send('agent:runtime', snapshot)
   }
 })
+const sessionProjection = new SessionProjectionTracker()
+
+function broadcastSessionProjection(): void {
+  const snapshot = sessionProjection.snapshot()
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('pi:sessionProjection', snapshot)
+  }
+}
+
+async function refreshSessionProjection(): Promise<ReturnType<SessionProjectionTracker['snapshot']>> {
+  const workspacePath = piClientManager.getWorkspacePath()
+  if (!workspacePath) {
+    const snapshot = sessionProjection.clear()
+    broadcastSessionProjection()
+    return snapshot
+  }
+  const state = await piClientManager.getState()
+  const load = sessionProjection.beginLoad(workspacePath, state.sessionFile ?? null)
+  broadcastSessionProjection()
+  const messages = await piClientManager.getMessages()
+  const snapshot = sessionProjection.commit(load, messages)
+  broadcastSessionProjection()
+  return snapshot
+}
+
+function refreshSessionProjectionInBackground(): void {
+  void refreshSessionProjection().catch((error) => {
+    appendAppLog('warn', 'session.projection', 'Failed to refresh session projection', normalizeError(error))
+  })
+}
 
 export function registerIpcHandlers(): void {
   registerImageGenHandlers()
@@ -328,45 +352,6 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('securityPolicy:load', () => {
-    return loadSecurityPolicy(piClientManager.getWorkspacePath())
-  })
-  ipcMain.handle('securityPolicy:save', (_e, policy: SecurityPolicy) => {
-    try {
-      const result = saveSecurityPolicy(policy, piClientManager.getWorkspacePath())
-      appendAppLog('info', 'security.policy', 'Security policy saved', {
-        scope: result.scope,
-        workspacePath: result.workspacePath,
-      })
-      return { ok: true, ...result }
-    } catch (err) {
-      appendAppLog('error', 'security.policy', 'Failed to save security policy', normalizeError(err))
-      return { error: (err as Error).message ?? '保存安全策略失败' }
-    }
-  })
-  ipcMain.handle(
-    'securityPolicy:addRule',
-    (_e, payload: { target: SecurityPolicyRuleTarget; rule: string }) => {
-      try {
-        const result = appendSecurityPolicyRule(
-          payload.target,
-          payload.rule,
-          piClientManager.getWorkspacePath(),
-        )
-        appendAppLog('info', 'security.policy', 'Security policy rule added', {
-          scope: result.scope,
-          workspacePath: result.workspacePath,
-          target: payload.target,
-          rule: payload.rule,
-        })
-        return { ok: true, ...result }
-      } catch (err) {
-        appendAppLog('error', 'security.policy', 'Failed to add security policy rule', normalizeError(err))
-        return { error: (err as Error).message ?? '添加安全策略规则失败' }
-      }
-    },
-  )
-
   // ── Workspaces ───────────────────────────────────────────────────
   ipcMain.handle('workspace:list', () => loadSettings().recentWorkspaces)
 
@@ -384,8 +369,7 @@ export function registerIpcHandlers(): void {
     const settings = loadSettings()
 
     syncWebSearchExtension(!!settings.tavilyApiKey)
-    // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
-    syncSecurityGuardExtension(false)
+    removeLegacySecurityGuardExtension()
     syncWorkspaceMemoryExtension()
     try {
       syncSubagentWorkflow(settings.subagentsEnabled)
@@ -395,6 +379,8 @@ export function registerIpcHandlers(): void {
     }
 
     agentRuntime.starting(workspacePath)
+    sessionProjection.clear()
+    broadcastSessionProjection()
     try {
       await piClientManager.startWorkspace(
         workspacePath,
@@ -409,6 +395,7 @@ export function registerIpcHandlers(): void {
           if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
           // 远程控制开启时,把 agent 事件也转发给手机(controller)
           remoteControl.forwardEvent(agentEvent)
+          if (agentEvent.type === 'agent_settled') refreshSessionProjectionInBackground()
         },
         (statusEvent) => {
           agentRuntime.status(statusEvent)
@@ -428,6 +415,7 @@ export function registerIpcHandlers(): void {
           if (win && !win.isDestroyed()) win.webContents.send('pi:sessionActivity', activity)
         },
       )
+      refreshSessionProjectionInBackground()
     } catch (err) {
       agentRuntime.startFailed((err as Error).message ?? '启动工作区失败')
       appendAppLog('error', 'workspace.open', 'Failed to start workspace', {
@@ -482,9 +470,11 @@ export function registerIpcHandlers(): void {
     const state = await piClientManager.getState()
     if (!state.sessionFile) return { cancelled: true }
     try {
-      return await piClientManager.switchSession(
+      const result = await piClientManager.switchSession(
         parseSessionPath(sessionPath, dirname(state.sessionFile)),
       )
+      if (!result.cancelled) refreshSessionProjectionInBackground()
+      return result
     } catch (err) {
       appendAppLog('warn', 'ipc.contract', 'Rejected sessions:switch', normalizeError(err))
       return { cancelled: true }
@@ -650,8 +640,20 @@ export function registerIpcHandlers(): void {
       return piClientManager.respondExtensionUi(response)
     },
   )
-  ipcMain.handle('pi:newSession', () => piClientManager.newSession())
+  ipcMain.handle('pi:newSession', async () => {
+    const result = await piClientManager.newSession()
+    if (!result.cancelled) refreshSessionProjectionInBackground()
+    return result
+  })
   ipcMain.handle('pi:getRuntimeSnapshot', () => agentRuntime.snapshot())
+  ipcMain.handle('pi:getSessionProjection', async () => {
+    try {
+      return await refreshSessionProjection()
+    } catch (error) {
+      appendAppLog('warn', 'session.projection', 'Failed to load session projection', normalizeError(error))
+      return sessionProjection.snapshot()
+    }
+  })
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
