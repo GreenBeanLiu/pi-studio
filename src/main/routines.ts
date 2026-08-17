@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
 import { PiRunTimeoutError, runPromptToSettled, startPiRuntimeCancellable, type PiAgentRunHandle } from './pi-runtime'
 import { runProfileCompiler } from './run-profile'
+import { describeDeniedApprovals } from './approval-gateway'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
 import { prepareReviewedWebSearchExtension } from './web-search-extension'
 import { prepareReviewedWorkspaceMemoryExtension } from './workspace-memory'
@@ -491,6 +492,8 @@ async function runAgentStep(
 ): Promise<StepProduct> {
   const client = await ensureAgentClient(routine, session, signal)
   throwIfWorkflowCancelled(signal)
+  // The client outlives one step, so only this step's denials belong in its output.
+  const deniedBefore = client.deniedApprovals().length
   const cancelAgent = (): void => {
     void client.cancel('workflow cancelled').catch(() => {})
   }
@@ -519,8 +522,18 @@ async function runAgentStep(
     role?: string
     content?: Array<{ type?: string; text?: string }> | string
   }>
+  const denials = client.deniedApprovals().slice(deniedBefore)
+  if (denials.length > 0) {
+    appendAppLog('warn', 'routine.approval', 'Denied approvals in an unattended routine step', {
+      routineId: routine.id,
+      step: step.name,
+      denials,
+    })
+  }
+  const denied = describeDeniedApprovals(denials)
+  const text = latestAssistantText(messages) || '(no text output)'
   return {
-    output: (latestAssistantText(messages) || '(no text output)').slice(0, MAX_STEP_OUTPUT_CHARS),
+    output: (denied ? `${text}\n\n${denied}` : text).slice(0, MAX_STEP_OUTPUT_CHARS),
   }
 }
 

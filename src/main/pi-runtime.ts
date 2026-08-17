@@ -18,6 +18,11 @@ import type {
   SlashCommand,
 } from '../shared/ipc/contract'
 import { terminateProcessTree } from './process-tree'
+import {
+  answerabilityFor,
+  UnattendedApprovalGate,
+  type DeniedApproval,
+} from './approval-gateway'
 
 type StartablePiClient = {
   start: () => Promise<void>
@@ -215,6 +220,8 @@ async function forceDisposeClient(
 export class PiAgentRunHandle {
   readonly capabilities: PiRuntimeCapabilities
   private disposed = false
+  private approvalGate: UnattendedApprovalGate | null = null
+  private detachApprovalGate: (() => void) | null = null
 
   constructor(
     readonly id: string,
@@ -252,8 +259,42 @@ export class PiAgentRunHandle {
     return this.client.onEvent(listener)
   }
 
+  /**
+   * Deny the blocking dialogs of a run nobody is watching. Pi keeps a `confirm`,
+   * `select`, `input` or `editor` request pending until the host answers, so an
+   * unanswered one hangs the run until its outer deadline and then reports a
+   * timeout that hides the real cause.
+   */
+  guardUnattendedApprovals(
+    gate: UnattendedApprovalGate,
+    onDenied?: (denied: DeniedApproval) => void,
+  ): void {
+    if (this.approvalGate) return
+    this.approvalGate = gate
+    this.detachApprovalGate = this.onEvent((event) => {
+      const answer = gate.answer(event)
+      if (!answer) return
+      try {
+        this.respondExtensionUi(answer.response)
+      } catch (error) {
+        // Reported rather than logged here: this module also runs headless, outside
+        // Electron, so it must not reach for the desktop app log.
+        gate.recordDeliveryFailure(
+          answer.denied.id,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+      onDenied?.(answer.denied)
+    })
+  }
+
+  deniedApprovals(): readonly DeniedApproval[] {
+    return this.approvalGate?.denied() ?? []
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return
+    this.releaseApprovalGate()
     await this.client.stop()
     this.disposed = true
   }
@@ -261,8 +302,14 @@ export class PiAgentRunHandle {
   /** Last-resort ownership boundary used after a cancellation grace period. */
   async forceDispose(): Promise<void> {
     if (this.disposed) return
+    this.releaseApprovalGate()
     await this.forceDisposeOwned()
     this.disposed = true
+  }
+
+  private releaseApprovalGate(): void {
+    this.detachApprovalGate?.()
+    this.detachApprovalGate = null
   }
 
   observeProcess(listeners: {
@@ -347,14 +394,28 @@ export async function startPiRuntime(
     if (stop) await stop.call(client).catch(() => {})
     throw error
   }
-  return new PiAgentRunHandle(
-    resolved.runtimeId(),
-    profile.profileDigest,
-    client,
-    engineVersion,
-    profile.declaredCapabilities?.subagents ?? false,
-    () => forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree),
+  return guardedHandle(
+    new PiAgentRunHandle(
+      resolved.runtimeId(),
+      profile.profileDigest,
+      client,
+      engineVersion,
+      profile.declaredCapabilities?.subagents ?? false,
+      () => forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree),
+    ),
+    profile,
   )
+}
+
+/**
+ * The compiled profile decides whether a run has an answerer, so no unattended
+ * call site can forget the gate by wiring its own event listener.
+ */
+function guardedHandle(handle: PiAgentRunHandle, profile: CompiledRunProfile): PiAgentRunHandle {
+  if (answerabilityFor(profile.kind) === 'unattended') {
+    handle.guardUnattendedApprovals(new UnattendedApprovalGate())
+  }
+  return handle
 }
 
 /** Cancellable startup registers process ownership before start/handshake can yield. */
@@ -419,13 +480,16 @@ export async function startPiRuntimeCancellable(
   } finally {
     signal.removeEventListener('abort', abort)
   }
-  return new PiAgentRunHandle(
-    resolved.runtimeId(),
-    profile.profileDigest,
-    client as RpcClientType,
-    engineVersion,
-    profile.declaredCapabilities?.subagents ?? false,
-    () => forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree),
+  return guardedHandle(
+    new PiAgentRunHandle(
+      resolved.runtimeId(),
+      profile.profileDigest,
+      client as RpcClientType,
+      engineVersion,
+      profile.declaredCapabilities?.subagents ?? false,
+      () => forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree),
+    ),
+    profile,
   )
 }
 

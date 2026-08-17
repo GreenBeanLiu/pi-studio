@@ -585,3 +585,143 @@ describe('startPiRuntime', () => {
     expect(stops).toEqual(['stopped'])
   })
 })
+
+describe('unattended approval gate', () => {
+  class DialogRpcClient {
+    static listeners: Array<(event: unknown) => void> = []
+    static written: string[] = []
+    process = {
+      pid: 4321,
+      stdin: { write: (chunk: string) => DialogRpcClient.written.push(chunk) },
+    }
+    start() { return Promise.resolve() }
+    setThinkingLevel() { return Promise.resolve() }
+    stop() { return Promise.resolve() }
+    prompt() { return Promise.resolve() }
+    waitForIdle() { return Promise.resolve() }
+    abort() { return Promise.resolve() }
+    getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+    getMessages() { return Promise.resolve([]) }
+    getCommands() { return Promise.resolve([]) }
+    onEvent(listener: (event: unknown) => void) {
+      DialogRpcClient.listeners.push(listener)
+      return () => {
+        DialogRpcClient.listeners = DialogRpcClient.listeners.filter((item) => item !== listener)
+      }
+    }
+  }
+
+  const dialogProfile = (kind: CompiledRunProfile['kind']): CompiledRunProfile =>
+    ({
+      kind,
+      cwd: 'D:\repo',
+      provider: 'openai',
+      env: {},
+      cliPath: 'C:\pi\cli.js',
+      args: [],
+      thinkingLevel: 'high',
+      sandboxMode: null,
+      security: {
+        requested: 'full-access',
+        filesystemMode: 'danger-full-access',
+        networkMode: 'unrestricted',
+        backend: 'host',
+        enforcement: 'none',
+        hostCodeExecution: false,
+        reason: 'test',
+      },
+      profileDigest: 'digest',
+    }) satisfies CompiledRunProfile
+
+  const startDialogRuntime = (kind: CompiledRunProfile['kind']) => {
+    DialogRpcClient.listeners = []
+    DialogRpcClient.written = []
+    return startPiRuntime(dialogProfile(kind), {
+      loadClient: async () => DialogRpcClient,
+      runtimePath: () => 'C:\electron.exe',
+      nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test',
+      runtimeId: () => 'runtime-1',
+    })
+  }
+
+  const emit = (event: unknown): void => {
+    for (const listener of [...DialogRpcClient.listeners]) listener(event)
+  }
+
+  it('denies a blocking dialog raised by a run nobody is watching', async () => {
+    const client = await startDialogRuntime('routine')
+
+    emit({
+      type: 'extension_ui_request',
+      id: 'confirm-1',
+      method: 'confirm',
+      title: '运行命令',
+      message: 'Command: rm -rf build',
+    })
+
+    expect(DialogRpcClient.written).toEqual([
+      `${JSON.stringify({ type: 'extension_ui_response', id: 'confirm-1', cancelled: true })}\n`,
+    ])
+    expect(client.deniedApprovals()).toMatchObject([{ id: 'confirm-1', outcome: 'unavailable' }])
+  })
+
+  it('leaves an interactive chat approval for the user to answer', async () => {
+    const client = await startDialogRuntime('chat')
+
+    emit({ type: 'extension_ui_request', id: 'confirm-1', method: 'confirm', title: 'x', message: 'y' })
+
+    expect(DialogRpcClient.written).toEqual([])
+    expect(client.deniedApprovals()).toEqual([])
+  })
+
+  it('stops answering once the run is disposed', async () => {
+    const client = await startDialogRuntime('code-model')
+    await client.dispose()
+
+    emit({ type: 'extension_ui_request', id: 'confirm-1', method: 'confirm', title: 'x', message: 'y' })
+
+    expect(DialogRpcClient.written).toEqual([])
+  })
+})
+
+describe('unattended approval delivery failures', () => {
+  it('keeps a denial that could not be delivered visible instead of losing it', async () => {
+    let listener: ((event: unknown) => void) | undefined
+    class StdinlessRpcClient {
+      process = { pid: 4321 }
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { return Promise.resolve() }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+      onEvent(fn: (event: unknown) => void) {
+        listener = fn
+        return () => { listener = undefined }
+      }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\repo', provider: 'openai', env: {}, cliPath: 'C:\pi\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+
+    const client = await startPiRuntime(profile, {
+      loadClient: async () => StdinlessRpcClient,
+      runtimePath: () => 'C:\electron.exe',
+      nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test',
+      runtimeId: () => 'runtime-1',
+    })
+    listener?.({ type: 'extension_ui_request', id: 'confirm-1', method: 'confirm', title: 'x', message: 'y' })
+
+    expect(client.deniedApprovals()).toMatchObject([
+      { id: 'confirm-1', deliveryError: 'Agent process stdin is not available' },
+    ])
+  })
+})
