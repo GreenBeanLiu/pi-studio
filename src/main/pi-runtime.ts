@@ -17,6 +17,7 @@ import type {
   PiRuntimeCapabilities,
   SlashCommand,
 } from '../shared/ipc/contract'
+import { terminateProcessTree } from './process-tree'
 
 type StartablePiClient = {
   start: () => Promise<void>
@@ -39,6 +40,7 @@ type StartPiRuntimeDependencies<C extends StartablePiClient> = {
   nodeEnv: (env: Record<string, string>) => Record<string, string>
   engineVersion: () => string
   runtimeId: () => string
+  terminateTree?: typeof terminateProcessTree
 }
 
 const DEFAULT_START_DEPENDENCIES: StartPiRuntimeDependencies<RpcClientType> = {
@@ -50,6 +52,7 @@ const DEFAULT_START_DEPENDENCIES: StartPiRuntimeDependencies<RpcClientType> = {
 }
 
 type RuntimeProcess = {
+  pid?: number
   stdin?: { write: (chunk: string) => void }
   stderr?: { on: (event: 'data', listener: (chunk: Buffer | string) => void) => void }
   on: {
@@ -174,7 +177,10 @@ async function stopRuntimeWithDeadline(client: StartablePiClient, timeoutMs = 2_
   }
 }
 
-async function forceDisposeClient(client: StartablePiClient): Promise<void> {
+async function forceDisposeClient(
+  client: StartablePiClient,
+  terminateTree: typeof terminateProcessTree = terminateProcessTree,
+): Promise<void> {
   const process = (client as unknown as { process?: RuntimeProcess }).process
   if (!process?.kill) {
     await stopRuntimeWithDeadline(client)
@@ -183,10 +189,20 @@ async function forceDisposeClient(client: StartablePiClient): Promise<void> {
   // Attach listeners before kill: some process adapters emit exit synchronously.
   const exit = waitForRuntimeExit(process)
   let killed = false
-  try {
-    killed = process.kill('SIGKILL')
-  } catch {
-    killed = false
+  if (process.pid) {
+    try {
+      await terminateTree(process.pid)
+      killed = true
+    } catch (error) {
+      exit.cancel()
+      throw error
+    }
+  } else {
+    try {
+      killed = process.kill('SIGKILL')
+    } catch {
+      killed = false
+    }
   }
   if (!killed) {
     exit.cancel()
@@ -206,6 +222,7 @@ export class PiAgentRunHandle {
     private readonly client: RpcClientType,
     engineVersion: string,
     declaredSubagents: boolean,
+    private readonly forceDisposeOwned: () => Promise<void> = () => forceDisposeClient(client),
   ) {
     this.capabilities = runtimeCapabilities(client, engineVersion, declaredSubagents)
   }
@@ -244,7 +261,7 @@ export class PiAgentRunHandle {
   /** Last-resort ownership boundary used after a cancellation grace period. */
   async forceDispose(): Promise<void> {
     if (this.disposed) return
-    await forceDisposeClient(this.client)
+    await this.forceDisposeOwned()
     this.disposed = true
   }
 
@@ -336,6 +353,7 @@ export async function startPiRuntime(
     client,
     engineVersion,
     profile.declaredCapabilities?.subagents ?? false,
+    () => forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree),
   )
 }
 
@@ -374,7 +392,7 @@ export async function startPiRuntimeCancellable(
   let cleaned = false
   const cleanup = (): Promise<void> => {
     if (cleaned) return Promise.resolve()
-    cleanupPromise ??= forceDisposeClient(client)
+    cleanupPromise ??= forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree)
       .then(() => { cleaned = true })
       .finally(() => { cleanupPromise = null })
     return cleanupPromise
@@ -407,6 +425,7 @@ export async function startPiRuntimeCancellable(
     client as RpcClientType,
     engineVersion,
     profile.declaredCapabilities?.subagents ?? false,
+    () => forceDisposeClient(client, resolved.terminateTree ?? terminateProcessTree),
   )
 }
 

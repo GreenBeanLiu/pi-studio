@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "caseId": "basic-replay",
+  "engineResult": {
+    "finalResponse": "Recorded response",
+    "finishReason": "settled",
+    "exitCode": 0,
+    "sessionId": "recorded-session",
+    "messages": []
+  },
+  "events": [
+    {
+      "atMs": 0,
+      "observedAt": "2026-08-17T00:00:00.000Z",
+      "raw": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "start",
+          "partial": {
+            "role": "assistant",
+            "content": [],
+            "api": "openai-completions",
+            "provider": "pi-studio-replay",
+            "model": "pi-studio-eval-replay",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+            },
+            "stopReason": "stop",
+            "timestamp": 1786924800000
+          }
+        }
+      }
+    },
+    {
+      "atMs": 1,
+      "observedAt": "2026-08-17T00:00:00.001Z",
+      "raw": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_start",
+          "contentIndex": 0,
+          "partial": {
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "" }],
+            "api": "openai-completions",
+            "provider": "pi-studio-replay",
+            "model": "pi-studio-eval-replay",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+            },
+            "stopReason": "stop",
+            "timestamp": 1786924800000
+          }
+        }
+      }
+    },
+    {
+      "atMs": 2,
+      "observedAt": "2026-08-17T00:00:00.002Z",
+      "raw": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 0,
+          "delta": "Recorded response",
+          "partial": {
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "Recorded response" }],
+            "api": "openai-completions",
+            "provider": "pi-studio-replay",
+            "model": "pi-studio-eval-replay",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+            },
+            "stopReason": "stop",
+            "timestamp": 1786924800000
+          }
+        }
+      }
+    },
+    {
+      "atMs": 3,
+      "observedAt": "2026-08-17T00:00:00.003Z",
+      "raw": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "text_end",
+          "contentIndex": 0,
+          "content": "Recorded response",
+          "partial": {
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "Recorded response" }],
+            "api": "openai-completions",
+            "provider": "pi-studio-replay",
+            "model": "pi-studio-eval-replay",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+            },
+            "stopReason": "stop",
+            "timestamp": 1786924800000
+          }
+        }
+      }
+    },
+    {
+      "atMs": 4,
+      "observedAt": "2026-08-17T00:00:00.004Z",
+      "raw": {
+        "type": "message_update",
+        "assistantMessageEvent": {
+          "type": "done",
+          "reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "Recorded response" }],
+            "api": "openai-completions",
+            "provider": "pi-studio-replay",
+            "model": "pi-studio-eval-replay",
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+            },
+            "stopReason": "stop",
+            "timestamp": 1786924800000
+          }
+        }
+      }
+    },
+    {
+      "atMs": 5,
+      "observedAt": "2026-08-17T00:00:00.005Z",
+      "raw": { "type": "agent_start" },
+      "normalized": {
+        "seq": 2,
+        "sessionId": "recorded-session",
+        "type": "agent.started",
+        "data": {}
+      }
+    },
+    {
+      "atMs": 10,
+      "observedAt": "2026-08-17T00:00:00.010Z",
+      "raw": { "type": "agent_settled" },
+      "normalized": {
+        "seq": 3,
+        "sessionId": "recorded-session",
+        "type": "agent.settled",
+        "data": {}
+      }
+    }
+  ]
+}

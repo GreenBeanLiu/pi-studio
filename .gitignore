@@ -6,6 +6,7 @@ dist/
 release/
 *.tsbuildinfo
 .claude/
+.pi-studio-eval-cli-*/
 preview-start.sh
 vite.preview.config.mjs
 vite.preview.config.ts

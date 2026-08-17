@@ -272,6 +272,47 @@ describe('startPiRuntime', () => {
     expect(forceDisposed).toBe(true)
   })
 
+  it('terminates the owned process tree when the adapter exposes a pid', async () => {
+    let exit: (() => void) | undefined
+    const directKill = vi.fn(() => true)
+    const terminateTree = vi.fn(async (pid: number) => { void pid; exit?.() })
+    class TreeProcessRpcClient {
+      process = {
+        pid: 43_210,
+        on: (event: 'exit' | 'error', listener: () => void) => {
+          if (event === 'exit') exit = listener
+        },
+        kill: directKill,
+      }
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { return Promise.resolve() }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const handle = await startPiRuntime(profile, {
+      loadClient: async () => TreeProcessRpcClient,
+      runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test', runtimeId: () => 'runtime-1', terminateTree,
+    })
+
+    await handle.forceDispose()
+
+    expect(terminateTree).toHaveBeenCalledWith(43_210)
+    expect(directKill).not.toHaveBeenCalled()
+  })
+
   it('observes a synchronous process exit emitted by kill', async () => {
     let exit: (() => void) | undefined
     class SynchronousExitRpcClient {

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "id": "basic-replay",
+  "fixture": "./basic",
+  "prompt": "Replay the recorded run",
+  "engine": {
+    "type": "pi",
+    "provider": "replay",
+    "security": "host-full-access"
+  },
+  "timeoutMs": 1000,
+  "graders": [
+    { "type": "exit-code", "expected": 0 },
+    { "type": "file", "path": "input.txt", "contains": "before" },
+    { "type": "diff", "maxChangedFiles": 0 }
+  ]
+}
