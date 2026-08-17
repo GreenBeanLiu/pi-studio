@@ -1,0 +1,18 @@
+diff --git a/dist/utils/overflow.js b/dist/utils/overflow.js
+index f33f8923f4e7b9f106c1239e7e624b80470258f2..15c338393d791040242235159ad13d4f2a95f117 100644
+--- a/dist/utils/overflow.js
++++ b/dist/utils/overflow.js
+@@ -139,9 +139,10 @@ export function isContextOverflow(message, contextWindow) {
+         }
+     }
+     // Case 3: Length-stop overflow (Xiaomi MiMo style) - server truncates oversized input
+-    // to fit the context window, leaving no room for output. Returns stopReason "length"
+-    // with output=0 and input+cacheRead filling the context window.
+-    if (contextWindow && message.stopReason === "length" && message.usage.output === 0) {
++    // to fit the context window, leaving effectively no room for output. Some compatible
++    // gateways still emit one formatting token before reporting stopReason "length", so
++    // treat both zero and one output token as overflow when input fills the window.
++    if (contextWindow && message.stopReason === "length" && message.usage.output <= 1) {
+         const inputTokens = message.usage.input + message.usage.cacheRead;
+         if (inputTokens >= contextWindow * 0.99) {
+             return true;

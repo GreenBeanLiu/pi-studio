@@ -4,6 +4,7 @@ import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { readFileSync } from 'node:fs'
+import { isContextOverflow } from '@earendil-works/pi-ai/compat'
 import {
   embeddedNodeEnv,
   loadRpcClient,
@@ -58,6 +59,33 @@ describe('one agent process per chat', () => {
   })
 })
 
+describe('context overflow recovery', () => {
+  it('retries a length-truncated response that only had room for one output token', () => {
+    expect(
+      isContextOverflow(
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: '**' }],
+          api: 'openai-completions',
+          provider: 'three-a-grok',
+          model: 'grok-4.5',
+          usage: {
+            input: 437,
+            output: 1,
+            cacheRead: 130_816,
+            cacheWrite: 0,
+            totalTokens: 131_254,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'length',
+          timestamp: Date.now(),
+        },
+        128_000,
+      ),
+    ).toBe(true)
+  })
+})
+
 describe('embeddedNodeEnv', () => {
   it('marks the application executable as a Node-compatible runtime', () => {
     expect(embeddedNodeEnv({ OPENAI_API_KEY: 'test' })).toEqual({
@@ -70,7 +98,9 @@ describe('embeddedNodeEnv', () => {
     expect(embeddedNodeEnv({ ELECTRON_RUN_AS_NODE: '0' }).ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
-  it('starts RpcClient with the current process runtime instead of node from PATH', async () => {
+  // Spawns a real RpcClient subprocess, which is slow enough under a loaded suite
+  // to exceed the default per-test deadline.
+  it('starts RpcClient with the current process runtime instead of node from PATH', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pi-studio-rpc-runtime-'))
     const fixture = join(dir, 'rpc-fixture.mjs')
     writeFileSync(
