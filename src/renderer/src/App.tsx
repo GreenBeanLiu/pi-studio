@@ -12,7 +12,12 @@ import { useAppShortcuts } from './keyboard/use-app-shortcuts'
 import DesktopLayoutContainer from './components/DesktopLayoutContainer'
 import SettingsModal from './components/SettingsModal'
 import WorkspacePicker from './components/WorkspacePicker'
-import { api, type AgentStatusEvent, type Workspace } from './lib/api'
+import {
+  api,
+  type AgentStatusEvent,
+  type ExecutionSecuritySnapshot,
+  type Workspace,
+} from './lib/api'
 
 type UpdateState =
   | { status: 'idle' }
@@ -60,6 +65,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [activeView, setActiveView] = useState<ActiveView>('chat')
   // 当前工作区 agent 的沙箱运行模式(null=直跑主机);来自 agent:status started 事件
   const [sandboxMode, setSandboxMode] = useState<'wsl' | 'docker' | null>(null)
+  const [executionSecurity, setExecutionSecurity] = useState<ExecutionSecuritySnapshot | null>(null)
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)
   const [agentRunning, setAgentRunning] = useState(false)
@@ -89,6 +95,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
           )
           setShowWorkspacePicker(false)
           setSandboxMode(snap.sandbox)
+          setExecutionSecurity(snap.security)
         } else if (snap.phase === 'error' && snap.error) {
           setWorkspaceError(snap.error.message)
         }
@@ -98,6 +105,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     // agent 是否在跑以 main 的权威快照为准,快捷键条件(Ctrl+.)据此启用
     const offRuntime = api.pi.onRuntime((snap) => {
       setAgentRunning(snap.phase === 'running' || snap.phase === 'awaiting_approval')
+      setExecutionSecurity(snap.security)
     })
 
     const offAvail = api.update.onAvailable(({ version }) =>
@@ -125,6 +133,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
         setAgentIssue(null)
         setRestartingAgent(false)
         setSandboxMode(event.sandbox ?? null)
+        setExecutionSecurity(event.security ?? null)
         return
       }
       if (event.status === 'exited' && event.expected) return
@@ -152,6 +161,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       // workspace is actually open now — reflect that honestly.
       setWorkspace(null)
       setSandboxMode(null)
+      setExecutionSecurity(null)
       setWorkspaceError(result.error)
       if (result.error.includes('API Key')) {
         setShowWorkspacePicker(false)
@@ -220,6 +230,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       <TitleBar
         workspace={workspace}
         sandboxMode={sandboxMode}
+        executionSecurity={executionSecurity}
         update={update}
         onInstall={() => api.update.install()}
         onDismissUpdate={() => setUpdate({ status: 'idle' })}

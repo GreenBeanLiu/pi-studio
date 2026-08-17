@@ -750,12 +750,24 @@ export type AgentRuntimePhase =
   | 'error'
 
 /** main 维护的 Agent 生命周期权威快照;revision 单调递增,乱序事件可弃 */
+export type ExecutionSecuritySnapshot = {
+  requested: 'confined' | 'full-access'
+  filesystemMode: 'workspace-write' | 'danger-full-access'
+  networkMode: 'allowlist' | 'unrestricted'
+  backend: 'wsl-bwrap' | 'docker' | 'host'
+  enforcement: 'full' | 'partial' | 'none'
+  hostCodeExecution: boolean
+  reason: string
+}
+
 export type AgentRuntimeSnapshot = {
   revision: number
   phase: AgentRuntimePhase
   workspacePath: string | null
   sessionFile: string | null
   sandbox: 'wsl' | 'docker' | null
+  security: ExecutionSecuritySnapshot | null
+  profileDigest: string | null
   activeRun: { startedAt: number } | null
   error: { message: string } | null
 }
@@ -767,6 +779,8 @@ export type AgentStatusEvent =
       restoredSession: boolean
       sessionFile?: string
       sandbox?: 'wsl' | 'docker'
+      security?: ExecutionSecuritySnapshot
+      profileDigest?: string
     }
   | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
   | { status: 'error'; cwd: string; message: string }

@@ -3,14 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
-import { prepareAgentRuntime } from './agent-runtime-config'
-import {
-  embeddedNodeEnv,
-  loadRpcClient,
-  resolveEmbeddedNodePath,
-  resolvePiCliPath,
-} from './pi-client'
-import { prepareSandboxLaunch } from './sandbox'
+import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
+import { runProfileCompiler } from './run-profile'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
 import { syncWebSearchExtension } from './web-search-extension'
 import { syncSecurityGuardExtension } from './security-guard-extension'
@@ -24,7 +18,6 @@ import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type C
 import { appendAppLog, normalizeError } from './app-log'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
-import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import type { RoutineStepType as SharedRoutineStepType } from '../shared/ipc/contract'
 import { readRoutineMaterialFolder } from './routine-material-folder'
 import {
@@ -365,8 +358,9 @@ function broadcast(channel: string, payload: unknown): void {
 type AgentSession = {
   client: {
     prompt: (text: string) => Promise<void>
+    waitForIdle: (timeout?: number) => Promise<void>
+    abort: () => Promise<void>
     getMessages: () => Promise<unknown>
-    onEvent: (cb: (e: { type?: string }) => void) => () => void
     stop: () => Promise<void>
   } | null
 }
@@ -374,26 +368,12 @@ type AgentSession = {
 async function ensureAgentClient(routine: Routine, session: AgentSession): Promise<NonNullable<AgentSession['client']>> {
   if (session.client) return session.client
   const settings = loadSettings()
-  const runtime = await prepareAgentRuntime()
   syncWebSearchExtension(!!settings.tavilyApiKey)
   // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
   syncSecurityGuardExtension(false)
   syncWorkspaceMemoryExtension()
-  const RpcClient = await loadRpcClient()
-  const env = runtime.env
-  const launch = settings.sandboxEnabled
-    ? await prepareSandboxLaunch(routine.workspacePath, env)
-    : { cliPath: resolvePiCliPath(), env }
-  const client = new RpcClient({
-    cwd: routine.workspacePath,
-    env: embeddedNodeEnv(launch.env),
-    runtimePath: resolveEmbeddedNodePath(),
-    provider: runtime.provider,
-    model: runtime.model,
-    cliPath: launch.cliPath,
-  })
-  await client.start()
-  await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
+  const profile = await runProfileCompiler.compile('routine', routine.workspacePath)
+  const client = await startPiRuntime(profile)
   session.client = client
   return client
 }
@@ -411,24 +391,15 @@ async function runAgentStep(
   if (!hasPreviousProductReference(step.prompt ?? '') && ctx.prev) {
     prompt = `${prompt}\n\nPrevious step result:\n${ctx.prev.output.slice(0, MAX_STEP_OUTPUT_CHARS)}`
   }
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+  try {
+    await runPromptToSettled(client, prompt, RUN_TIMEOUT_MS)
+  } catch (err) {
+    if (err instanceof PiRunTimeoutError) {
       markTimeout()
-      reject(new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`))
-    }, RUN_TIMEOUT_MS)
-    const off = client.onEvent((e: { type?: string }) => {
-      if (e?.type === 'agent_end') {
-        clearTimeout(timer)
-        off()
-        resolve()
-      }
-    })
-    client.prompt(prompt).catch((err: unknown) => {
-      clearTimeout(timer)
-      off()
-      reject(err instanceof Error ? err : new Error(String(err)))
-    })
-  })
+      throw new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`, { cause: err })
+    }
+    throw err
+  }
   const messages = (await client.getMessages()) as Array<{
     role?: string
     content?: Array<{ type?: string; text?: string }> | string

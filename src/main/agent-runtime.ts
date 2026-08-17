@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { AgentStatusEvent } from './pi-client'
+import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
 
 /**
  * Agent Runtime 权威快照(见 优化.md「Agent Runtime 成为唯一权威状态源」)。
@@ -31,6 +32,8 @@ export type AgentRuntimeSnapshot = {
   workspacePath: string | null
   sessionFile: string | null
   sandbox: 'wsl' | 'docker' | null
+  security: ExecutionSecuritySnapshot | null
+  profileDigest: string | null
   activeRun: { startedAt: number } | null
   error: { message: string } | null
 }
@@ -45,6 +48,8 @@ export class AgentRuntimeTracker {
     workspacePath: null,
     sessionFile: null,
     sandbox: null,
+    security: null,
+    profileDigest: null,
     activeRun: null,
     error: null,
   }
@@ -66,6 +71,8 @@ export class AgentRuntimeTracker {
       workspacePath,
       sessionFile: null,
       sandbox: null,
+      security: null,
+      profileDigest: null,
       activeRun: null,
       error: null,
     })
@@ -83,6 +90,8 @@ export class AgentRuntimeTracker {
       this.patch({
         phase: 'idle',
         sandbox: event.sandbox ?? null,
+        security: event.security ?? null,
+        profileDigest: event.profileDigest ?? null,
         sessionFile: event.sessionFile ?? null,
         activeRun: null,
         error: null,
@@ -135,6 +144,8 @@ export class AgentRuntimeTracker {
       workspacePath: null,
       sessionFile: null,
       sandbox: null,
+      security: null,
+      profileDigest: null,
       activeRun: null,
       error: null,
     })

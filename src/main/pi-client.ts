@@ -1,19 +1,20 @@
-import { existsSync } from 'fs'
-import { basename, dirname, join, resolve } from 'path'
-import { createRequire } from 'module'
+import { resolve } from 'path'
 import type {
   AgentSessionEvent,
   RpcClient as RpcClientType,
 } from '@earendil-works/pi-coding-agent'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
-import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
-import { loadSettings, saveSelectedModelRoute } from './settings'
+import { saveSelectedModelRoute } from './settings'
+import { sandboxSessionPathToContainer, sandboxSessionPathToHost } from './sandbox'
+import type { CompiledRunProfile } from './run-profile'
+import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
 import {
-  prepareSandboxLaunch,
-  sandboxSessionPathToContainer,
-  sandboxSessionPathToHost,
-} from './sandbox'
+  loadRpcClient,
+} from './pi-process'
+import { startPiRuntime } from './pi-runtime'
+
+export { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath, resolvePiCliPath } from './pi-process'
 
 export type PiEventListener = (event: AgentSessionEvent) => void
 export type AgentStatusEvent =
@@ -24,6 +25,8 @@ export type AgentStatusEvent =
       sessionFile?: string
       /** 本工作区的 agent 是否跑在沙箱里(WSL bubblewrap / Docker 回退) */
       sandbox?: 'wsl' | 'docker'
+      security?: ExecutionSecuritySnapshot
+      profileDigest?: string
     }
   | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
   | { status: 'error'; cwd: string; message: string }
@@ -45,42 +48,6 @@ type AgentProcessLike = {
   }
 }
 
-// `@earendil-works/pi-coding-agent` ships ESM-only (no "require" export
-// condition), but electron-vite compiles the main process to CJS. A static
-// `import` would become a `require()` that Node's exports resolution
-// rejects, so we load it lazily via dynamic `import()` instead — that always
-// goes through ESM resolution regardless of the caller's module format.
-export async function loadRpcClient(): Promise<typeof RpcClientType> {
-  const mod = await import('@earendil-works/pi-coding-agent')
-  return mod.RpcClient
-}
-
-// RpcClient's default cliPath is the *relative* string "dist/cli.js",
-// resolved against the spawned process's `cwd` — which for us is the user's
-// workspace directory, not pi-coding-agent's own install location. Has to be
-// passed explicitly as an absolute path. `require.resolve()` can't be used
-// here either (same exports-map problem as the dynamic import above), so we
-// walk the plain node_modules search paths instead — that mechanism doesn't
-// consult the package's "exports" map at all.
-export function resolvePiCliPath(): string {
-  // ESM 下没有全局 require;createRequire 的 resolve.paths 走同样的 node_modules 搜索路径
-  const cjsRequire = createRequire(import.meta.url)
-  const searchPaths = cjsRequire.resolve.paths('@earendil-works/pi-coding-agent') ?? []
-  for (const base of searchPaths) {
-    const candidate = join(base, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js')
-    if (existsSync(candidate)) return candidate
-  }
-  throw new Error('Could not locate @earendil-works/pi-coding-agent/dist/cli.js')
-}
-
-/**
- * Electron's executable can run ordinary Node scripts when this flag is set.
- * Passing it explicitly to RpcClient removes the target machine's system-Node dependency.
- */
-export function embeddedNodeEnv(env: Record<string, string>): Record<string, string> {
-  return { ...env, ELECTRON_RUN_AS_NODE: '1' }
-}
-
 /**
  * 一轮是否还在跑。agent_end 之后 pi 可能还要重试或压缩后续跑,
  * agent_settled 才是这一轮真正结束的点(和 AgentRuntimeTracker 保持同一口径)。
@@ -89,28 +56,6 @@ export function nextRunActive(current: boolean, eventType: string): boolean {
   if (eventType === 'agent_start') return true
   if (eventType === 'agent_settled') return false
   return current
-}
-
-/**
- * macOS registers the main app executable in Dock even in ELECTRON_RUN_AS_NODE mode.
- * Electron's LSUIElement Helper provides the same embedded Node runtime without a Dock icon.
- */
-export function resolveEmbeddedNodePath(
-  execPath = process.execPath,
-  platform = process.platform,
-): string {
-  if (platform !== 'darwin') return execPath
-  const executableName = basename(execPath)
-  const helperPath = resolve(
-    dirname(execPath),
-    '..',
-    'Frameworks',
-    `${executableName} Helper.app`,
-    'Contents',
-    'MacOS',
-    `${executableName} Helper`,
-  )
-  return existsSync(helperPath) ? helperPath : execPath
 }
 
 /** 同时保活的 agent 进程上限(每个约 150MB)。超了就回收最久没用的空闲会话。 */
@@ -156,15 +101,7 @@ type AgentEntry = {
   pendingUi: AgentSessionEvent[]
 }
 
-type LaunchContext = {
-  cwd: string
-  env: Record<string, string>
-  provider: string | undefined
-  model: string | undefined
-  cliPath: string
-  sandboxMode: 'wsl' | 'docker' | null
-  sandboxSessionPaths: boolean
-}
+type LaunchContext = CompiledRunProfile & { sandboxSessionPaths: boolean }
 
 /**
  * 一个聊天一个 `pi` RPC 子进程。
@@ -196,9 +133,7 @@ class PiClientManager {
 
   async startWorkspace(
     cwd: string,
-    env: Record<string, string>,
-    provider: string | undefined,
-    model: string | undefined,
+    compileProfile: () => Promise<CompiledRunProfile>,
     onEvent: PiEventListener,
     onStatus?: AgentStatusListener,
     onWorkspaceStopped?: (cwd: string) => Promise<void>,
@@ -209,19 +144,10 @@ class PiClientManager {
     await this.stop()
     if (previousWorkspacePath) await onWorkspaceStopped?.(previousWorkspacePath)
 
-    // 沙箱模式:改用中继 shim 让 pi 在 Docker 容器里跑(daemon/镜像没就绪会抛错)
-    const sandboxEnabled = loadSettings().sandboxEnabled
-    const prepared = sandboxEnabled
-      ? await prepareSandboxLaunch(cwd, env)
-      : { cliPath: resolvePiCliPath(), env, mode: null }
+    const profile = await compileProfile()
     this.launch = {
-      cwd,
-      env: prepared.env,
-      provider,
-      model,
-      cliPath: prepared.cliPath,
-      sandboxMode: prepared.mode,
-      sandboxSessionPaths: sandboxEnabled,
+      ...profile,
+      sandboxSessionPaths: profile.sandboxMode !== null,
     }
     this.workspacePath = cwd
     this.onEvent = onEvent
@@ -233,8 +159,8 @@ class PiClientManager {
 
     appendAppLog('info', 'agent.start', 'Pi agent process started', {
       cwd,
-      provider,
-      modelConfigured: !!model,
+      provider: profile.provider,
+      modelConfigured: !!profile.model,
       restoredSession: !!restoreSessionFile && entry.sessionFile === restoreSessionFile,
     })
     onStatus?.({
@@ -243,6 +169,8 @@ class PiClientManager {
       restoredSession: !!restoreSessionFile && entry.sessionFile === restoreSessionFile,
       sessionFile: entry.sessionFile ?? undefined,
       sandbox: this.launch.sandboxMode ?? undefined,
+      security: this.launch.security,
+      profileDigest: this.launch.profileDigest,
     })
   }
 
@@ -251,17 +179,8 @@ class PiClientManager {
     const launch = this.launch
     if (!launch) throw new Error('No workspace is open')
 
-    const RpcClient = await loadRpcClient()
     const runId = ++this.nextRunId
-    const client = new RpcClient({
-      cwd: launch.cwd,
-      env: embeddedNodeEnv(launch.env),
-      runtimePath: resolveEmbeddedNodePath(),
-      provider: launch.provider,
-      model: launch.model,
-      cliPath: launch.cliPath,
-    })
-    await client.start()
+    const client = await startPiRuntime(launch)
 
     const entry: AgentEntry = {
       client,
@@ -292,8 +211,6 @@ class PiClientManager {
         })
       }
     }
-
-    await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
 
     try {
       const state = await client.getState()

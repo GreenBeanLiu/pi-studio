@@ -59,7 +59,7 @@ import {
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const QUEUE_MODES = ['all', 'one-at-a-time'] as const
-import { prepareAgentRuntime } from './agent-runtime-config'
+import { runProfileCompiler } from './run-profile'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
@@ -383,12 +383,6 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(event.sender)
     const settings = loadSettings()
 
-    let runtime
-    try {
-      runtime = await prepareAgentRuntime()
-    } catch (err) {
-      return { error: (err as Error).message ?? String(err) }
-    }
     syncWebSearchExtension(!!settings.tavilyApiKey)
     // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
     syncSecurityGuardExtension(false)
@@ -404,9 +398,7 @@ export function registerIpcHandlers(): void {
     try {
       await piClientManager.startWorkspace(
         workspacePath,
-        runtime.env,
-        runtime.provider,
-        runtime.model,
+        () => runProfileCompiler.compile('chat', workspacePath),
         async (agentEvent) => {
           agentRuntime.agentEvent(agentEvent)
           // willRetry 的 agent_end 只是重试前的一段间隙,这时封存基线,重试里新写的
