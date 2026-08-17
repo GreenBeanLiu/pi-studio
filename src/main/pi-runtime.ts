@@ -21,6 +21,7 @@ import type {
 type StartablePiClient = {
   start: () => Promise<void>
   setThinkingLevel: (level: typeof DEFAULT_THINKING_LEVEL) => Promise<void>
+  stop?: () => Promise<void>
 }
 type PiClientConstructor<C extends StartablePiClient> = new (options: {
   cwd: string
@@ -55,6 +56,12 @@ type RuntimeProcess = {
     (event: 'exit', listener: (code: number | null, signal: string | null) => void): void
     (event: 'error', listener: (error: Error) => void): void
   }
+  kill?: (signal?: NodeJS.Signals | number) => boolean
+}
+
+type CancellableRuntimeOptions<C extends StartablePiClient> = {
+  dependencies: StartPiRuntimeDependencies<C>
+  onOwned?: (cleanup: () => Promise<void>) => void
 }
 
 const REQUIRED_CORE_METHODS = [
@@ -131,6 +138,64 @@ async function verifyRuntimeHandshake(client: RpcClientType, engineVersion: stri
   }
 }
 
+function waitForRuntimeExit(
+  process: RuntimeProcess,
+  timeoutMs = 2_000,
+): { promise: Promise<void>; cancel: () => void } {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  let complete!: () => void
+  const promise = new Promise<void>((resolve, reject) => {
+    complete = (): void => {
+      if (timeout) clearTimeout(timeout)
+      resolve()
+    }
+    process.on('exit', complete)
+    process.on('error', (error) => {
+      if (timeout) clearTimeout(timeout)
+      reject(error)
+    })
+    timeout = setTimeout(() => reject(new Error('Pi process did not exit after SIGKILL')), timeoutMs)
+  })
+  return { promise, cancel: complete }
+}
+
+async function stopRuntimeWithDeadline(client: StartablePiClient, timeoutMs = 2_000): Promise<void> {
+  if (!client.stop) throw new Error('Pi runtime does not expose a cleanup operation')
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      client.stop(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Pi runtime stop did not complete')), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function forceDisposeClient(client: StartablePiClient): Promise<void> {
+  const process = (client as unknown as { process?: RuntimeProcess }).process
+  if (!process?.kill) {
+    await stopRuntimeWithDeadline(client)
+    return
+  }
+  // Attach listeners before kill: some process adapters emit exit synchronously.
+  const exit = waitForRuntimeExit(process)
+  let killed = false
+  try {
+    killed = process.kill('SIGKILL')
+  } catch {
+    killed = false
+  }
+  if (!killed) {
+    exit.cancel()
+    await stopRuntimeWithDeadline(client)
+    return
+  }
+  await exit.promise
+}
+
 export class PiAgentRunHandle {
   readonly capabilities: PiRuntimeCapabilities
   private disposed = false
@@ -172,8 +237,15 @@ export class PiAgentRunHandle {
 
   async dispose(): Promise<void> {
     if (this.disposed) return
-    this.disposed = true
     await this.client.stop()
+    this.disposed = true
+  }
+
+  /** Last-resort ownership boundary used after a cancellation grace period. */
+  async forceDispose(): Promise<void> {
+    if (this.disposed) return
+    await forceDisposeClient(this.client)
+    this.disposed = true
   }
 
   observeProcess(listeners: {
@@ -262,6 +334,77 @@ export async function startPiRuntime(
     resolved.runtimeId(),
     profile.profileDigest,
     client,
+    engineVersion,
+    profile.declaredCapabilities?.subagents ?? false,
+  )
+}
+
+/** Cancellable startup registers process ownership before start/handshake can yield. */
+export function startPiRuntimeCancellable(
+  profile: CompiledRunProfile,
+  signal: AbortSignal,
+  options?: { onOwned?: (cleanup: () => Promise<void>) => void },
+): Promise<PiAgentRunHandle>
+export function startPiRuntimeCancellable<C extends StartablePiClient>(
+  profile: CompiledRunProfile,
+  signal: AbortSignal,
+  options: CancellableRuntimeOptions<C>,
+): Promise<PiAgentRunHandle>
+export async function startPiRuntimeCancellable(
+  profile: CompiledRunProfile,
+  signal: AbortSignal,
+  options?: {
+    dependencies?: StartPiRuntimeDependencies<StartablePiClient>
+    onOwned?: (cleanup: () => Promise<void>) => void
+  },
+): Promise<PiAgentRunHandle> {
+  const resolved = options?.dependencies ?? DEFAULT_START_DEPENDENCIES
+  const RpcClient = await resolved.loadClient()
+  signal.throwIfAborted()
+  const client = new RpcClient({
+    cwd: profile.cwd,
+    env: resolved.nodeEnv(profile.env),
+    runtimePath: resolved.runtimePath(),
+    provider: profile.provider,
+    model: profile.model,
+    cliPath: profile.cliPath,
+    args: profile.args,
+  })
+  let cleanupPromise: Promise<void> | null = null
+  let cleaned = false
+  const cleanup = (): Promise<void> => {
+    if (cleaned) return Promise.resolve()
+    cleanupPromise ??= forceDisposeClient(client)
+      .then(() => { cleaned = true })
+      .finally(() => { cleanupPromise = null })
+    return cleanupPromise
+  }
+  options?.onOwned?.(cleanup)
+  const abort = (): void => {
+    void cleanup().catch(() => {})
+  }
+  signal.addEventListener('abort', abort, { once: true })
+  let engineVersion = ''
+  try {
+    signal.throwIfAborted()
+    await client.start()
+    signal.throwIfAborted()
+    await client.setThinkingLevel(profile.thinkingLevel)
+    signal.throwIfAborted()
+    assertCoreCapabilities(client)
+    engineVersion = resolved.engineVersion()
+    await verifyRuntimeHandshake(client, engineVersion)
+    signal.throwIfAborted()
+  } catch (error) {
+    await cleanup().catch(() => {})
+    throw error
+  } finally {
+    signal.removeEventListener('abort', abort)
+  }
+  return new PiAgentRunHandle(
+    resolved.runtimeId(),
+    profile.profileDigest,
+    client as RpcClientType,
     engineVersion,
     profile.declaredCapabilities?.subagents ?? false,
   )

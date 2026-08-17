@@ -10,6 +10,7 @@ import {
   readCloudSseResult as readSseResult,
   uploadCloudImageReference as uploadReference,
 } from './cloud-media'
+import { abortSignalWithTimeout } from './abort-signal'
 
 /**
  * 换装视频:两张「同一主角不同造型」的照片作首帧/尾帧,经 VPS 中继
@@ -90,13 +91,19 @@ async function genTryOn(
   garmentUrl: string,
   prompt: string,
   onStatus: (stage: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const resp = await cloudFetch(
     '/imagegen',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gpt-image-2', prompt, referenceUrls: [personUrl, garmentUrl] }),
+      body: JSON.stringify({
+        model: 'gpt-image-2',
+        prompt,
+        referenceUrls: [personUrl, garmentUrl],
+      }),
+      signal: abortSignalWithTimeout(signal, CLOUD_TIMEOUT_MS),
     },
     CLOUD_TIMEOUT_MS,
   )
@@ -114,7 +121,12 @@ async function generate(payload: GeneratePayload): Promise<DressupResult> {
   const mode = payload.mode ?? 'std'
   const duration = payload.duration ?? '5'
   const progress = (status: string, pct: number): void =>
-    broadcast('dressup:progress', { id, status, progress: pct, prompt: payload.prompt ?? '' })
+    broadcast('dressup:progress', {
+      id,
+      status,
+      progress: pct,
+      prompt: payload.prompt ?? '',
+    })
 
   try {
     progress('uploading', 0)
@@ -177,21 +189,26 @@ type WorkflowPayload = {
   prompt?: string
 }
 
-export async function runDressupWorkflow(payload: WorkflowPayload): Promise<DressupResult> {
+export async function runDressupWorkflow(payload: WorkflowPayload, signal?: AbortSignal): Promise<DressupResult> {
   if (!payload.personDataUrl) return { error: '请提供人物照片' }
   if (!payload.garmentDataUrl) return { error: '请提供衣服图片' }
   if (!payload.firstFrameDataUrl) return { error: '首帧合成失败,请重试' }
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const progress = (status: string): void =>
-    broadcast('dressup:progress', { id, status, progress: 0, prompt: payload.prompt ?? '' })
+    broadcast('dressup:progress', {
+      id,
+      status,
+      progress: 0,
+      prompt: payload.prompt ?? '',
+    })
 
   try {
     progress('uploading')
     const [personUrl, garmentUrl, firstFrameUrl] = await Promise.all([
-      uploadReference(payload.personDataUrl),
-      uploadReference(payload.garmentDataUrl),
-      uploadReference(payload.firstFrameDataUrl),
+      uploadReference(payload.personDataUrl, signal),
+      uploadReference(payload.garmentDataUrl, signal),
+      uploadReference(payload.firstFrameDataUrl, signal),
     ])
 
     // ① gpt-image-2 试衣 → 尾帧
@@ -201,6 +218,7 @@ export async function runDressupWorkflow(payload: WorkflowPayload): Promise<Dres
       garmentUrl,
       payload.prompt?.trim() || TRYON_PROMPT,
       (s) => progress(`tryon:${s}`),
+      signal,
     )
 
     // ② Kling 首帧(合成)→尾帧(试衣) 换装视频
@@ -211,6 +229,7 @@ export async function runDressupWorkflow(payload: WorkflowPayload): Promise<Dres
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ firstFrameUrl, tailFrameUrl, mode: 'std' }),
+        signal: abortSignalWithTimeout(signal, CLOUD_TIMEOUT_MS),
       },
       CLOUD_TIMEOUT_MS,
     )
@@ -220,7 +239,7 @@ export async function runDressupWorkflow(payload: WorkflowPayload): Promise<Dres
 
     progress('downloading')
     const mp4Path = join(dressupDir(), `${id}.mp4`)
-    await download(videoUrl, mp4Path)
+    await download(videoUrl, mp4Path, signal)
 
     const item: DressupHistoryItem = {
       id,

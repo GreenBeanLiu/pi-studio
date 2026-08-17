@@ -14,6 +14,7 @@ import {
 import { createHash, randomUUID } from 'crypto'
 import { dirname, isAbsolute, relative, resolve } from 'path'
 import { isContainedPath } from '../shared/ipc/validators'
+import { abortSignalWithTimeout } from './abort-signal'
 import {
   ANDROID_ADAPTIVE_SPECS,
   ANDROID_LEGACY_SPECS,
@@ -78,8 +79,7 @@ type Rgb = { red: number; green: number; blue: number }
 function straightRgb(bitmap: Buffer, offset: number): Rgb {
   const alpha = bitmap[offset + 3]
   if (alpha === 0) return { red: 0, green: 0, blue: 0 }
-  const unpremultiply = (channel: number): number =>
-    Math.min(255, Math.round((channel * 255) / alpha))
+  const unpremultiply = (channel: number): number => Math.min(255, Math.round((channel * 255) / alpha))
   return {
     red: unpremultiply(bitmap[offset + 2]),
     green: unpremultiply(bitmap[offset + 1]),
@@ -110,7 +110,7 @@ function derivedForegroundBackground(bitmap: Buffer): string {
   for (let offset = 0; offset < bitmap.length; offset += 16) {
     if (bitmap[offset + 3] < 32) continue
     const color = straightRgb(bitmap, offset)
-    const key = (color.red >> 4) << 8 | (color.green >> 4) << 4 | (color.blue >> 4)
+    const key = ((color.red >> 4) << 8) | ((color.green >> 4) << 4) | (color.blue >> 4)
     const bin = bins.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 }
     bin.count += 1
     bin.red += color.red
@@ -167,7 +167,7 @@ export function prepareAppIconLayers(
       const exact = exactColors.get(hex) ?? { count: 0, color }
       exact.count += 1
       exactColors.set(hex, exact)
-      const key = (color.red >> 4) << 8 | (color.green >> 4) << 4 | (color.blue >> 4)
+      const key = ((color.red >> 4) << 8) | ((color.green >> 4) << 4) | (color.blue >> 4)
       const bin = quantized.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 }
       bin.count += 1
       bin.red += color.red
@@ -217,8 +217,7 @@ export function prepareAppIconLayers(
   const maxLuminance = Math.max(...luminances)
   const averageLuminance = luminances.reduce((sum, value) => sum + value, 0) / luminances.length
   const luminanceDeviation = Math.sqrt(
-    luminances.reduce((sum, value) => sum + (value - averageLuminance) ** 2, 0) /
-      luminances.length,
+    luminances.reduce((sum, value) => sum + (value - averageLuminance) ** 2, 0) / luminances.length,
   )
   const bakedCheckerboard =
     minLuminance >= 220 &&
@@ -233,25 +232,20 @@ export function prepareAppIconLayers(
   const backgroundRadius = sampleDistances[Math.floor(sampleDistances.length * 0.98)] ?? 0
   const paletteCoverage =
     samples.filter(
-      (sample) =>
-        sample.alpha < 32 ||
-        Math.min(...palette.map((color) => colorDistance(sample.color, color))) <= 28,
+      (sample) => sample.alpha < 32 || Math.min(...palette.map((color) => colorDistance(sample.color, color))) <= 28,
     ).length / samples.length
   const warnings: string[] = []
   if (bakedCheckerboard) warnings.push('baked-checkerboard-background')
   if (paletteCoverage < 0.8) warnings.push('non-uniform-edge-background')
 
-  const sampledBackground = [...exactColors.values()].sort(
-    (left, right) => right.count - left.count,
-  )[0]?.color ?? palette[0]
+  const sampledBackground =
+    [...exactColors.values()].sort((left, right) => right.count - left.count)[0]?.color ?? palette[0]
   const foreground = Buffer.from(bitmap)
   const visited = new Uint8Array(size * size)
   const queue = new Int32Array(size * size)
   let queueStart = 0
   let queueEnd = 0
-  const transparentThreshold = bakedCheckerboard
-    ? Math.max(12, Math.min(32, Math.ceil(backgroundRadius) + 2))
-    : 9
+  const transparentThreshold = bakedCheckerboard ? Math.max(12, Math.min(32, Math.ceil(backgroundRadius) + 2)) : 9
   const opaqueThreshold = transparentThreshold + (bakedCheckerboard ? 93 : 73)
   const distanceAt = (index: number): number => {
     if (bitmap[index * 4 + 3] < 32) return 0
@@ -288,12 +282,7 @@ export function prepareAppIconLayers(
     if (!visited[index] && distance > transparentThreshold) continue
     const extractedAlpha = Math.max(
       0,
-      Math.min(
-        255,
-        Math.round(
-          ((distance - transparentThreshold) / (opaqueThreshold - transparentThreshold)) * 255,
-        ),
-      ),
+      Math.min(255, Math.round(((distance - transparentThreshold) / (opaqueThreshold - transparentThreshold)) * 255)),
     )
     const alpha = Math.round((originalAlpha * extractedAlpha) / 255)
     const color = straightRgb(bitmap, offset)
@@ -308,9 +297,7 @@ export function prepareAppIconLayers(
     if (foreground[offset] > 8) visiblePixels += 1
   }
   const adaptiveLayers =
-    paletteCoverage >= 0.8 &&
-    visiblePixels > size * size * 0.001 &&
-    visiblePixels < size * size * 0.9
+    paletteCoverage >= 0.8 && visiblePixels > size * size * 0.001 && visiblePixels < size * size * 0.9
   if (!adaptiveLayers) warnings.push('adaptive-layers-skipped-low-confidence')
 
   const backgroundColor = requested || rgbHex(sampledBackground)
@@ -320,16 +307,8 @@ export function prepareAppIconLayers(
     for (let offset = 0; offset < foreground.length; offset += 4) {
       const alpha = foreground[offset + 3]
       normalized[offset] = flattenPremultipliedChannel(foreground[offset], alpha, background.blue)
-      normalized[offset + 1] = flattenPremultipliedChannel(
-        foreground[offset + 1],
-        alpha,
-        background.green,
-      )
-      normalized[offset + 2] = flattenPremultipliedChannel(
-        foreground[offset + 2],
-        alpha,
-        background.red,
-      )
+      normalized[offset + 1] = flattenPremultipliedChannel(foreground[offset + 1], alpha, background.green)
+      normalized[offset + 2] = flattenPremultipliedChannel(foreground[offset + 2], alpha, background.red)
       normalized[offset + 3] = 255
     }
   }
@@ -364,12 +343,7 @@ function writeText(root: string, relativePath: string, value: string): void {
   writeBuffer(root, relativePath, Buffer.from(value, 'utf8'))
 }
 
-function createBitmapImage(
-  source: NativeImage,
-  size: number,
-  ratio = 1,
-  backgroundColor?: string,
-): NativeImage {
+function createBitmapImage(source: NativeImage, size: number, ratio = 1, backgroundColor?: string): NativeImage {
   const bitmap = Buffer.alloc(size * size * 4)
   if (backgroundColor) {
     const { red, green, blue } = rgbColor(backgroundColor)
@@ -384,9 +358,7 @@ function createBitmapImage(
 
   const rendered = Math.round(size * ratio)
   if (rendered > 0) {
-    const foreground = source
-      .resize({ width: rendered, height: rendered, quality: 'best' })
-      .toBitmap()
+    const foreground = source.resize({ width: rendered, height: rendered, quality: 'best' }).toBitmap()
     const start = Math.floor((size - rendered) / 2)
     for (let y = 0; y < rendered; y += 1) {
       for (let x = 0; x < rendered; x += 1) {
@@ -397,11 +369,7 @@ function createBitmapImage(
           foreground.copy(bitmap, targetOffset, sourceOffset, sourceOffset + 4)
           continue
         }
-        bitmap[targetOffset] = flattenPremultipliedChannel(
-          foreground[sourceOffset],
-          alpha,
-          bitmap[targetOffset],
-        )
+        bitmap[targetOffset] = flattenPremultipliedChannel(foreground[sourceOffset], alpha, bitmap[targetOffset])
         bitmap[targetOffset + 1] = flattenPremultipliedChannel(
           foreground[sourceOffset + 1],
           alpha,
@@ -437,25 +405,20 @@ function rasterize(
 ): Buffer {
   const ratio = options.safeArea ? 66 / 108 : 1
   if (options.opaque || options.safeArea) {
-    const image = createBitmapImage(
-      source,
-      size,
-      ratio,
-      options.opaque ? options.backgroundColor : undefined,
-    )
-    return options.stripAlpha
-      ? encodeOpaqueRgbPng(image.toBitmap(), size)
-      : image.toPNG()
+    const image = createBitmapImage(source, size, ratio, options.opaque ? options.backgroundColor : undefined)
+    return options.stripAlpha ? encodeOpaqueRgbPng(image.toBitmap(), size) : image.toPNG()
   }
   return source.resize({ width: size, height: size, quality: 'best' }).toPNG()
 }
 
-async function loadSource(source: string, workspacePath: string): Promise<NativeImage> {
+async function loadSource(source: string, workspacePath: string, signal?: AbortSignal): Promise<NativeImage> {
   let image: NativeImage
   if (/^data:image\//i.test(source)) {
     image = nativeImage.createFromDataURL(source)
   } else if (/^https?:\/\//i.test(source)) {
-    const response = await fetch(source, { signal: AbortSignal.timeout(90_000) })
+    const response = await fetch(source, {
+      signal: abortSignalWithTimeout(signal, 90_000),
+    })
     if (!response.ok) throw new Error(`下载图标母图失败 HTTP ${response.status}`)
     image = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()))
   } else {
@@ -472,17 +435,10 @@ async function loadSource(source: string, workspacePath: string): Promise<Native
   const { width, height } = image.getSize()
   if (width !== height) throw new Error(`图标母图必须是正方形，当前为 ${width}×${height}`)
   if (width < 1024) throw new Error(`图标母图至少需要 1024×1024，当前为 ${width}×${height}`)
-  return width === 1024
-    ? image
-    : image.resize({ width: 1024, height: 1024, quality: 'best' })
+  return width === 1024 ? image : image.resize({ width: 1024, height: 1024, quality: 'best' })
 }
 
-function writeRasterSpecs(
-  root: string,
-  source: NativeImage,
-  specs: RasterIconSpec[],
-  backgroundColor: string,
-): void {
+function writeRasterSpecs(root: string, source: NativeImage, specs: RasterIconSpec[], backgroundColor: string): void {
   for (const spec of specs) {
     writeBuffer(
       root,
@@ -547,11 +503,7 @@ function writeAndroid(
 
 function writeIos(root: string, source: NativeImage, backgroundColor: string): void {
   writeRasterSpecs(root, source, IOS_ICON_SPECS, backgroundColor)
-  writeText(
-    root,
-    'ios/Assets.xcassets/AppIcon.appiconset/Contents.json',
-    iosContentsJson(),
-  )
+  writeText(root, 'ios/Assets.xcassets/AppIcon.appiconset/Contents.json', iosContentsJson())
   writeText(
     root,
     'ios/README.md',
@@ -575,17 +527,9 @@ function writeMacos(
     )
     return
   }
-  writeBuffer(
-    root,
-    'macos/IconComposer/background.png',
-    createBitmapImage(source, 1024, 0, backgroundColor).toPNG(),
-  )
+  writeBuffer(root, 'macos/IconComposer/background.png', createBitmapImage(source, 1024, 0, backgroundColor).toPNG())
   writeBuffer(root, 'macos/IconComposer/foreground.png', foregroundSource.toPNG())
-  writeBuffer(
-    root,
-    'macos/IconComposer/monochrome.png',
-    createBitmapImage(monochromeSource, 1024, 66 / 108).toPNG(),
-  )
+  writeBuffer(root, 'macos/IconComposer/monochrome.png', createBitmapImage(monochromeSource, 1024, 66 / 108).toPNG())
   writeText(
     root,
     'macos/IconComposer/manifest.json',
@@ -698,8 +642,7 @@ function rasterMetadata(path: string): {
     ...MACOS_ICON_SPECS,
     ...WINDOWS_ICON_SPECS,
   ]
-  const sourceSize =
-    path.startsWith('source/') || path.startsWith('macos/IconComposer/') ? 1024 : undefined
+  const sourceSize = path.startsWith('source/') || path.startsWith('macos/IconComposer/') ? 1024 : undefined
   const spec = allSpecs.find((item) => item.path === path)
   const size = spec?.size ?? sourceSize
   if (!size || !path.endsWith('.png')) return {}
@@ -712,6 +655,7 @@ function rasterMetadata(path: string): {
 
 export async function generateAppIconBundle(
   options: AppIconBundleOptions,
+  signal?: AbortSignal,
 ): Promise<AppIconBundleResult> {
   const requestedBackgroundColor = options.backgroundColor?.trim() ?? ''
   if (requestedBackgroundColor && !HEX_COLOR.test(requestedBackgroundColor)) {
@@ -724,12 +668,8 @@ export async function generateAppIconBundle(
 
   const outputRoot = resolve(options.workspacePath, options.outputPath)
   assertOwnedOutputRoot(options.workspacePath, outputRoot)
-  const inputSource = await loadSource(options.source.trim(), options.workspacePath)
-  const prepared = prepareAppIconLayers(
-    inputSource.toBitmap(),
-    1024,
-    requestedBackgroundColor || undefined,
-  )
+  const inputSource = await loadSource(options.source.trim(), options.workspacePath, signal)
+  const prepared = prepareAppIconLayers(inputSource.toBitmap(), 1024, requestedBackgroundColor || undefined)
   const backgroundColor = prepared.backgroundColor
   const source = nativeImage.createFromBitmap(prepared.normalizedBitmap, {
     width: 1024,
@@ -755,13 +695,10 @@ export async function generateAppIconBundle(
   const archivePath = `${outputRoot}.zip`
   let staged = true
   try {
+    signal?.throwIfAborted()
     mkdirSync(stagingRoot, { recursive: true })
     writeBuffer(stagingRoot, 'source/master.png', source.toPNG())
-    writeBuffer(
-      stagingRoot,
-      'source/background.png',
-      createBitmapImage(source, 1024, 0, backgroundColor).toPNG(),
-    )
+    writeBuffer(stagingRoot, 'source/background.png', createBitmapImage(source, 1024, 0, backgroundColor).toPNG())
     if (foregroundSource && monochromeSource) {
       writeBuffer(stagingRoot, 'source/foreground.png', foregroundSource.toPNG())
       writeBuffer(stagingRoot, 'source/monochrome.png', monochromeSource.toPNG())
@@ -808,6 +745,7 @@ export async function generateAppIconBundle(
       })),
     )
 
+    signal?.throwIfAborted()
     if (existsSync(outputRoot)) rmSync(outputRoot, { recursive: true, force: true })
     renameSync(stagingRoot, outputRoot)
     staged = false

@@ -1,11 +1,8 @@
 import { getCloudConnection } from './cloud-connection'
 import { writeFileSync } from 'fs'
+import { abortSignalWithTimeout } from './abort-signal'
 
-export async function cloudMediaFetch(
-  path: string,
-  init: RequestInit = {},
-  timeoutMs = 30_000,
-): Promise<Response> {
+export async function cloudMediaFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
   const cloud = getCloudConnection()
   if (!cloud.available) throw new Error(cloud.error ?? '云端服务未配置')
   const headers = new Headers(init.headers)
@@ -18,7 +15,7 @@ export async function cloudMediaFetch(
   })
 }
 
-export async function uploadCloudImageReference(dataUrl: string): Promise<string> {
+export async function uploadCloudImageReference(dataUrl: string, signal?: AbortSignal): Promise<string> {
   const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl)
   if (!match) throw new Error('图片 data URL 无法解析')
   const response = await cloudMediaFetch(
@@ -27,6 +24,7 @@ export async function uploadCloudImageReference(dataUrl: string): Promise<string
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image_base64: match[2], content_type: match[1] }),
+      signal: abortSignalWithTimeout(signal, 60_000),
     },
     60_000,
   )
@@ -68,8 +66,10 @@ export async function readCloudSseResult(
   throw new Error('云端媒体任务结束但没有返回结果')
 }
 
-export async function downloadCloudMedia(url: string, destination: string): Promise<void> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(180_000) })
+export async function downloadCloudMedia(url: string, destination: string, signal?: AbortSignal): Promise<void> {
+  const response = await fetch(url, {
+    signal: abortSignalWithTimeout(signal, 180_000),
+  })
   if (!response.ok) throw new Error(`媒体下载失败 HTTP ${response.status}`)
   const contentLength = Number(response.headers.get('content-length') ?? 0)
   if (contentLength > 512 * 1024 * 1024) throw new Error('媒体文件超过 512MB')

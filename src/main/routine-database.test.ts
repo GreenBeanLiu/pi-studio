@@ -35,7 +35,13 @@ function fixture(): { routines: Routine[]; runs: RoutineRun[] } {
         triggerSource: 'manual',
         summary: 'done',
         steps: [
-          { id: 'legacy-step', name: 'Write', status: 'ok', summary: 'done', durationMs: 100 },
+          {
+            id: 'legacy-step',
+            name: 'Write',
+            status: 'ok',
+            summary: 'done',
+            durationMs: 100,
+          },
         ],
       },
     ],
@@ -45,7 +51,11 @@ function fixture(): { routines: Routine[]; runs: RoutineRun[] } {
 function createPaths(): { dir: string; database: string; legacy: string } {
   const dir = mkdtempSync(join(tmpdir(), 'pi-studio-routines-db-'))
   dirs.push(dir)
-  return { dir, database: join(dir, 'routines.sqlite3'), legacy: join(dir, 'routines.json') }
+  return {
+    dir,
+    database: join(dir, 'routines.sqlite3'),
+    legacy: join(dir, 'routines.json'),
+  }
 }
 
 describe('RoutineDatabase', () => {
@@ -63,7 +73,10 @@ describe('RoutineDatabase', () => {
   it('upgrades a legacy prompt-only workflow to a single step', () => {
     const paths = createPaths()
     const legacy = fixture()
-    const promptOnly = { ...legacy.routines[0], prompt: 'legacy prompt' } as Record<string, unknown>
+    const promptOnly = {
+      ...legacy.routines[0],
+      prompt: 'legacy prompt',
+    } as Record<string, unknown>
     delete promptOnly.steps
     writeFileSync(paths.legacy, JSON.stringify({ routines: [promptOnly], runs: [] }), 'utf8')
 
@@ -130,7 +143,11 @@ describe('RoutineDatabase', () => {
 
     const intents = database.claimWorkflowDeletes('https://trail-api.example', 'installation-1')
     expect(intents).toMatchObject([
-      { origin: 'https://trail-api.example', installationId: 'installation-1', workflowId: 'workflow-legacy' },
+      {
+        origin: 'https://trail-api.example',
+        installationId: 'installation-1',
+        workflowId: 'workflow-legacy',
+      },
     ])
     database.ackWorkflowDelete(intents[0].id)
     expect(database.claimWorkflowDeletes('https://trail-api.example', 'installation-1')).toEqual([])
@@ -153,6 +170,190 @@ describe('RoutineDatabase', () => {
     expect(database.claimWorkflowDeletes('https://trail-api.example', 'installation-1')).toMatchObject([
       { workflowId: 'workflow-deleted', installationId: 'installation-1' },
     ])
+    database.close()
+  })
+
+  it('journals workflow progress immediately and marks open runs interrupted on restart', () => {
+    const paths = createPaths()
+    const database = new RoutineDatabase(paths.database, paths.legacy)
+    database.appendWorkflowRunEvent({
+      runId: 'run-open',
+      workflowId: 'workflow-1',
+      type: 'run.started',
+      stepId: null,
+      payload: { triggerSource: 'manual' },
+      createdAt: 100,
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'run-open',
+      workflowId: 'workflow-1',
+      type: 'step.started',
+      stepId: 'step-1',
+      payload: { type: 'agent' },
+      createdAt: 110,
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'run-complete',
+      workflowId: 'workflow-1',
+      type: 'run.started',
+      stepId: null,
+      payload: {},
+      createdAt: 120,
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'run-complete',
+      workflowId: 'workflow-1',
+      type: 'run.completed',
+      stepId: null,
+      payload: {},
+      createdAt: 130,
+    })
+
+    expect(database.interruptOpenWorkflowRuns(200)).toMatchObject([
+      { runId: 'run-open', type: 'run.interrupted', createdAt: 200 },
+    ])
+    expect(database.loadWorkflowRunEvents('run-open').map((event) => event.type)).toEqual([
+      'run.started',
+      'step.started',
+      'step.failed',
+      'run.interrupted',
+    ])
+    database.save(fixture())
+    expect(database.loadWorkflowRunEvents('run-open')).toHaveLength(4)
+    expect(database.recoverMissingWorkflowRuns([]).find((run) => run.id === 'run-open')).toMatchObject({
+      id: 'run-open',
+      status: 'interrupted',
+      steps: [{ id: 'step-1', status: 'error' }],
+    })
+    expect(database.interruptOpenWorkflowRuns(300)).toEqual([])
+    database.close()
+  })
+
+  it('rebuilds a missing terminal run projection from the journal', () => {
+    const paths = createPaths()
+    const database = new RoutineDatabase(paths.database, paths.legacy)
+    database.appendWorkflowRunEvent({
+      runId: 'journal-only',
+      workflowId: 'workflow-1',
+      type: 'run.started',
+      stepId: null,
+      payload: { routineName: 'Recovered', triggerSource: 'manual' },
+      createdAt: 100,
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'journal-only',
+      workflowId: 'workflow-1',
+      type: 'step.started',
+      stepId: 'step-1',
+      payload: { position: 0, name: 'Write', type: 'agent' },
+      createdAt: 110,
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'journal-only',
+      workflowId: 'workflow-1',
+      type: 'step.completed',
+      stepId: 'step-1',
+      payload: { position: 0, durationMs: 20, outputSummary: 'done' },
+      createdAt: 130,
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'journal-only',
+      workflowId: 'workflow-1',
+      type: 'run.completed',
+      stepId: null,
+      payload: { summary: 'done' },
+      createdAt: 140,
+    })
+
+    expect(database.recoverMissingWorkflowRuns([])).toEqual([
+      expect.objectContaining({
+        id: 'journal-only',
+        routineName: 'Recovered',
+        status: 'ok',
+        summary: 'done',
+        steps: [
+          expect.objectContaining({
+            id: 'step-1',
+            status: 'ok',
+            summary: 'done',
+          }),
+        ],
+      }),
+    ])
+    expect(database.recoverMissingWorkflowRuns([{ ...fixture().runs[0], id: 'journal-only' }])).toEqual([])
+    database.close()
+  })
+
+  it('prunes old terminal journals while preserving recent and open runs', () => {
+    const paths = createPaths()
+    const database = new RoutineDatabase(paths.database, paths.legacy)
+    for (const [index, runId] of ['old', 'recent', 'newest'].entries()) {
+      database.appendWorkflowRunEvent({
+        runId,
+        workflowId: 'workflow-1',
+        type: 'run.started',
+        stepId: null,
+        payload: {},
+        createdAt: index * 10,
+      })
+      database.appendWorkflowRunEvent({
+        runId,
+        workflowId: 'workflow-1',
+        type: 'run.completed',
+        stepId: null,
+        payload: {},
+        createdAt: index * 10 + 1,
+      })
+    }
+    database.appendWorkflowRunEvent({
+      runId: 'open',
+      workflowId: 'workflow-1',
+      type: 'run.started',
+      stepId: null,
+      payload: {},
+    })
+
+    database.pruneWorkflowRunEvents(2)
+
+    expect(database.loadWorkflowRunEvents('old')).toEqual([])
+    expect(database.loadWorkflowRunEvents('recent')).toHaveLength(2)
+    expect(database.loadWorkflowRunEvents('newest')).toHaveLength(2)
+    expect(database.loadWorkflowRunEvents('open')).toHaveLength(1)
+    database.close()
+  })
+
+  it('force-closes an open step and run when cancellation grace expires', () => {
+    const paths = createPaths()
+    const database = new RoutineDatabase(paths.database, paths.legacy)
+    database.appendWorkflowRunEvent({
+      runId: 'forced-run',
+      workflowId: 'workflow-1',
+      type: 'run.started',
+      stepId: null,
+      payload: { routineName: 'Forced' },
+    })
+    database.appendWorkflowRunEvent({
+      runId: 'forced-run',
+      workflowId: 'workflow-1',
+      type: 'step.started',
+      stepId: 'step-1',
+      payload: { position: 0, name: 'Hung node' },
+    })
+
+    expect(database.cancelOpenWorkflowRun('forced-run', 'workflow-1')).toMatchObject({
+      type: 'run.cancelled',
+    })
+    expect(database.loadWorkflowRunEvents('forced-run').map((event) => event.type)).toEqual([
+      'run.started',
+      'step.started',
+      'step.failed',
+      'run.cancelled',
+    ])
+    expect(database.recoverMissingWorkflowRuns([])[0]).toMatchObject({
+      status: 'cancelled',
+      steps: [{ status: 'cancelled' }],
+    })
+    expect(database.cancelOpenWorkflowRun('forced-run', 'workflow-1')).toBeNull()
     database.close()
   })
 })

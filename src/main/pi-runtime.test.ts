@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
+import {
+  PiRunTimeoutError,
+  runPromptToSettled,
+  startPiRuntime,
+  startPiRuntimeCancellable,
+} from './pi-runtime'
 import type { CompiledRunProfile } from './run-profile'
 
 describe('runPromptToSettled', () => {
@@ -177,6 +182,237 @@ describe('startPiRuntime', () => {
     await client.cancel('test cancellation')
     await client.dispose()
     expect(lifecycle).toEqual(['send:hello', 'idle:1234', 'cancel', 'dispose'])
+  })
+
+  it('registers startup ownership before start settles and cleans up on abort', async () => {
+    let resolveStart!: () => void
+    const startPending = new Promise<void>((resolve) => {
+      resolveStart = resolve
+    })
+    const stops: string[] = []
+    class StartingRpcClient {
+      start() { return startPending }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { stops.push('stopped'); return Promise.resolve() }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const controller = new AbortController()
+    let ownedCleanup: (() => Promise<void>) | undefined
+    const startup = startPiRuntimeCancellable(profile, controller.signal, {
+      dependencies: {
+        loadClient: async () => StartingRpcClient,
+        runtimePath: () => 'C:\\electron.exe',
+        nodeEnv: (env) => env,
+        engineVersion: () => '0.80.7-test',
+        runtimeId: () => 'runtime-1',
+      },
+      onOwned: (cleanup) => { ownedCleanup = cleanup },
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(ownedCleanup).toEqual(expect.any(Function))
+    controller.abort(new Error('cancelled during startup'))
+    await ownedCleanup?.()
+    resolveStart()
+
+    await expect(startup).rejects.toThrow('cancelled during startup')
+    expect(stops.length).toBeGreaterThan(0)
+  })
+
+  it('waits for process exit before force disposal resolves', async () => {
+    let exit: (() => void) | undefined
+    let forceDisposed = false
+    class ProcessRpcClient {
+      process = {
+        on: (event: 'exit' | 'error', listener: () => void) => {
+          if (event === 'exit') exit = listener
+        },
+        kill: () => true,
+      }
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { return Promise.resolve() }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const handle = await startPiRuntime(profile, {
+      loadClient: async () => ProcessRpcClient,
+      runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test', runtimeId: () => 'runtime-1',
+    })
+
+    const disposal = handle.forceDispose().then(() => { forceDisposed = true })
+    await Promise.resolve()
+    expect(forceDisposed).toBe(false)
+    exit?.()
+    await disposal
+    expect(forceDisposed).toBe(true)
+  })
+
+  it('observes a synchronous process exit emitted by kill', async () => {
+    let exit: (() => void) | undefined
+    class SynchronousExitRpcClient {
+      process = {
+        on: (event: 'exit' | 'error', listener: () => void) => {
+          if (event === 'exit') exit = listener
+        },
+        kill: () => { exit?.(); return true },
+      }
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { return Promise.resolve() }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const handle = await startPiRuntime(profile, {
+      loadClient: async () => SynchronousExitRpcClient,
+      runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test', runtimeId: () => 'runtime-1',
+    })
+
+    await expect(handle.forceDispose()).resolves.toBeUndefined()
+  })
+
+  it('keeps normal stop available when forced disposal fails', async () => {
+    let stopAttempts = 0
+    class RetryableRpcClient {
+      process = { on: () => {}, kill: () => false }
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() {
+        stopAttempts += 1
+        return stopAttempts === 1 ? Promise.reject(new Error('stop failed')) : Promise.resolve()
+      }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const handle = await startPiRuntime(profile, {
+      loadClient: async () => RetryableRpcClient,
+      runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test', runtimeId: () => 'runtime-1',
+    })
+
+    await expect(handle.forceDispose()).rejects.toThrow('stop failed')
+    await expect(handle.dispose()).resolves.toBeUndefined()
+    expect(stopAttempts).toBe(2)
+  })
+
+  it('does not treat a process error as confirmed exit', async () => {
+    let processError: ((error: Error) => void) | undefined
+    let stops = 0
+    class ProcessErrorRpcClient {
+      process = {
+        on: (event: 'exit' | 'error', listener: (value: Error) => void) => {
+          if (event === 'error') processError = listener
+        },
+        kill: () => true,
+      }
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { stops += 1; return Promise.resolve() }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const handle = await startPiRuntime(profile, {
+      loadClient: async () => ProcessErrorRpcClient,
+      runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test', runtimeId: () => 'runtime-1',
+    })
+
+    const disposal = handle.forceDispose()
+    processError?.(new Error('spawn error'))
+    await expect(disposal).rejects.toThrow('spawn error')
+    await handle.dispose()
+    expect(stops).toBe(1)
+  })
+
+  it('bounds the graceful-stop fallback used by forced cleanup', async () => {
+    vi.useFakeTimers()
+    class HungStopRpcClient {
+      start() { return Promise.resolve() }
+      setThinkingLevel() { return Promise.resolve() }
+      stop() { return new Promise<void>(() => {}) }
+      prompt() { return Promise.resolve() }
+      waitForIdle() { return Promise.resolve() }
+      abort() { return Promise.resolve() }
+      onEvent() { return () => {} }
+      getState() { return Promise.resolve({ sessionId: 'session-1', isStreaming: false, thinkingLevel: 'high' }) }
+      getMessages() { return Promise.resolve([]) }
+      getCommands() { return Promise.resolve([]) }
+    }
+    const profile = {
+      kind: 'routine', cwd: 'D:\\repo', provider: 'openai', env: {}, cliPath: 'C:\\pi\\cli.js', args: [],
+      thinkingLevel: 'high', sandboxMode: null,
+      security: { requested: 'full-access', filesystemMode: 'danger-full-access', networkMode: 'unrestricted', backend: 'host', enforcement: 'none', hostCodeExecution: false, reason: 'test' },
+      profileDigest: 'digest',
+    } satisfies CompiledRunProfile
+    const handle = await startPiRuntime(profile, {
+      loadClient: async () => HungStopRpcClient,
+      runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
+      engineVersion: () => '0.80.7-test', runtimeId: () => 'runtime-1',
+    })
+
+    const disposal = handle.forceDispose()
+    const rejection = expect(disposal).rejects.toThrow('stop did not complete')
+    await vi.advanceTimersByTimeAsync(2_000)
+    await rejection
+    vi.useRealTimers()
   })
 
   it('fails startup when the adapter cannot satisfy the core run handle contract', async () => {

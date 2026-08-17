@@ -38,8 +38,7 @@ const api = {
 
   diagnostics: {
     getLogs: () => ipcRenderer.invoke('diagnostics:getLogs'),
-    save: (payload: { defaultPath: string; content: string }) =>
-      ipcRenderer.invoke('diagnostics:save', payload),
+    save: (payload: { defaultPath: string; content: string }) => ipcRenderer.invoke('diagnostics:save', payload),
   },
 
   settings: {
@@ -57,8 +56,7 @@ const api = {
 
   llmProfiles: {
     list: () => ipcRenderer.invoke('llmProfiles:list'),
-    save: (payload: LlmProfileSavePayload) =>
-      ipcRenderer.invoke('llmProfiles:save', payload),
+    save: (payload: LlmProfileSavePayload) => ipcRenderer.invoke('llmProfiles:save', payload),
     delete: (id: string) => ipcRenderer.invoke('llmProfiles:delete', id),
     refreshModels: (id: string) => ipcRenderer.invoke('llmProfiles:refreshModels', id),
   },
@@ -108,8 +106,7 @@ const api = {
     switch: (sessionPath: string) => ipcRenderer.invoke('sessions:switch', sessionPath),
     rename: (name: string) => ipcRenderer.invoke('sessions:rename', name),
     delete: (sessionPath: string) => ipcRenderer.invoke('sessions:delete', sessionPath),
-    exportCurrent: (format: 'markdown' | 'json') =>
-      ipcRenderer.invoke('sessions:exportCurrent', format),
+    exportCurrent: (format: 'markdown' | 'json') => ipcRenderer.invoke('sessions:exportCurrent', format),
   },
 
   git: {
@@ -120,11 +117,9 @@ const api = {
   },
 
   pi: {
-    prompt: (message: string, images?: unknown[]) =>
-      ipcRenderer.invoke('pi:prompt', message, images),
+    prompt: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:prompt', message, images),
     steer: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:steer', message, images),
-    followUp: (message: string, images?: unknown[]) =>
-      ipcRenderer.invoke('pi:followUp', message, images),
+    followUp: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:followUp', message, images),
     abort: () => ipcRenderer.invoke('pi:abort'),
     bash: (command: string) => ipcRenderer.invoke('pi:bash', command),
     extensionUiResponse: (response: {
@@ -139,8 +134,7 @@ const api = {
     getMessages: () => ipcRenderer.invoke('pi:getMessages'),
     getAvailableModels: () => ipcRenderer.invoke('pi:getAvailableModels'),
     getCommands: () => ipcRenderer.invoke('pi:getCommands'),
-    setModel: (provider: string, modelId: string) =>
-      ipcRenderer.invoke('pi:setModel', provider, modelId),
+    setModel: (provider: string, modelId: string) => ipcRenderer.invoke('pi:setModel', provider, modelId),
     setThinkingLevel: (level: string) => ipcRenderer.invoke('pi:setThinkingLevel', level),
     setSteeringMode: (mode: string) => ipcRenderer.invoke('pi:setSteeringMode', mode),
     setFollowUpMode: (mode: string) => ipcRenderer.invoke('pi:setFollowUpMode', mode),
@@ -184,6 +178,7 @@ const api = {
     delete: (id: string) => ipcRenderer.invoke('routines:delete', id),
     toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('routines:toggle', id, enabled),
     runNow: (id: string) => ipcRenderer.invoke('routines:runNow', id),
+    cancel: (id: string) => ipcRenderer.invoke('routines:cancel', id),
     state: () => ipcRenderer.invoke('routines:state'),
     onRunFinished: (cb: (run: RoutineRun) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: RoutineRun) => cb(data)
@@ -202,11 +197,9 @@ const api = {
       ipcRenderer.on('routines:reviewRequested', handler)
       return () => ipcRenderer.off('routines:reviewRequested', handler)
     },
-    onReviewCancelled: (cb: (payload: { reviewId: string; reason: string }) => void) => {
-      const handler = (
-        _e: Electron.IpcRendererEvent,
-        data: { reviewId: string; reason: string },
-      ) => cb(data)
+    onReviewCancelled: (cb: (payload: { reviewId: string; routineId: string; reason: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: { reviewId: string; routineId: string; reason: string }) =>
+        cb(data)
       ipcRenderer.on('routines:reviewCancelled', handler)
       return () => ipcRenderer.off('routines:reviewCancelled', handler)
     },
@@ -227,7 +220,24 @@ const api = {
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
-      aspectRatio?: '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9' | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
+      aspectRatio?:
+        | '1:1'
+        | '2:3'
+        | '3:2'
+        | '3:4'
+        | '4:3'
+        | '4:5'
+        | '5:4'
+        | '9:16'
+        | '16:9'
+        | '21:9'
+        | '2:1'
+        | '1:2'
+        | '19.5:9'
+        | '9:19.5'
+        | '20:9'
+        | '9:20'
+        | 'auto'
       imageSize?: '1K' | '2K' | '4K'
       n?: number
       quality?: 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
@@ -236,14 +246,14 @@ const api = {
       outputCompression?: number
       moderation?: 'auto' | 'low'
       responseFormat?: 'b64_json' | 'url'
-      model?: | 'gpt-image-2'
-      | 'gemini-3.1-flash-image-preview'
-      | 'gemini-3-pro-image-preview'
-      | 'grok-imagine-image'
-      | 'grok-imagine-image-quality'
+      model?:
+        | 'gpt-image-2'
+        | 'gemini-3.1-flash-image-preview'
+        | 'gemini-3-pro-image-preview'
+        | 'grok-imagine-image'
+        | 'grok-imagine-image-quality'
       user?: string
-    }) =>
-      ipcRenderer.invoke('imageGen:generate', payload),
+    }) => ipcRenderer.invoke('imageGen:generate', payload),
     history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),
     historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
     historyDeleteBatch: (batchId: string) => ipcRenderer.invoke('imageGen:historyDeleteBatch', batchId),
@@ -269,26 +279,17 @@ const api = {
     setupBlender: () => ipcRenderer.invoke('model3d:setupBlender'),
     history: () => ipcRenderer.invoke('model3d:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
-    saveThumbnail: (payload: { id: string; dataUrl: string }) =>
-      ipcRenderer.invoke('model3d:saveThumbnail', payload),
+    saveThumbnail: (payload: { id: string; dataUrl: string }) => ipcRenderer.invoke('model3d:saveThumbnail', payload),
     reviewRound: (payload: { id: string; dataUrl: string; prompt: string }) =>
       ipcRenderer.invoke('model3d:reviewRound', payload),
     onProgress: (
-      cb: (data: {
-        id: string
-        status: string
-        progress: number
-        prompt?: string
-        mode?: 'text' | 'image'
-      }) => void,
+      cb: (data: { id: string; status: string; progress: number; prompt?: string; mode?: 'text' | 'image' }) => void,
     ) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
       ipcRenderer.on('model3d:progress', handler)
       return () => ipcRenderer.off('model3d:progress', handler)
     },
-    onScored: (
-      cb: (data: { id: string; fidelity: { score: number; notes: string; model: string } }) => void,
-    ) => {
+    onScored: (cb: (data: { id: string; fidelity: { score: number; notes: string; model: string } }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
       ipcRenderer.on('model3d:scored', handler)
       return () => ipcRenderer.off('model3d:scored', handler)
@@ -313,9 +314,7 @@ const api = {
     }) => ipcRenderer.invoke('dressup:workflow', payload),
     history: () => ipcRenderer.invoke('dressup:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('dressup:historyDelete', id),
-    onProgress: (
-      cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void,
-    ) => {
+    onProgress: (cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
       ipcRenderer.on('dressup:progress', handler)
       return () => ipcRenderer.off('dressup:progress', handler)
@@ -333,9 +332,7 @@ const api = {
     }) => ipcRenderer.invoke('videoGen:generate', payload),
     history: () => ipcRenderer.invoke('videoGen:history'),
     historyDelete: (id: string) => ipcRenderer.invoke('videoGen:historyDelete', id),
-    onProgress: (
-      cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void,
-    ) => {
+    onProgress: (cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
       ipcRenderer.on('videoGen:progress', handler)
       return () => ipcRenderer.off('videoGen:progress', handler)

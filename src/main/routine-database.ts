@@ -8,7 +8,10 @@ type SqlValue = string | number | bigint | null | Uint8Array
 type SqlRow = Record<string, SqlValue>
 
 type StatementSync = {
-  run: (...params: SqlValue[]) => { changes: number | bigint; lastInsertRowid: number | bigint }
+  run: (...params: SqlValue[]) => {
+    changes: number | bigint
+    lastInsertRowid: number | bigint
+  }
   get: (...params: SqlValue[]) => SqlRow | undefined
   all: (...params: SqlValue[]) => SqlRow[]
 }
@@ -20,6 +23,41 @@ type DatabaseSyncInstance = {
 }
 
 export type RoutineStoreData = { routines: Routine[]; runs: RoutineRun[] }
+
+export type WorkflowRunEventType =
+  | 'run.started'
+  | 'run.running'
+  | 'run.waiting'
+  | 'run.completed'
+  | 'run.failed'
+  | 'run.timed_out'
+  | 'run.cancelled'
+  | 'run.interrupted'
+  | 'step.started'
+  | 'step.completed'
+  | 'step.failed'
+
+export type WorkflowRunEvent = {
+  seq: number
+  runId: string
+  workflowId: string
+  type: WorkflowRunEventType
+  stepId: string | null
+  payload: Record<string, unknown>
+  createdAt: number
+}
+
+export type NewWorkflowRunEvent = Omit<WorkflowRunEvent, 'seq' | 'createdAt'> & {
+  createdAt?: number
+}
+
+const TERMINAL_WORKFLOW_EVENT_TYPES = new Set<WorkflowRunEventType>([
+  'run.completed',
+  'run.failed',
+  'run.timed_out',
+  'run.cancelled',
+  'run.interrupted',
+])
 
 export class RoutineSqliteUnavailableError extends Error {}
 
@@ -53,8 +91,7 @@ function optionalPlatforms(value: SqlValue): RoutineStep['platforms'] {
     if (!Array.isArray(parsed)) return undefined
     const allowed = new Set(['android', 'ios', 'macos', 'windows'])
     return parsed.filter(
-      (item): item is NonNullable<RoutineStep['platforms']>[number] =>
-        typeof item === 'string' && allowed.has(item),
+      (item): item is NonNullable<RoutineStep['platforms']>[number] => typeof item === 'string' && allowed.has(item),
     )
   } catch {
     return undefined
@@ -127,13 +164,9 @@ export class RoutineDatabase {
 
   load(): RoutineStoreData {
     const workflowRows = this.db.prepare('SELECT * FROM workflows ORDER BY created_at, id').all()
-    const stepRows = this.db
-      .prepare('SELECT * FROM workflow_steps ORDER BY workflow_id, position')
-      .all()
+    const stepRows = this.db.prepare('SELECT * FROM workflow_steps ORDER BY workflow_id, position').all()
     const runRows = this.db.prepare('SELECT * FROM workflow_runs ORDER BY started_at DESC, id').all()
-    const stepRunRows = this.db
-      .prepare('SELECT * FROM workflow_step_runs ORDER BY workflow_run_id, position')
-      .all()
+    const stepRunRows = this.db.prepare('SELECT * FROM workflow_step_runs ORDER BY workflow_run_id, position').all()
 
     const stepsByWorkflow = new Map<string, RoutineStep[]>()
     for (const row of stepRows) {
@@ -146,16 +179,16 @@ export class RoutineDatabase {
         ...(optionalString(row.engine) !== undefined
           ? { engine: optionalString(row.engine) as RoutineStep['engine'] }
           : {}),
-        ...(optionalString(row.channel_id) !== undefined
-          ? { channelId: optionalString(row.channel_id) }
-          : {}),
+        ...(optionalString(row.channel_id) !== undefined ? { channelId: optionalString(row.channel_id) } : {}),
         ...(optionalString(row.message) !== undefined ? { message: optionalString(row.message) } : {}),
         ...(optionalString(row.path) !== undefined ? { path: optionalString(row.path) } : {}),
         ...(optionalString(row.format) !== undefined
           ? { format: optionalString(row.format) as RoutineStep['format'] }
           : {}),
         ...(optionalString(row.provider) !== undefined
-          ? { provider: optionalString(row.provider) as RoutineStep['provider'] }
+          ? {
+              provider: optionalString(row.provider) as RoutineStep['provider'],
+            }
           : {}),
         ...(optionalString(row.image_ref) !== undefined ? { imageRef: optionalString(row.image_ref) } : {}),
         ...(optionalString(row.app_name) !== undefined ? { appName: optionalString(row.app_name) } : {}),
@@ -188,9 +221,7 @@ export class RoutineDatabase {
         ...(pushEachStep !== undefined ? { pushEachStep: pushEachStep === 1 } : {}),
         createdAt: requiredNumber(row.created_at),
         ...(optionalNumber(row.last_run_at) !== undefined ? { lastRunAt: optionalNumber(row.last_run_at) } : {}),
-        ...(optionalString(row.last_slot_key) !== undefined
-          ? { lastSlotKey: optionalString(row.last_slot_key) }
-          : {}),
+        ...(optionalString(row.last_slot_key) !== undefined ? { lastSlotKey: optionalString(row.last_slot_key) } : {}),
       }
     })
 
@@ -203,9 +234,7 @@ export class RoutineDatabase {
         status: requiredString(row.status) as RoutineStepResult['status'],
         summary: requiredString(row.summary),
         ...(optionalString(row.image_url) !== undefined ? { imageUrl: optionalString(row.image_url) } : {}),
-        ...(optionalString(row.artifact_path) !== undefined
-          ? { artifactPath: optionalString(row.artifact_path) }
-          : {}),
+        ...(optionalString(row.artifact_path) !== undefined ? { artifactPath: optionalString(row.artifact_path) } : {}),
         durationMs: requiredNumber(row.duration_ms),
       }
       const steps = stepRunsByRun.get(runId) ?? []
@@ -224,7 +253,9 @@ export class RoutineDatabase {
         endedAt: requiredNumber(row.ended_at),
         status: requiredString(row.status) as RoutineRun['status'],
         ...(optionalString(row.trigger_source) !== undefined
-          ? { triggerSource: optionalString(row.trigger_source) as RoutineRun['triggerSource'] }
+          ? {
+              triggerSource: optionalString(row.trigger_source) as RoutineRun['triggerSource'],
+            }
           : {}),
         summary: requiredString(row.summary),
         ...(steps ? { steps } : {}),
@@ -313,6 +344,277 @@ export class RoutineDatabase {
     return optionalString(this.db.prepare('SELECT value FROM sync_state WHERE key = ?').get(key)?.value ?? null)
   }
 
+  appendWorkflowRunEvent(event: NewWorkflowRunEvent): WorkflowRunEvent {
+    const createdAt = event.createdAt ?? Date.now()
+    const result = this.db
+      .prepare(
+        `INSERT INTO workflow_run_events (
+           workflow_run_id, workflow_id, type, step_id, payload_json, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(event.runId, event.workflowId, event.type, event.stepId, JSON.stringify(event.payload), createdAt)
+    return { ...event, seq: Number(result.lastInsertRowid), createdAt }
+  }
+
+  loadWorkflowRunEvents(runId?: string): WorkflowRunEvent[] {
+    const rows = runId
+      ? this.db.prepare('SELECT * FROM workflow_run_events WHERE workflow_run_id = ? ORDER BY seq').all(runId)
+      : this.db.prepare('SELECT * FROM workflow_run_events ORDER BY seq').all()
+    return rows.map((row) => ({
+      seq: requiredNumber(row.seq),
+      runId: requiredString(row.workflow_run_id),
+      workflowId: requiredString(row.workflow_id),
+      type: requiredString(row.type) as WorkflowRunEventType,
+      stepId: optionalString(row.step_id) ?? null,
+      payload: JSON.parse(requiredString(row.payload_json)) as Record<string, unknown>,
+      createdAt: requiredNumber(row.created_at),
+    }))
+  }
+
+  interruptOpenWorkflowRuns(now = Date.now()): WorkflowRunEvent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT started.workflow_run_id, started.workflow_id
+         FROM workflow_run_events AS started
+         WHERE started.type = 'run.started'
+           AND NOT EXISTS (
+             SELECT 1 FROM workflow_run_events AS terminal
+             WHERE terminal.workflow_run_id = started.workflow_run_id
+               AND terminal.type IN (
+                 'run.completed', 'run.failed', 'run.timed_out', 'run.cancelled', 'run.interrupted'
+               )
+           )`,
+      )
+      .all()
+    return rows.map((row) => {
+      const runId = requiredString(row.workflow_run_id)
+      const workflowId = requiredString(row.workflow_id)
+      const openSteps = this.db
+        .prepare(
+          `SELECT started.step_id, started.payload_json
+           FROM workflow_run_events AS started
+           WHERE started.workflow_run_id = ? AND started.type = 'step.started'
+             AND NOT EXISTS (
+               SELECT 1 FROM workflow_run_events AS terminal
+               WHERE terminal.workflow_run_id = started.workflow_run_id
+                 AND terminal.step_id = started.step_id
+                 AND terminal.type IN ('step.completed', 'step.failed')
+             )`,
+        )
+        .all(runId)
+      for (const step of openSteps) {
+        const startedPayload = JSON.parse(requiredString(step.payload_json)) as Record<string, unknown>
+        this.appendWorkflowRunEvent({
+          runId,
+          workflowId,
+          type: 'step.failed',
+          stepId: requiredString(step.step_id),
+          payload: {
+            position: typeof startedPayload.position === 'number' ? startedPayload.position : 0,
+            status: 'error',
+            durationMs: 0,
+            error: '应用退出前步骤未完成，已在重启时标记为中断。',
+            interrupted: true,
+          },
+          createdAt: now,
+        })
+      }
+      return this.appendWorkflowRunEvent({
+        runId: requiredString(row.workflow_run_id),
+        workflowId: requiredString(row.workflow_id),
+        type: 'run.interrupted',
+        stepId: null,
+        payload: {
+          reason: 'application restarted before the workflow reached a terminal state',
+        },
+        createdAt: now,
+      })
+    })
+  }
+
+  cancelOpenWorkflowRun(runId: string, workflowId: string, now = Date.now()): WorkflowRunEvent | null {
+    const open = this.db
+      .prepare(
+        `SELECT 1 AS open FROM workflow_run_events
+         WHERE workflow_run_id = ? AND type = 'run.started'
+           AND NOT EXISTS (
+             SELECT 1 FROM workflow_run_events AS terminal
+             WHERE terminal.workflow_run_id = ?
+               AND terminal.type IN (
+                 'run.completed', 'run.failed', 'run.timed_out', 'run.cancelled', 'run.interrupted'
+               )
+           )
+         LIMIT 1`,
+      )
+      .get(runId, runId)
+    if (!open) return null
+    const openSteps = this.db
+      .prepare(
+        `SELECT started.step_id, started.payload_json
+         FROM workflow_run_events AS started
+         WHERE started.workflow_run_id = ? AND started.type = 'step.started'
+           AND NOT EXISTS (
+             SELECT 1 FROM workflow_run_events AS terminal
+             WHERE terminal.workflow_run_id = started.workflow_run_id
+               AND terminal.step_id = started.step_id
+               AND terminal.type IN ('step.completed', 'step.failed')
+           )`,
+      )
+      .all(runId)
+    for (const step of openSteps) {
+      const startedPayload = JSON.parse(requiredString(step.payload_json)) as Record<string, unknown>
+      this.appendWorkflowRunEvent({
+        runId,
+        workflowId,
+        type: 'step.failed',
+        stepId: requiredString(step.step_id),
+        payload: {
+          position: typeof startedPayload.position === 'number' ? startedPayload.position : 0,
+          status: 'cancelled',
+          durationMs: 0,
+          error: '节点未在取消宽限期内退出，已强制关闭运行投影。',
+          forced: true,
+        },
+        createdAt: now,
+      })
+    }
+    return this.appendWorkflowRunEvent({
+      runId,
+      workflowId,
+      type: 'run.cancelled',
+      stepId: null,
+      payload: {
+        status: 'cancelled',
+        durationMs: 0,
+        summary: '工作流未在取消宽限期内退出，已强制关闭。',
+        error: 'workflow cancellation grace period expired',
+        forced: true,
+      },
+      createdAt: now,
+    })
+  }
+
+  recoverMissingWorkflowRuns(existingRuns: readonly RoutineRun[]): RoutineRun[] {
+    const existingIds = new Set(existingRuns.map((run) => run.id))
+    const grouped = new Map<string, WorkflowRunEvent[]>()
+    for (const event of this.loadWorkflowRunEvents()) {
+      const events = grouped.get(event.runId) ?? []
+      events.push(event)
+      grouped.set(event.runId, events)
+    }
+    const recovered: RoutineRun[] = []
+    for (const [runId, events] of grouped) {
+      if (existingIds.has(runId)) continue
+      const started = events.find((event) => event.type === 'run.started')
+      const terminal = [...events].reverse().find((event) => TERMINAL_WORKFLOW_EVENT_TYPES.has(event.type))
+      if (!started || !terminal) continue
+      const stepStarts = new Map(
+        events.filter((event) => event.type === 'step.started' && event.stepId).map((event) => [event.stepId!, event]),
+      )
+      const steps = events
+        .filter((event) => (event.type === 'step.completed' || event.type === 'step.failed') && event.stepId)
+        .map((event): RoutineStepResult & { position: number } => {
+          const stepStarted = stepStarts.get(event.stepId!)
+          const status =
+            event.type === 'step.completed'
+              ? 'ok'
+              : event.payload.status === 'timeout'
+                ? 'timeout'
+                : event.payload.status === 'cancelled'
+                  ? 'cancelled'
+                  : 'error'
+          return {
+            id: event.stepId!,
+            name: typeof stepStarted?.payload.name === 'string' ? stepStarted.payload.name : event.stepId!,
+            status,
+            summary:
+              typeof event.payload.outputSummary === 'string'
+                ? event.payload.outputSummary
+                : typeof event.payload.error === 'string'
+                  ? event.payload.error
+                  : '',
+            ...(typeof event.payload.imageUrl === 'string' ? { imageUrl: event.payload.imageUrl } : {}),
+            ...(typeof event.payload.artifactPath === 'string' ? { artifactPath: event.payload.artifactPath } : {}),
+            durationMs: typeof event.payload.durationMs === 'number' ? event.payload.durationMs : 0,
+            position:
+              typeof event.payload.position === 'number'
+                ? event.payload.position
+                : typeof stepStarted?.payload.position === 'number'
+                  ? stepStarted.payload.position
+                  : 0,
+          }
+        })
+        .sort((left, right) => left.position - right.position)
+        .map(
+          (step): RoutineStepResult => ({
+            id: step.id,
+            name: step.name,
+            status: step.status,
+            summary: step.summary,
+            ...(step.imageUrl ? { imageUrl: step.imageUrl } : {}),
+            ...(step.artifactPath ? { artifactPath: step.artifactPath } : {}),
+            durationMs: step.durationMs,
+          }),
+        )
+      const status: RoutineRun['status'] =
+        terminal.type === 'run.completed'
+          ? 'ok'
+          : terminal.type === 'run.timed_out'
+            ? 'timeout'
+            : terminal.type === 'run.cancelled'
+              ? 'cancelled'
+              : terminal.type === 'run.interrupted'
+                ? 'interrupted'
+                : 'error'
+      const interruptedSummary = '应用退出前工作流未到达终态，已在重启时标记为中断。'
+      recovered.push({
+        id: runId,
+        routineId: started.workflowId,
+        routineName: typeof started.payload.routineName === 'string' ? started.payload.routineName : started.workflowId,
+        startedAt: started.createdAt,
+        endedAt: terminal.createdAt,
+        status,
+        ...(started.payload.triggerSource === 'manual' || started.payload.triggerSource === 'schedule'
+          ? { triggerSource: started.payload.triggerSource }
+          : {}),
+        summary:
+          typeof terminal.payload.summary === 'string'
+            ? terminal.payload.summary
+            : status === 'interrupted'
+              ? interruptedSummary
+              : '',
+        ...(steps.length ? { steps } : {}),
+        ...(typeof terminal.payload.error === 'string'
+          ? { error: terminal.payload.error }
+          : status === 'interrupted'
+            ? {
+                error: 'application restarted before the workflow reached a terminal state',
+              }
+            : {}),
+      })
+    }
+    return recovered.sort((left, right) => right.startedAt - left.startedAt)
+  }
+
+  pruneWorkflowRunEvents(maxTerminalRuns: number): void {
+    const terminalRunIds = this.db
+      .prepare(
+        `SELECT workflow_run_id, MAX(seq) AS last_seq
+         FROM workflow_run_events
+         WHERE type IN ('run.completed', 'run.failed', 'run.timed_out', 'run.cancelled', 'run.interrupted')
+         GROUP BY workflow_run_id
+         ORDER BY last_seq DESC`,
+      )
+      .all()
+      .slice(Math.max(0, maxTerminalRuns))
+      .map((row) => requiredString(row.workflow_run_id))
+    if (terminalRunIds.length === 0) return
+    this.transaction(() => {
+      const remove = this.db.prepare('DELETE FROM workflow_run_events WHERE workflow_run_id = ?')
+      for (const runId of terminalRunIds) remove.run(runId)
+    })
+  }
+
   private initialize(): void {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
@@ -323,17 +625,19 @@ export class RoutineDatabase {
         applied_at INTEGER NOT NULL
       );
     `)
-    const currentVersion = optionalNumber(
-      this.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()?.version ?? null,
-    ) ?? 0
+    const currentVersion =
+      optionalNumber(this.db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()?.version ?? null) ??
+      0
     if (currentVersion < 1) this.migrateToVersion1()
     if (currentVersion < 2) this.migrateToVersion2()
     if (currentVersion < 3) this.migrateToVersion3()
     if (currentVersion < 4) this.migrateToVersion4()
+    if (currentVersion < 5) this.migrateToVersion5()
   }
 
   private migrateToVersion1(): void {
-    this.transaction(() => this.db.exec(`
+    this.transaction(() =>
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -404,11 +708,13 @@ export class RoutineDatabase {
         ON sync_outbox (kind, origin, entity_id);
       INSERT INTO schema_migrations (version, applied_at)
         VALUES (1, unixepoch('subsec') * 1000);
-    `))
+    `),
+    )
   }
 
   private migrateToVersion2(): void {
-    this.transaction(() => this.db.exec(`
+    this.transaction(() =>
+      this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS sync_outbox_workflow_delete_unique_idx
         ON sync_outbox (kind, origin, entity_id);
       CREATE TABLE IF NOT EXISTS sync_state (
@@ -418,28 +724,53 @@ export class RoutineDatabase {
       );
       INSERT INTO schema_migrations (version, applied_at)
         VALUES (2, unixepoch('subsec') * 1000);
-    `))
+    `),
+    )
   }
 
   private migrateToVersion3(): void {
     // model3d 步骤的两个字段:图生 3D 服务商 + 输入图模板
-    this.transaction(() => this.db.exec(`
+    this.transaction(() =>
+      this.db.exec(`
       ALTER TABLE workflow_steps ADD COLUMN provider TEXT;
       ALTER TABLE workflow_steps ADD COLUMN image_ref TEXT;
       INSERT INTO schema_migrations (version, applied_at)
         VALUES (3, unixepoch('subsec') * 1000);
-    `))
+    `),
+    )
   }
 
   private migrateToVersion4(): void {
     // app-icon 步骤的资源包名称、平台集合和不透明底色。
-    this.transaction(() => this.db.exec(`
+    this.transaction(() =>
+      this.db.exec(`
       ALTER TABLE workflow_steps ADD COLUMN app_name TEXT;
       ALTER TABLE workflow_steps ADD COLUMN platforms_json TEXT;
       ALTER TABLE workflow_steps ADD COLUMN background_color TEXT;
       INSERT INTO schema_migrations (version, applied_at)
         VALUES (4, unixepoch('subsec') * 1000);
-    `))
+    `),
+    )
+  }
+
+  private migrateToVersion5(): void {
+    this.transaction(() =>
+      this.db.exec(`
+      CREATE TABLE workflow_run_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        workflow_run_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        step_id TEXT,
+        payload_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX workflow_run_events_run_seq_idx
+        ON workflow_run_events (workflow_run_id, seq);
+      INSERT INTO schema_migrations (version, applied_at)
+        VALUES (5, unixepoch('subsec') * 1000);
+    `),
+    )
   }
 
   private importLegacyOnce(): void {
