@@ -6,7 +6,17 @@ import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import type { RemotePairingCode } from '../shared/ipc/contract'
+import type {
+  RemotePairingCode,
+  SessionProjectionChanges,
+  SessionProjectionSnapshot,
+  StudioAgentEvent,
+} from '../shared/ipc/contract'
+
+type ProjectionProvider = {
+  snapshot: () => SessionProjectionSnapshot
+  changes: (sessionId: string | null, afterSeq: number) => SessionProjectionChanges
+}
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -50,9 +60,14 @@ class RemoteControlManager {
   private controllers = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private statusListener: ((snap: RemoteControlSnapshot) => void) | null = null
+  private projectionProvider: ProjectionProvider | null = null
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
+  }
+
+  setProjectionProvider(provider: ProjectionProvider | null): void {
+    this.projectionProvider = provider
   }
 
   snapshot(): RemoteControlSnapshot {
@@ -145,7 +160,7 @@ class RemoteControlManager {
   }
 
   /** 把主工作区的 agent 事件转发给手机(由 ipc.ts 的 onEvent 回调调用)。 */
-  forwardEvent(event: unknown): void {
+  forwardEvent(event: StudioAgentEvent): void {
     if (this.status !== 'connected') return
     this.send({ type: 'event', event })
   }
@@ -182,6 +197,8 @@ class RemoteControlManager {
     if (type === 'controller_online') {
       this.controllers += 1
       this.emit()
+      const snapshot = this.projectionProvider?.snapshot()
+      if (snapshot) this.send({ type: 'sessionProjection', snapshot })
       return
     }
     if (type === 'controller_offline') {
@@ -229,6 +246,23 @@ class RemoteControlManager {
         case 'getMessages':
           this.reply(msg.id, await piClientManager.getMessages())
           break
+        case 'getSessionProjection':
+          if (!this.projectionProvider) throw new Error('session projection is unavailable')
+          this.reply(msg.id, this.projectionProvider.snapshot())
+          break
+        case 'getSessionChanges': {
+          if (!this.projectionProvider) throw new Error('session projection is unavailable')
+          if (msg.sessionId !== null && typeof msg.sessionId !== 'string') {
+            throw new Error('sessionId must be a string or null')
+          }
+          const sessionId = msg.sessionId
+          const afterSeq = Number(msg.afterSeq)
+          if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) {
+            throw new Error('afterSeq must be a non-negative safe integer')
+          }
+          this.reply(msg.id, this.projectionProvider.changes(sessionId, afterSeq))
+          break
+        }
         case 'getAvailableModels':
           {
             const models = await piClientManager.getAvailableModels()

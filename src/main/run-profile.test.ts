@@ -4,7 +4,7 @@ import { RunProfileCompiler } from './run-profile'
 describe('RunProfileCompiler', () => {
   it('reports an unsandboxed chat as unrestricted host execution', async () => {
     const compiler = new RunProfileCompiler({
-      loadSettings: () => ({ sandboxEnabled: false }),
+      loadSettings: () => ({ sandboxEnabled: false, subagentsEnabled: true }),
       prepareRuntime: async () => ({
         provider: 'openai',
         model: 'gpt-test',
@@ -28,6 +28,7 @@ describe('RunProfileCompiler', () => {
       hostCodeExecution: false,
       reason: 'Sandbox is disabled; Pi runs with the desktop user permissions.',
     })
+    expect(profile.declaredCapabilities).toEqual({ subagents: true })
   })
 
   it('reports WSL confinement and host-side generated-code execution separately', async () => {

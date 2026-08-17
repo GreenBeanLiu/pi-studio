@@ -1,4 +1,4 @@
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { basename, dirname, join, resolve } from 'path'
 import { createRequire } from 'module'
 import type { RpcClient as RpcClientType } from '@earendil-works/pi-coding-agent'
@@ -16,6 +16,16 @@ export function resolvePiCliPath(): string {
     if (existsSync(candidate)) return candidate
   }
   throw new Error('Could not locate @earendil-works/pi-coding-agent/dist/cli.js')
+}
+
+export function resolvePiEngineVersion(): string {
+  try {
+    const packagePath = join(dirname(dirname(resolvePiCliPath())), 'package.json')
+    const value = JSON.parse(readFileSync(packagePath, 'utf8')) as { version?: unknown }
+    return typeof value.version === 'string' ? value.version : 'unknown'
+  } catch {
+    return 'unknown'
+  }
 }
 
 export function embeddedNodeEnv(env: Record<string, string>): Record<string, string> {

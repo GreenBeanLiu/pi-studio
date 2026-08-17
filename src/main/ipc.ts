@@ -65,6 +65,9 @@ import { createSettingsView } from './settings-view'
 import { AgentRuntimeTracker } from './agent-runtime'
 import { SessionProjectionTracker } from './session-projection'
 import { removeLegacySecurityGuardExtension } from './legacy-extension-cleanup'
+import type { ApprovalProjection, ExtensionUiResponse } from '../shared/ipc/contract'
+import { approvalAuditJournal } from './approval-audit'
+import { canRespondToOwnedUiRequest } from './extension-ui-ownership'
 
 // Agent Runtime 权威快照:renderer 重挂载/reload 后先取快照,再订阅变化
 const agentRuntime = new AgentRuntimeTracker((snapshot) => {
@@ -73,6 +76,10 @@ const agentRuntime = new AgentRuntimeTracker((snapshot) => {
   }
 })
 const sessionProjection = new SessionProjectionTracker()
+remoteControl.setProjectionProvider({
+  snapshot: () => sessionProjection.snapshot(),
+  changes: (sessionId, afterSeq) => sessionProjection.changes(sessionId, afterSeq),
+})
 
 function broadcastSessionProjection(): void {
   const snapshot = sessionProjection.snapshot()
@@ -88,11 +95,44 @@ async function refreshSessionProjection(): Promise<ReturnType<SessionProjectionT
     broadcastSessionProjection()
     return snapshot
   }
-  const state = await piClientManager.getState()
-  const load = sessionProjection.beginLoad(workspacePath, state.sessionFile ?? null)
+  const identity = piClientManager.getActiveSessionIdentity()
+  if (!identity) return sessionProjection.snapshot()
+  // Capture the projection generation before either RPC read. Any live event
+  // arriving while these promises are pending invalidates this cold load.
+  const load = sessionProjection.beginLoad(
+    workspacePath,
+    identity.sessionFile,
+    identity.sessionId,
+  )
   broadcastSessionProjection()
-  const messages = await piClientManager.getMessages()
-  const snapshot = sessionProjection.commit(load, messages)
+  const source = await piClientManager.readActiveProjection()
+  if (!source) return sessionProjection.snapshot()
+  if (
+    source.sessionId !== identity.sessionId ||
+    source.sessionFile !== identity.sessionFile ||
+    !sessionProjection.isCurrentLoad(load)
+  ) {
+    return sessionProjection.snapshot()
+  }
+  if (source.sessionFile) {
+    const audited = approvalAuditJournal.load(source.sessionFile)
+    const ownedApprovalIds = piClientManager.getActiveApprovalIds()
+    const restored = sessionProjection.restoreApprovals(load, audited, ownedApprovalIds)
+    const interrupted = new Set(
+      audited
+        .filter(
+          (approval) =>
+            approval.outcome === 'pending' && !ownedApprovalIds.has(approval.id),
+        )
+        .map((approval) => approval.id),
+    )
+    persistApprovalAudits(
+      source.sessionFile,
+      restored.approvals.filter((approval) => interrupted.has(approval.id)),
+      'interrupted approval outcome',
+    )
+  }
+  const snapshot = sessionProjection.commit(load, source.messages)
   broadcastSessionProjection()
   return snapshot
 }
@@ -101,6 +141,29 @@ function refreshSessionProjectionInBackground(): void {
   void refreshSessionProjection().catch((error) => {
     appendAppLog('warn', 'session.projection', 'Failed to refresh session projection', normalizeError(error))
   })
+}
+
+function selectActiveSessionProjection(): void {
+  const workspacePath = piClientManager.getWorkspacePath()
+  const identity = piClientManager.getActiveSessionIdentity()
+  if (!workspacePath || !identity) return
+  sessionProjection.beginLoad(workspacePath, identity.sessionFile, identity.sessionId)
+  broadcastSessionProjection()
+}
+
+function persistApprovalAudits(
+  sessionFile: string | null,
+  approvals: ApprovalProjection[],
+  action: string,
+): void {
+  if (!sessionFile) return
+  for (const approval of approvals) {
+    try {
+      approvalAuditJournal.append(sessionFile, approval)
+    } catch (error) {
+      appendAppLog('warn', 'approval.audit', `Failed to append ${action}`, normalizeError(error))
+    }
+  }
 }
 
 export function registerIpcHandlers(): void {
@@ -371,8 +434,10 @@ export function registerIpcHandlers(): void {
     syncWebSearchExtension(!!settings.tavilyApiKey)
     removeLegacySecurityGuardExtension()
     syncWorkspaceMemoryExtension()
+    let subagentsAvailable = false
     try {
       syncSubagentWorkflow(settings.subagentsEnabled)
+      subagentsAvailable = settings.subagentsEnabled
     } catch (err) {
       appendAppLog('warn', 'workspace.open', 'Failed to sync subagent workflow', normalizeError(err))
       console.warn('Failed to sync pi-studio subagent workflow:', err)
@@ -384,22 +449,53 @@ export function registerIpcHandlers(): void {
     try {
       await piClientManager.startWorkspace(
         workspacePath,
-        () => runProfileCompiler.compile('chat', workspacePath),
-        async (agentEvent) => {
-          agentRuntime.agentEvent(agentEvent)
+        () =>
+          runProfileCompiler.compile('chat', workspacePath, {
+            subagentsAvailable,
+          }),
+        async (agentEvent, context) => {
+          const projected = sessionProjection.ingest(context.sessionId, agentEvent)
+          let projectionChanged = projected.projectionChanged
+          const approvalId =
+            agentEvent.type === 'extension_ui_request' && agentEvent.method === 'confirm'
+              ? agentEvent.id
+              : undefined
+          const approval = approvalId
+            ? sessionProjection.snapshot().approvals.find((item) => item.id === approvalId)
+            : undefined
+          if (approval) persistApprovalAudits(context.sessionFile, [approval], 'approval request')
+          if (agentEvent.type === 'agent_settled') {
+            const cancelled = sessionProjection.cancelPendingApprovals(
+              context.sessionId,
+              '运行已结束，审批已失效',
+            )
+            persistApprovalAudits(context.sessionFile, cancelled, 'settled approval outcome')
+            projectionChanged ||= cancelled.length > 0
+          }
+          if (projectionChanged) {
+            broadcastSessionProjection()
+          }
+          agentRuntime.agentEvent(context.sessionId, agentEvent)
+          // Forward before any await: otherwise a session switch can make this old,
+          // unscoped Pi event mutate the newly selected renderer conversation.
+          if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
+          if (projected.accepted) remoteControl.forwardEvent(projected.event)
           // willRetry 的 agent_end 只是重试前的一段间隙,这时封存基线,重试里新写的
           // 文件就落在任何一次运行变更之外 —— 回滚兜不住它们。
           if (agentEvent.type === 'agent_end' && !agentEvent.willRetry) {
             await sealRunChanges(workspacePath, 'agent ended')
           }
-          if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
-          // 远程控制开启时,把 agent 事件也转发给手机(controller)
-          remoteControl.forwardEvent(agentEvent)
           if (agentEvent.type === 'agent_settled') refreshSessionProjectionInBackground()
         },
         (statusEvent) => {
           agentRuntime.status(statusEvent)
           if (statusEvent.status === 'started') {
+            sessionProjection.beginLoad(
+              statusEvent.cwd,
+              statusEvent.sessionFile ?? null,
+              statusEvent.sessionId ?? statusEvent.sessionFile ?? `${statusEvent.cwd}:session`,
+            )
+            broadcastSessionProjection()
             sendAgentStatus(win, statusEvent)
             return
           }
@@ -413,6 +509,16 @@ export function registerIpcHandlers(): void {
         // 后台会话不走完整事件流,只把"在跑/停了"报给侧栏
         (activity) => {
           if (win && !win.isDestroyed()) win.webContents.send('pi:sessionActivity', activity)
+        },
+        (context) => {
+          agentRuntime.activate(
+            context.sessionId,
+            context.sessionFile,
+            context.awaitingApproval ? 'awaiting_approval' : context.runActive ? 'running' : 'idle',
+            context.runStartedAt,
+          )
+          selectActiveSessionProjection()
+          refreshSessionProjectionInBackground()
         },
       )
       refreshSessionProjectionInBackground()
@@ -473,7 +579,10 @@ export function registerIpcHandlers(): void {
       const result = await piClientManager.switchSession(
         parseSessionPath(sessionPath, dirname(state.sessionFile)),
       )
-      if (!result.cancelled) refreshSessionProjectionInBackground()
+      if (!result.cancelled) {
+        selectActiveSessionProjection()
+        refreshSessionProjectionInBackground()
+      }
       return result
     } catch (err) {
       appendAppLog('warn', 'ipc.contract', 'Rejected sessions:switch', normalizeError(err))
@@ -501,6 +610,7 @@ export function registerIpcHandlers(): void {
     const release = await piClientManager.releaseSession(target)
     if (!release.released) return { error: '该会话正在后台运行，先停止再删除' }
     deleteSession(target)
+    approvalAuditJournal.remove(target)
     return { ok: true }
   })
   ipcMain.handle('sessions:exportCurrent', async (event, format: SessionExportFormat) => {
@@ -622,30 +732,51 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:followUp', (_e, message: string, images?: ImageContent[]) =>
     piClientManager.followUp(message, images),
   )
-  ipcMain.handle('pi:abort', () => piClientManager.abort())
+  ipcMain.handle('pi:abort', async () => {
+    await piClientManager.abort()
+    const identity = piClientManager.getActiveSessionIdentity()
+    if (!identity) return
+    const cancelled = sessionProjection.cancelPendingApprovals(
+      identity.sessionId,
+      '用户停止运行，审批已取消',
+    )
+    persistApprovalAudits(identity.sessionFile, cancelled, 'cancelled approval outcome')
+    if (cancelled.length > 0) broadcastSessionProjection()
+  })
   ipcMain.handle('pi:bash', (_e, command: string) => piClientManager.bash(command))
   ipcMain.handle(
     'pi:extensionUiResponse',
-    (
-      _e,
-      response: {
-        type: 'extension_ui_response'
-        id: string
-        value?: string
-        confirmed?: boolean
-        cancelled?: true
-      },
-    ) => {
-      agentRuntime.uiResponded()
-      return piClientManager.respondExtensionUi(response)
+    (_e, response: ExtensionUiResponse) => {
+      const identity = piClientManager.getActiveSessionIdentity()
+      const requestMethod = piClientManager.getActiveUiRequestMethod(response.id)
+      const approval = sessionProjection
+        .snapshot()
+        .approvals.find((item) => item.id === response.id)
+      if (!identity || !canRespondToOwnedUiRequest(identity.sessionId, requestMethod, approval)) {
+        throw new Error('扩展 UI 请求已失效或不属于当前会话')
+      }
+      const { remainingBlockingRequests } = piClientManager.respondExtensionUi(response)
+      if (requestMethod === 'confirm') {
+        const projected = sessionProjection.resolveApproval(identity.sessionId, response.id, response)
+        if (projected.projectionChanged) {
+          const decided = sessionProjection.snapshot().approvals.find((item) => item.id === response.id)
+          if (decided) persistApprovalAudits(identity.sessionFile, [decided], 'approval decision')
+          broadcastSessionProjection()
+        }
+      }
+      agentRuntime.uiResponded(identity.sessionId, remainingBlockingRequests)
     },
   )
   ipcMain.handle('pi:newSession', async () => {
     const result = await piClientManager.newSession()
-    if (!result.cancelled) refreshSessionProjectionInBackground()
+    if (!result.cancelled) {
+      selectActiveSessionProjection()
+      refreshSessionProjectionInBackground()
+    }
     return result
   })
   ipcMain.handle('pi:getRuntimeSnapshot', () => agentRuntime.snapshot())
+  ipcMain.handle('pi:getCapabilities', () => piClientManager.getRuntimeCapabilities())
   ipcMain.handle('pi:getSessionProjection', async () => {
     try {
       return await refreshSessionProjection()
@@ -653,6 +784,15 @@ export function registerIpcHandlers(): void {
       appendAppLog('warn', 'session.projection', 'Failed to load session projection', normalizeError(error))
       return sessionProjection.snapshot()
     }
+  })
+  ipcMain.handle('pi:getSessionChanges', (_event, sessionId: unknown, afterSeq: unknown) => {
+    if (sessionId !== null && typeof sessionId !== 'string') {
+      throw new TypeError('sessionId must be a string or null')
+    }
+    if (!Number.isSafeInteger(afterSeq) || (afterSeq as number) < 0) {
+      throw new TypeError('afterSeq must be a non-negative safe integer')
+    }
+    return sessionProjection.changes(sessionId, afterSeq as number)
   })
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())

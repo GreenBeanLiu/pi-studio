@@ -12,6 +12,7 @@ export type RunProfileKind = 'chat' | 'routine' | 'code-model' | 'blender-model'
 
 export type RunProfileCompileOptions = {
   extensions?: string[]
+  subagentsAvailable?: boolean
 }
 
 export type CompiledRunProfile = {
@@ -25,11 +26,12 @@ export type CompiledRunProfile = {
   thinkingLevel: typeof DEFAULT_THINKING_LEVEL
   sandboxMode: 'wsl' | 'docker' | null
   security: ExecutionSecuritySnapshot
+  declaredCapabilities?: { subagents: boolean }
   profileDigest: string
 }
 
 type RunProfileCompilerDependencies = {
-  loadSettings: () => { sandboxEnabled: boolean }
+  loadSettings: () => { sandboxEnabled: boolean; subagentsEnabled?: boolean }
   prepareRuntime: () => Promise<AgentRuntimeConfig>
   prepareSandbox: (
     cwd: string,
@@ -157,6 +159,11 @@ export class RunProfileCompiler {
       thinkingLevel: DEFAULT_THINKING_LEVEL,
       sandboxMode,
       security,
+      declaredCapabilities: {
+        subagents:
+          kind === 'chat' &&
+          (options.subagentsAvailable ?? settings.subagentsEnabled === true),
+      },
     } satisfies Omit<CompiledRunProfile, 'profileDigest' | 'env'>
     const compiled = {
       ...base,

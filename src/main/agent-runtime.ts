@@ -1,6 +1,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { AgentStatusEvent } from './pi-client'
 import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
+import { isBlockingExtensionUiMethod } from './extension-ui-ownership'
 
 /**
  * Agent Runtime 权威快照(见 优化.md「Agent Runtime 成为唯一权威状态源」)。
@@ -31,6 +32,7 @@ export type AgentRuntimeSnapshot = {
   revision: number
   phase: AgentRuntimePhase
   workspacePath: string | null
+  sessionId: string | null
   sessionFile: string | null
   sandbox: 'wsl' | 'docker' | null
   security: ExecutionSecuritySnapshot | null
@@ -39,14 +41,12 @@ export type AgentRuntimeSnapshot = {
   error: { message: string } | null
 }
 
-/** 需要用户响应的扩展 UI 请求方法(其余 setStatus/notify 之类不阻塞运行) */
-const APPROVAL_METHODS = new Set(['confirm', 'select', 'input'])
-
 export class AgentRuntimeTracker {
   private snap: AgentRuntimeSnapshot = {
     revision: 0,
     phase: 'closed',
     workspacePath: null,
+    sessionId: null,
     sessionFile: null,
     sandbox: null,
     security: null,
@@ -70,6 +70,7 @@ export class AgentRuntimeTracker {
     this.patch({
       phase: 'starting',
       workspacePath,
+      sessionId: null,
       sessionFile: null,
       sandbox: null,
       security: null,
@@ -88,13 +89,18 @@ export class AgentRuntimeTracker {
     // 旧工作区子进程的收尾事件不应打翻新工作区的状态
     if (this.snap.workspacePath && event.cwd !== this.snap.workspacePath) return
     if (event.status === 'started') {
+      const sessionId = event.sessionId ?? event.sessionFile ?? null
+      const retainLivePhase =
+        sessionId === this.snap.sessionId &&
+        (this.snap.phase === 'running' || this.snap.phase === 'awaiting_approval')
       this.patch({
-        phase: 'idle',
+        phase: retainLivePhase ? this.snap.phase : 'idle',
+        sessionId,
         sandbox: event.sandbox ?? null,
         security: event.security ?? null,
         profileDigest: event.profileDigest ?? null,
         sessionFile: event.sessionFile ?? null,
-        activeRun: null,
+        activeRun: retainLivePhase ? this.snap.activeRun : null,
         error: null,
       })
       return
@@ -106,7 +112,26 @@ export class AgentRuntimeTracker {
     this.patch({ phase: 'error', error: { message: event.message }, activeRun: null })
   }
 
-  agentEvent(event: AgentSessionEvent | { type: string; [k: string]: unknown }): void {
+  activate(
+    sessionId: string,
+    sessionFile: string | null,
+    phase: 'idle' | 'running' | 'awaiting_approval',
+    startedAt: number | null,
+  ): void {
+    this.patch({
+      sessionId,
+      sessionFile,
+      phase,
+      activeRun: phase === 'idle' ? null : { startedAt: startedAt ?? Date.now() },
+      error: null,
+    })
+  }
+
+  agentEvent(
+    sessionId: string,
+    event: AgentSessionEvent | { type: string; [k: string]: unknown },
+  ): void {
+    if (sessionId !== this.snap.sessionId) return
     const phase = this.snap.phase
     switch (event.type) {
       case 'agent_start':
@@ -120,7 +145,7 @@ export class AgentRuntimeTracker {
         return
       case 'extension_ui_request': {
         const method = (event as { method?: string }).method
-        if (phase === 'running' && method && APPROVAL_METHODS.has(method)) {
+        if (phase === 'running' && isBlockingExtensionUiMethod(method)) {
           this.patch({ phase: 'awaiting_approval' })
         }
         return
@@ -131,8 +156,11 @@ export class AgentRuntimeTracker {
   }
 
   /** 用户回应了扩展 UI(确认/选择/输入),回到 running */
-  uiResponded(): void {
-    if (this.snap.phase === 'awaiting_approval') this.patch({ phase: 'running' })
+  uiResponded(sessionId: string, remainingBlockingRequests = 0): void {
+    if (sessionId !== this.snap.sessionId) return
+    if (this.snap.phase === 'awaiting_approval' && remainingBlockingRequests === 0) {
+      this.patch({ phase: 'running' })
+    }
   }
 
   stopping(): void {
@@ -143,6 +171,7 @@ export class AgentRuntimeTracker {
     this.patch({
       phase: 'closed',
       workspacePath: null,
+      sessionId: null,
       sessionFile: null,
       sandbox: null,
       security: null,

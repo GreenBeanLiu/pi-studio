@@ -162,12 +162,15 @@ const api = {
       return () => ipcRenderer.off('pi:sessionActivity', handler)
     },
     getRuntimeSnapshot: () => ipcRenderer.invoke('pi:getRuntimeSnapshot'),
+    getCapabilities: () => ipcRenderer.invoke('pi:getCapabilities'),
     onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: AgentRuntimeSnapshot) => cb(data)
       ipcRenderer.on('agent:runtime', handler)
       return () => ipcRenderer.off('agent:runtime', handler)
     },
     getSessionProjection: () => ipcRenderer.invoke('pi:getSessionProjection'),
+    getSessionChanges: (sessionId: string | null, afterSeq: number) =>
+      ipcRenderer.invoke('pi:getSessionChanges', sessionId, afterSeq),
     onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: SessionProjectionSnapshot) => cb(data)
       ipcRenderer.on('pi:sessionProjection', handler)

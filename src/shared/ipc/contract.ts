@@ -172,8 +172,13 @@ pi: {
   onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
   onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
   getRuntimeSnapshot: () => Promise<AgentRuntimeSnapshot>
+  getCapabilities: () => Promise<PiRuntimeCapabilities | null>
   onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => () => void
   getSessionProjection: () => Promise<SessionProjectionSnapshot>
+  getSessionChanges: (
+    sessionId: string | null,
+    afterSeq: number,
+  ) => Promise<SessionProjectionChanges>
   onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => () => void
 }
 routines: {
@@ -732,6 +737,7 @@ export type AgentRuntimeSnapshot = {
   revision: number
   phase: AgentRuntimePhase
   workspacePath: string | null
+  sessionId: string | null
   sessionFile: string | null
   sandbox: 'wsl' | 'docker' | null
   security: ExecutionSecuritySnapshot | null
@@ -740,12 +746,108 @@ export type AgentRuntimeSnapshot = {
   error: { message: string } | null
 }
 
+export type PiRuntimeCapabilities = {
+  engine: 'pi'
+  engineVersion: string
+  protocolVersion: 'rpc-v1'
+  sessionFormatVersion: 'pi-jsonl-v1'
+  handshake: {
+    verified: true
+    state: true
+    messages: true
+    commands: true
+  }
+  features: {
+    listSessions: boolean
+    resume: boolean
+    fork: boolean
+    subagents: boolean
+    images: boolean
+    compact: boolean
+    approvals: boolean
+    sessionRead: boolean
+  }
+}
+
+export type StudioAgentEvent = {
+  seq: number
+  sessionId: string
+  type:
+    | 'session.changed'
+    | 'session.cleared'
+    | 'conversation.replaced'
+    | 'approvals.replaced'
+    | 'agent.started'
+    | 'agent.ended'
+    | 'agent.settled'
+    | 'message.started'
+    | 'message.updated'
+    | 'message.finished'
+    | 'tool.started'
+    | 'tool.updated'
+    | 'tool.finished'
+    | 'approval.requested'
+    | 'approval.decided'
+    | 'run.failed'
+    | 'agent.event'
+  data: Record<string, unknown>
+}
+
+export type ToolExecutionProjection = {
+  callId: string
+  sessionId: string
+  runId: string | null
+  toolName: string
+  args?: unknown
+  status: 'running' | 'done' | 'error'
+  result?: unknown
+  details?: unknown
+  startedAt: string
+  endedAt?: string
+}
+
+export type ApprovalProjection = {
+  id: string
+  sessionId: string
+  runId: string | null
+  /** Real Pi tool call id when the request can be associated without guessing. */
+  callId: string | null
+  /** Stable audit correlation when no real tool call id is available. */
+  correlation: {
+    kind: 'tool-call' | 'extension-request'
+    id: string
+  }
+  tool: string
+  action: 'read' | 'write' | 'execute' | 'network' | 'credential' | 'external-side-effect'
+  policy: { decision: 'ask'; reason?: string }
+  title: string
+  message: string
+  command?: string
+  reason?: string
+  createdAt: string
+  resolvedAt?: string
+  outcome: 'pending' | 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+  error?: string
+}
+
+export type SessionProjectionChanges = {
+  sessionId: string | null
+  afterSeq: number
+  asOfSeq: number
+  resetRequired: boolean
+  events: StudioAgentEvent[]
+}
+
 export type SessionProjectionSnapshot = {
   revision: number
+  asOfSeq: number
   workspacePath: string | null
   sessionFile: string | null
+  sessionId: string | null
   source: 'durable-session'
   messages: AgentMessage[]
+  tools: Record<string, ToolExecutionProjection>
+  approvals: ApprovalProjection[]
   updatedAt: string | null
 }
 
@@ -754,6 +856,7 @@ export type AgentStatusEvent =
       status: 'started'
       cwd: string
       restoredSession: boolean
+      sessionId?: string
       sessionFile?: string
       sandbox?: 'wsl' | 'docker'
       security?: ExecutionSecuritySnapshot

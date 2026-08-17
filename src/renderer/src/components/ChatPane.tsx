@@ -38,6 +38,9 @@ import {
   type PiRuntimeEvent,
   type SessionExportFormat,
   type AgentStatusEvent,
+  type ApprovalProjection,
+  type PiRuntimeCapabilities,
+  type ToolExecutionProjection,
   type UserMessage,
   type ToolCall,
 } from '../lib/api'
@@ -1192,22 +1195,50 @@ function firstLine(value: string, limit = 220): string {
   return line.length > limit ? `${line.slice(0, limit)}...` : line
 }
 
-function parseApprovalMessage(message: string): Pick<ToolApprovalRequest, 'command' | 'reason'> {
-  const commandMatch = message.match(/命令[:：]\s*\n+([\s\S]*?)(?:\n\s*\n\s*原因[:：]|$)/)
-  const reasonMatch = message.match(/原因[:：]\s*([\s\S]*?)(?:\n\s*\n|$)/)
-  const command = commandMatch?.[1]?.trim()
-  const reason = reasonMatch?.[1]?.trim()
-  return {
-    command: command || undefined,
-    reason: reason || undefined,
-  }
-}
-
 function approvalStatusLabel(status: ApprovalStatus): string {
   if (status === 'pending') return '等待确认'
   if (status === 'allowed') return '已允许'
   if (status === 'error') return '处理失败'
   return '已拒绝'
+}
+
+function approvalFromProjection(approval: ApprovalProjection): ToolApprovalRequest {
+  const status: ApprovalStatus =
+    approval.outcome === 'pending'
+      ? 'pending'
+      : approval.outcome === 'allowed-once'
+        ? 'allowed'
+        : approval.outcome === 'unavailable'
+          ? 'error'
+          : 'denied'
+  return {
+    id: approval.id,
+    runId: approval.runId,
+    title: approval.title,
+    message: approval.message,
+    command: approval.command,
+    reason: approval.reason,
+    createdAt: approval.createdAt,
+    status,
+    error: approval.error,
+  }
+}
+
+function toolsFromProjection(
+  tools: Record<string, ToolExecutionProjection>,
+): Record<string, ToolExecutionState> {
+  return Object.fromEntries(
+    Object.entries(tools).map(([id, tool]) => [
+      id,
+      {
+        toolName: tool.toolName,
+        args: tool.args,
+        status: tool.status,
+        result: tool.result,
+        details: tool.details,
+      },
+    ]),
+  )
 }
 
 function latestUserText(messages: AgentMessage[]): string {
@@ -1325,38 +1356,7 @@ export default function ChatPane({
   const { styles, cx, theme: token } = useStyles()
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
-
-  // 工具结果的结构化 details(如 subagent 的子代理运行信息)权威地存在 toolResult 消息里,
-  // tool_execution_end 事件的 result 不一定带上 —— 从 messages 兜底合并进 toolExecutions,
-  // 保证 SubagentCard 等能拿到完整 details(历史会话加载后也有)。
-  useEffect(() => {
-    setToolExecutions((prev) => {
-      let changed = false
-      const next = { ...prev }
-      for (const m of messages) {
-        if (m.role !== 'toolResult') continue
-        const tr = m as unknown as {
-          toolCallId?: string
-          toolName?: string
-          content?: unknown
-          details?: unknown
-          isError?: boolean
-        }
-        if (!tr.toolCallId || tr.details === undefined) continue
-        const existing = next[tr.toolCallId]
-        if (existing?.details === tr.details) continue
-        next[tr.toolCallId] = {
-          toolName: tr.toolName ?? existing?.toolName ?? '',
-          args: existing?.args,
-          status: tr.isError ? 'error' : 'done',
-          result: tr.content ?? existing?.result,
-          details: tr.details,
-        }
-        changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [messages])
+  const [runtimeCapabilities, setRuntimeCapabilities] = useState<PiRuntimeCapabilities | null>(null)
   const [input, setInput] = useState('')
   const [images, setImages] = useState<ImageContent[]>([])
   const [sending, setSending] = useState(false)
@@ -1471,6 +1471,7 @@ export default function ChatPane({
     if (!workspace || starting) {
       setMessages([])
       setToolExecutions({})
+      setRuntimeCapabilities(null)
       setRunRecords([])
       setApprovalRequests([])
       setMemorySuggestion(null)
@@ -1478,8 +1479,16 @@ export default function ChatPane({
       activeRunIdRef.current = null
       return
     }
-    api.pi.getSessionProjection().then((projection) => setMessages(projection.messages)).catch(() => {})
+    api.pi
+      .getSessionProjection()
+      .then((projection) => {
+        setMessages(projection.messages)
+        setToolExecutions(toolsFromProjection(projection.tools))
+        setApprovalRequests(projection.approvals.map(approvalFromProjection))
+      })
+      .catch(() => {})
     api.pi.getAvailableModels().then(setModels).catch(() => {})
+    api.pi.getCapabilities().then(setRuntimeCapabilities).catch(() => setRuntimeCapabilities(null))
     api.pi.getCommands().then(setCommands).catch(() => {})
     void refreshModelSwitcherState()
     api.pi
@@ -1503,6 +1512,8 @@ export default function ChatPane({
       if (projection.workspacePath !== workspace?.path) return
       streamingIndexRef.current = null
       setMessages(projection.messages)
+      setToolExecutions(toolsFromProjection(projection.tools))
+      setApprovalRequests(projection.approvals.map(approvalFromProjection))
     })
   }, [workspace?.path])
 
@@ -1625,22 +1636,7 @@ export default function ChatPane({
             ),
           )
         }
-        if (event.method === 'confirm') {
-          const parsed = parseApprovalMessage(event.message)
-          setApprovalRequests((prev) => [
-            ({
-              id: event.id,
-              runId,
-              title: event.title,
-              message: event.message,
-              command: parsed.command,
-              reason: parsed.reason,
-              createdAt: timestamp,
-              status: 'pending',
-            } satisfies ToolApprovalRequest),
-            ...prev.filter((item) => item.id !== event.id),
-          ].slice(0, 8))
-        } else if (event.method === 'notify') {
+        if (event.method === 'notify') {
           const notify = event.notifyType === 'error' ? antdMessage.error : event.notifyType === 'warning' ? antdMessage.warning : antdMessage.info
           notify(event.message)
         } else if (event.method === 'input' || event.method === 'select' || event.method === 'editor') {
@@ -1766,13 +1762,6 @@ export default function ChatPane({
               )
             }
             activeRunIdRef.current = null
-            setApprovalRequests((prev) =>
-              prev.map((item) =>
-                item.runId === runId && item.status === 'pending'
-                  ? { ...item, status: 'denied', error: '运行已结束，审批已失效' }
-                  : item,
-              ),
-            )
           }
           setSending(false)
           // 完整 toolResult 由 main 在 agent_settled 后从持久 session 重建 projection；
@@ -1947,10 +1936,6 @@ export default function ChatPane({
               )
             }
           }
-          setToolExecutions((prev) => ({
-            ...prev,
-            [event.toolCallId]: { toolName: event.toolName, args: event.args, status: 'running' },
-          }))
           break
         case 'tool_execution_update':
           {
@@ -1970,14 +1955,6 @@ export default function ChatPane({
               )
             }
           }
-          setToolExecutions((prev) => ({
-            ...prev,
-            [event.toolCallId]: {
-              ...(prev[event.toolCallId] ?? { toolName: event.toolName, args: event.args, status: 'running' }),
-              result: event.partialResult,
-              details: (event.partialResult as { details?: unknown } | undefined)?.details,
-            },
-          }))
           break
         case 'tool_execution_end':
           {
@@ -2016,16 +1993,6 @@ export default function ChatPane({
               )
             }
           }
-          setToolExecutions((prev) => ({
-            ...prev,
-            [event.toolCallId]: {
-              toolName: event.toolName,
-              args: prev[event.toolCallId]?.args,
-              status: event.isError ? 'error' : 'done',
-              result: event.result,
-              details: (event.result as { details?: unknown } | undefined)?.details,
-            },
-          }))
           break
         default:
           break
@@ -2052,34 +2019,6 @@ export default function ChatPane({
     return () => clearInterval(timer)
   }, [sending])
 
-  // Tool cards get their status from the live event map, but that map is only
-  // built from streaming events — reloaded history (getMessages on open /
-  // session switch / remount) has toolCall blocks with no live entry, so they
-  // would spin forever. pi persists each result as a `toolResult` message;
-  // seed the map from those so historical (and just-finished) tools resolve.
-  useEffect(() => {
-    setToolExecutions((prev) => {
-      let changed = false
-      const next = { ...prev }
-      for (const m of messages) {
-        if ((m as { role: string }).role !== 'toolResult') continue
-        const tr = m as unknown as {
-          toolCallId: string
-          toolName: string
-          isError: boolean
-          content: unknown
-        }
-        const status: ToolExecutionState['status'] = tr.isError ? 'error' : 'done'
-        const existing = next[tr.toolCallId]
-        if (!existing || existing.status !== status || existing.result === undefined) {
-          next[tr.toolCallId] = { toolName: tr.toolName, args: existing?.args, status, result: tr.content }
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [messages])
-
   const runningTool = useMemo(() => {
     const running = Object.values(toolExecutions).filter((t) => t.status === 'running')
     return running.length > 0 ? running[running.length - 1].toolName : null
@@ -2088,12 +2027,6 @@ export default function ChatPane({
   const latestRun = runRecords[0]
   const latestRunErrors = latestRun?.tools.filter((tool) => tool.status === 'error').length ?? 0
   const pendingApprovals = approvalRequests.filter((item) => item.status === 'pending')
-
-  const updateApproval = useCallback((id: string, update: Partial<ToolApprovalRequest>) => {
-    setApprovalRequests((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...update } : item)),
-    )
-  }, [])
 
   const appendApprovalTimeline = useCallback(
     (approval: ToolApprovalRequest, label: string, status: RunStatus) => {
@@ -2136,19 +2069,17 @@ export default function ChatPane({
         })
 
         const nextStatus: ApprovalStatus = confirmed ? 'allowed' : 'denied'
-        updateApproval(approval.id, { status: nextStatus })
         appendApprovalTimeline(
-          approval,
+          { ...approval, runId: activeRunIdRef.current ?? approval.runId },
           approvalStatusLabel(nextStatus),
           confirmed ? 'done' : 'aborted',
         )
       } catch (err) {
         const message = (err as Error).message ?? '审批处理失败'
-        updateApproval(approval.id, { status: 'pending', error: message })
         antdMessage.error(message)
       }
     },
-    [appendApprovalTimeline, updateApproval],
+    [appendApprovalTimeline],
   )
 
   const copyRunTimeline = useCallback(async () => {
@@ -2183,13 +2114,6 @@ export default function ChatPane({
                 ],
               }
             : run,
-        ),
-      )
-      setApprovalRequests((prev) =>
-        prev.map((item) =>
-          item.runId === runId && item.status === 'pending'
-            ? { ...item, status: 'denied', error: '用户停止运行，审批已取消' }
-            : item,
         ),
       )
     }
@@ -2460,6 +2384,10 @@ export default function ChatPane({
     async (mode: 'queue' | 'steer' = 'queue') => {
       const text = input.trim()
       if ((!text && images.length === 0) || !workspace || starting || agentIssue) return
+      if (images.length > 0 && runtimeCapabilities?.features.images === false) {
+        setError('当前 Pi Runtime 不支持图片输入')
+        return
+      }
       const imgs = images.length > 0 ? images : undefined
       setInput('')
       setImages([])
@@ -2486,7 +2414,7 @@ export default function ChatPane({
         }
       }
     },
-    [input, images, sending, workspace, starting, agentIssue, openGitDiff],
+    [input, images, sending, workspace, starting, agentIssue, runtimeCapabilities, openGitDiff],
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -2732,7 +2660,18 @@ export default function ChatPane({
               <span className={styles.paramLabel} style={{ marginBottom: 0 }}>自动压缩上下文</span>
               <Switch size="small" checked={autoCompaction} onChange={handleAutoCompaction} />
             </div>
-            <Button size="small" block loading={compacting} onClick={handleCompact}>
+            <Button
+              size="small"
+              block
+              loading={compacting}
+              disabled={runtimeCapabilities?.features.compact === false}
+              title={
+                runtimeCapabilities?.features.compact === false
+                  ? '当前 Pi Runtime 不支持上下文压缩'
+                  : undefined
+              }
+              onClick={handleCompact}
+            >
               立即压缩上下文
             </Button>
           </>
@@ -2818,6 +2757,10 @@ export default function ChatPane({
       .filter((f): f is File => f !== null)
     if (imageFiles.length === 0) return
     e.preventDefault()
+    if (runtimeCapabilities?.features.images === false) {
+      antdMessage.warning('当前 Pi Runtime 不支持图片输入')
+      return
+    }
     for (const file of imageFiles) {
       const reader = new FileReader()
       reader.onload = () => {

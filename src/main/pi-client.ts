@@ -1,27 +1,40 @@
 import { resolve } from 'path'
-import type {
-  AgentSessionEvent,
-  RpcClient as RpcClientType,
-} from '@earendil-works/pi-coding-agent'
 import type { ImageContent } from '@earendil-works/pi-ai'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
 import { saveSelectedModelRoute } from './settings'
 import { sandboxSessionPathToContainer, sandboxSessionPathToHost } from './sandbox'
 import type { CompiledRunProfile } from './run-profile'
-import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
+import type {
+  ExecutionSecuritySnapshot,
+  ExtensionUiResponse,
+  PiRuntimeEvent,
+} from '../shared/ipc/contract'
 import {
   loadRpcClient,
 } from './pi-process'
-import { startPiRuntime } from './pi-runtime'
+import { startPiRuntime, type PiAgentRunHandle } from './pi-runtime'
+import {
+  isBlockingExtensionUiMethod,
+  type BlockingExtensionUiMethod,
+} from './extension-ui-ownership'
 
 export { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath, resolvePiCliPath } from './pi-process'
 
-export type PiEventListener = (event: AgentSessionEvent) => void
+export type PiEventContext = {
+  sessionId: string
+  sessionFile: string | null
+  runActive: boolean
+  awaitingApproval: boolean
+  runStartedAt: number | null
+}
+export type PiEventListener = (event: PiRuntimeEvent, context: PiEventContext) => void
 export type AgentStatusEvent =
   | {
       status: 'started'
       cwd: string
       restoredSession: boolean
+      sessionId?: string
       sessionFile?: string
       /** 本工作区的 agent 是否跑在沙箱里(WSL bubblewrap / Docker 回退) */
       sandbox?: 'wsl' | 'docker'
@@ -35,18 +48,9 @@ export type AgentStatusListener = (event: AgentStatusEvent) => void
 /** 后台会话的运行状态变化(前台会话走完整的事件流)。 */
 export type SessionActivityEvent = { sessionFile: string | null; running: boolean }
 export type SessionActivityListener = (event: SessionActivityEvent) => void
+export type SessionActivatedListener = (context: PiEventContext) => void
 
-type RpcClient = RpcClientType
-
-type AgentProcessLike = {
-  stderr?: {
-    on: (event: 'data', listener: (chunk: Buffer | string) => void) => void
-  }
-  on: {
-    (event: 'exit', listener: (code: number | null, signal: string | null) => void): void
-    (event: 'error', listener: (err: Error) => void): void
-  }
-}
+type RpcClient = PiAgentRunHandle
 
 /**
  * 一轮是否还在跑。agent_end 之后 pi 可能还要重试或压缩后续跑,
@@ -94,11 +98,15 @@ type AgentEntry = {
   runId: number
   /** 会话文件在 agent 起来读到 state 之后才知道 */
   sessionFile: string | null
+  sessionId: string | null
   runActive: boolean
+  runStartedAt: number | null
   lastActivatedAt: number
   unsubscribe: (() => void) | null
   /** 后台会话弹出的扩展 UI 请求(工具审批等),等它切到前台再补发,否则没人应答会卡死 */
-  pendingUi: AgentSessionEvent[]
+  pendingUi: PiRuntimeEvent[]
+  /** 当前子进程实际持有、仍可回答的阻塞 UI 请求。 */
+  outstandingUi: Map<string, BlockingExtensionUiMethod>
 }
 
 type LaunchContext = CompiledRunProfile & { sandboxSessionPaths: boolean }
@@ -122,6 +130,7 @@ class PiClientManager {
   private onEvent: PiEventListener | null = null
   private onStatus: AgentStatusListener | null = null
   private onActivity: SessionActivityListener | null = null
+  private onActivated: SessionActivatedListener | null = null
 
   /** Pre-import the pi-coding-agent ESM graph so the first workspace open
    *  doesn't pay the module-load cost (hundreds of ms) on click. */
@@ -138,6 +147,7 @@ class PiClientManager {
     onStatus?: AgentStatusListener,
     onWorkspaceStopped?: (cwd: string) => Promise<void>,
     onActivity?: SessionActivityListener,
+    onActivated?: SessionActivatedListener,
   ): Promise<void> {
     const previousWorkspacePath = this.workspacePath
     const restoreSessionFile = previousWorkspacePath === cwd ? this.lastSessionFile : null
@@ -153,6 +163,7 @@ class PiClientManager {
     this.onEvent = onEvent
     this.onStatus = onStatus ?? null
     this.onActivity = onActivity ?? null
+    this.onActivated = onActivated ?? null
 
     const entry = await this.spawn(restoreSessionFile)
     this.activate(entry)
@@ -167,6 +178,7 @@ class PiClientManager {
       status: 'started',
       cwd,
       restoredSession: !!restoreSessionFile && entry.sessionFile === restoreSessionFile,
+      sessionId: entry.sessionId ?? `agent-${entry.runId}`,
       sessionFile: entry.sessionFile ?? undefined,
       sandbox: this.launch.sandboxMode ?? undefined,
       security: this.launch.security,
@@ -186,13 +198,16 @@ class PiClientManager {
       client,
       runId,
       sessionFile: null,
+      sessionId: null,
       runActive: false,
+      runStartedAt: null,
       lastActivatedAt: Date.now(),
       unsubscribe: null,
       pendingUi: [],
+      outstandingUi: new Map(),
     }
     this.attachAgentProcessLoggers(entry)
-    entry.unsubscribe = client.onEvent((event) => this.handleEvent(entry, event))
+    entry.unsubscribe = client.onEvent((event) => this.handleEvent(entry, event as PiRuntimeEvent))
     this.entries.push(entry)
 
     // 全新的 agent 上没有正在跑的一轮,这时候 switch_session 是安全的
@@ -215,6 +230,7 @@ class PiClientManager {
     try {
       const state = await client.getState()
       entry.sessionFile = this.toHostSessionPath(state?.sessionFile ?? null)
+      entry.sessionId = state?.sessionId ?? null
     } catch (err) {
       appendAppLog('warn', 'agent.state', 'Failed to read initial agent state', normalizeError(err))
     }
@@ -223,10 +239,21 @@ class PiClientManager {
     return entry
   }
 
-  private handleEvent(entry: AgentEntry, event: AgentSessionEvent): void {
+  private handleEvent(entry: AgentEntry, event: PiRuntimeEvent): void {
     entry.runActive = nextRunActive(entry.runActive, event.type)
+    if (event.type === 'agent_start') entry.runStartedAt = Date.now()
+    if (event.type === 'agent_settled') {
+      entry.runStartedAt = null
+      entry.outstandingUi.clear()
+    }
+    if (
+      event.type === 'extension_ui_request' &&
+      isBlockingExtensionUiMethod(event.method)
+    ) {
+      entry.outstandingUi.set(event.id, event.method)
+    }
     if (entry === this.active) {
-      this.onEvent?.(event)
+      this.onEvent?.(event, this.context(entry))
       return
     }
     // 后台会话:审批之类的请求先攒着,切回前台再补发;其余只上报运行状态给侧栏
@@ -238,8 +265,9 @@ class PiClientManager {
     this.active = entry
     entry.lastActivatedAt = Date.now()
     this.lastSessionFile = entry.sessionFile
+    this.onActivated?.(this.context(entry))
     const pending = entry.pendingUi.splice(0)
-    for (const event of pending) this.onEvent?.(event)
+    for (const event of pending) this.onEvent?.(event, this.context(entry))
   }
 
   private async evictIfNeeded(): Promise<void> {
@@ -256,7 +284,7 @@ class PiClientManager {
     this.expectedStopRunIds.add(entry.runId)
     this.entries = this.entries.filter((candidate) => candidate !== entry)
     if (this.active === entry) this.active = null
-    await entry.client.stop().catch(() => {})
+    await entry.client.dispose().catch(() => {})
     appendAppLog('info', 'agent.stop', 'Pi agent process stopped', {
       cwd: this.workspacePath,
       sessionFile: entry.sessionFile,
@@ -270,6 +298,7 @@ class PiClientManager {
     this.active = null
     this.workspacePath = null
     this.launch = null
+    this.onActivated = null
   }
 
   getWorkspacePath(): string | null {
@@ -299,6 +328,41 @@ class PiClientManager {
     return this.active.client
   }
 
+  private requireEntry(): AgentEntry {
+    if (!this.active) throw new Error('No workspace is open')
+    return this.active
+  }
+
+  private context(entry: AgentEntry): PiEventContext {
+    return {
+      sessionId: entry.sessionId ?? entry.sessionFile ?? `agent-${entry.runId}`,
+      sessionFile: entry.sessionFile,
+      runActive: entry.runActive,
+      awaitingApproval: entry.outstandingUi.size > 0,
+      runStartedAt: entry.runStartedAt,
+    }
+  }
+
+  getActiveSessionIdentity(): PiEventContext | null {
+    return this.active ? this.context(this.active) : null
+  }
+
+  getRuntimeCapabilities() {
+    return this.active?.client.capabilities ?? null
+  }
+
+  getActiveApprovalIds(): ReadonlySet<string> {
+    return new Set(
+      [...(this.active?.outstandingUi ?? [])]
+        .filter(([, method]) => method === 'confirm')
+        .map(([id]) => id),
+    )
+  }
+
+  getActiveUiRequestMethod(id: string): BlockingExtensionUiMethod | null {
+    return this.active?.outstandingUi.get(id) ?? null
+  }
+
   private toHostSessionPath(sessionFile: string | null): string | null {
     if (!sessionFile) return null
     return this.launch?.sandboxSessionPaths ? sandboxSessionPathToHost(sessionFile) : sessionFile
@@ -306,56 +370,53 @@ class PiClientManager {
 
   private attachAgentProcessLoggers(entry: AgentEntry): void {
     const cwd = this.launch?.cwd ?? ''
-    const child = (entry.client as unknown as { process?: AgentProcessLike }).process
-    if (!child) return
-
-    child.stderr?.on('data', (chunk) => {
-      const message = String(chunk).trim()
-      if (!message) return
-      appendAppLog('warn', 'agent.stderr', message, { cwd })
-    })
-
-    child.on('exit', (code, signal) => {
-      const expected = this.expectedStopRunIds.has(entry.runId)
-      appendAppLog(code === 0 ? 'info' : 'warn', 'agent.exit', 'Pi agent process exited', {
-        cwd,
-        sessionFile: entry.sessionFile,
-        code,
-        signal,
-        expected,
-      })
-      this.expectedStopRunIds.delete(entry.runId)
-      if (expected) return
-      const wasActive = this.active === entry
-      this.forgetEntry(entry)
-      // 后台会话崩了不该打翻前台:只报活动状态,前台崩了才走 agent 错误横幅
-      if (!wasActive) {
-        this.onActivity?.({ sessionFile: entry.sessionFile, running: false })
-        return
-      }
-      this.onStatus?.({
-        status: 'exited',
-        cwd,
-        code,
-        signal,
-        expected,
-        message:
-          code === null
-            ? `Agent process exited with signal ${signal ?? 'unknown'}`
-            : `Agent process exited with code ${code}`,
-      })
-    })
-
-    child.on('error', (err) => {
-      appendAppLog('error', 'agent.process', 'Pi agent process error', {
-        cwd,
-        sessionFile: entry.sessionFile,
-        error: normalizeError(err),
-      })
-      const wasActive = this.active === entry
-      this.forgetEntry(entry)
-      if (!wasActive) return
-      this.onStatus?.({ status: 'error', cwd, message: err.message ?? String(err) })
+    entry.client.observeProcess({
+      stderr: (chunk) => {
+        const message = String(chunk).trim()
+        if (!message) return
+        appendAppLog('warn', 'agent.stderr', message, { cwd })
+      },
+      exit: (code, signal) => {
+        const expected = this.expectedStopRunIds.has(entry.runId)
+        appendAppLog(code === 0 ? 'info' : 'warn', 'agent.exit', 'Pi agent process exited', {
+          cwd,
+          sessionFile: entry.sessionFile,
+          code,
+          signal,
+          expected,
+        })
+        this.expectedStopRunIds.delete(entry.runId)
+        if (expected) return
+        const wasActive = this.active === entry
+        this.forgetEntry(entry)
+        // 后台会话崩了不该打翻前台:只报活动状态,前台崩了才走 agent 错误横幅
+        if (!wasActive) {
+          this.onActivity?.({ sessionFile: entry.sessionFile, running: false })
+          return
+        }
+        this.onStatus?.({
+          status: 'exited',
+          cwd,
+          code,
+          signal,
+          expected,
+          message:
+            code === null
+              ? `Agent process exited with signal ${signal ?? 'unknown'}`
+              : `Agent process exited with code ${code}`,
+        })
+      },
+      error: (err) => {
+        appendAppLog('error', 'agent.process', 'Pi agent process error', {
+          cwd,
+          sessionFile: entry.sessionFile,
+          error: normalizeError(err),
+        })
+        const wasActive = this.active === entry
+        this.forgetEntry(entry)
+        if (!wasActive) return
+        this.onStatus?.({ status: 'error', cwd, message: err.message ?? String(err) })
+      },
     })
   }
 
@@ -367,7 +428,7 @@ class PiClientManager {
   }
 
   prompt(message: string, images?: ImageContent[]): Promise<void> {
-    return this.require().prompt(message, images)
+    return this.require().send(message, images)
   }
 
   steer(message: string, images?: ImageContent[]): Promise<void> {
@@ -379,24 +440,21 @@ class PiClientManager {
   }
 
   abort(): Promise<void> {
-    return this.require().abort()
+    const entry = this.requireEntry()
+    return entry.client.cancel('user requested abort').then(() => {
+      entry.outstandingUi.clear()
+    })
   }
 
   bash(command: string): ReturnType<RpcClient['bash']> {
     return this.require().bash(command)
   }
 
-  respondExtensionUi(response: {
-    type: 'extension_ui_response'
-    id: string
-    value?: string
-    confirmed?: boolean
-    cancelled?: true
-  }): void {
-    const client = this.require() as unknown as { process?: { stdin?: { write: (chunk: string) => void } } }
-    const stdin = client.process?.stdin
-    if (!stdin) throw new Error('Agent process stdin is not available')
-    stdin.write(`${JSON.stringify(response)}\n`)
+  respondExtensionUi(response: ExtensionUiResponse): { remainingBlockingRequests: number } {
+    const entry = this.requireEntry()
+    entry.client.respondExtensionUi(response)
+    entry.outstandingUi.delete(response.id)
+    return { remainingBlockingRequests: entry.outstandingUi.size }
   }
 
   /** 新聊天 = 新进程,当前会话该跑还跑。 */
@@ -422,12 +480,30 @@ class PiClientManager {
   }
 
   async getState(): Promise<Awaited<ReturnType<RpcClient['getState']>>> {
-    const state = await this.require().getState()
+    const entry = this.requireEntry()
+    const state = await entry.client.getState()
+    entry.sessionId = state.sessionId
+    const sessionFile = this.toHostSessionPath(state.sessionFile ?? null)
+    entry.sessionFile = sessionFile
+    if (this.active === entry) this.lastSessionFile = sessionFile
     if (!state?.sessionFile) return state
-    const sessionFile = this.toHostSessionPath(state.sessionFile)
-    if (this.active) this.active.sessionFile = sessionFile
-    this.lastSessionFile = sessionFile
     return sessionFile === state.sessionFile ? state : { ...state, sessionFile: sessionFile! }
+  }
+
+  async readActiveProjection(): Promise<{
+    sessionId: string
+    sessionFile: string | null
+    messages: AgentMessage[]
+  } | null> {
+    const entry = this.requireEntry()
+    const state = await entry.client.getState()
+    const sessionFile = this.toHostSessionPath(state.sessionFile ?? null)
+    entry.sessionId = state.sessionId
+    entry.sessionFile = sessionFile
+    const messages = await entry.client.getMessages()
+    if (this.active !== entry) return null
+    this.lastSessionFile = sessionFile
+    return { sessionId: state.sessionId, sessionFile, messages }
   }
 
   getMessages(): ReturnType<RpcClient['getMessages']> {

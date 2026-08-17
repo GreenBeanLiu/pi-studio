@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
-import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
+import {
+  PiRunTimeoutError,
+  runPromptToSettled,
+  startPiRuntime,
+  type PiAgentRunHandle,
+} from './pi-runtime'
 import { runProfileCompiler } from './run-profile'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
 import { prepareReviewedWebSearchExtension } from './web-search-extension'
@@ -355,13 +360,7 @@ function broadcast(channel: string, payload: unknown): void {
 
 /** agent 节点专属:RpcClient 只在第一次遇到 agent 节点时才拉起(纯生图/通知流程不需要 API Key) */
 type AgentSession = {
-  client: {
-    prompt: (text: string) => Promise<void>
-    waitForIdle: (timeout?: number) => Promise<void>
-    abort: () => Promise<void>
-    getMessages: () => Promise<unknown>
-    stop: () => Promise<void>
-  } | null
+  client: PiAgentRunHandle | null
 }
 
 async function ensureAgentClient(routine: Routine, session: AgentSession): Promise<NonNullable<AgentSession['client']>> {
@@ -808,7 +807,7 @@ async function executeRoutine(
         }
       }
     } finally {
-      await session.client?.stop().catch(() => {})
+      await session.client?.dispose().catch(() => {})
     }
   } catch (err) {
     status = timedOut ? 'timeout' : 'error'

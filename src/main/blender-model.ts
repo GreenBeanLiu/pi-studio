@@ -282,7 +282,7 @@ async function generateBlenderModel(payload: {
       }
       if (!ok) throw new Error(`Blender 执行失败(已重试 ${REPAIR_ROUNDS} 轮): ${lastError.slice(0, 300)}`)
     } finally {
-      await client.stop().catch(() => {})
+      await client.dispose().catch(() => {})
     }
 
     pr('exporting')
