@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
 import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
@@ -71,41 +71,50 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [agentRunning, setAgentRunning] = useState(false)
 
   useEffect(() => {
-    Promise.all([api.workspace.list(), api.settings.load()])
-      .then(([workspaces, settings]) => {
-        setRecentWorkspaces(workspaces)
+    void (async () => {
+      let workspaces: Workspace[] = []
+      try {
+        const [recent, settings] = await Promise.all([api.workspace.list(), api.settings.load()])
+        workspaces = recent
+        setRecentWorkspaces(recent)
         if (!settings.modelAccessConfigured) {
           setShowWorkspacePicker(false)
           setWorkspaceError('请先配置模型服务 API Key，然后再打开工作区。')
           setShowSettings(true)
+          return
         }
-      })
-      .catch(() => {})
+      } catch {
+        return
+      }
 
-    // renderer reload / 重挂载后,main 里的 agent 可能还活着 —— 先取权威快照
-    // 恢复工作区与沙箱状态,而不是让用户回到选工作区、agent 却在后台空转。
-    api.pi
-      .getRuntimeSnapshot()
-      .then((snap) => {
-        if (!snap.workspacePath) return
-        if (snap.phase === 'idle' || snap.phase === 'running' || snap.phase === 'awaiting_approval') {
-          const name = snap.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? snap.workspacePath
-          setWorkspace((current) =>
-            current ?? { path: snap.workspacePath!, name, lastOpenedAt: new Date().toISOString() },
-          )
-          setShowWorkspacePicker(false)
-          setSandboxMode(snap.sandbox)
-          setExecutionSecurity(snap.security)
-        } else if (snap.phase === 'error' && snap.error) {
-          setWorkspaceError(snap.error.message)
-        }
-      })
-      .catch(() => {})
+      // renderer reload / 重挂载后,main 里的 agent 可能还活着 —— 先取权威快照
+      // 恢复工作区与沙箱状态,而不是让用户回到选工作区、agent 却在后台空转。
+      const snap = await api.pi.getRuntimeSnapshot().catch(() => null)
+      if (snap?.workspacePath && snap.phase !== 'closed' && snap.phase !== 'error') {
+        adoptWorkspacePath(snap.workspacePath)
+        setSandboxMode(snap.sandbox)
+        setExecutionSecurity(snap.security)
+        return
+      }
+      if (snap?.phase === 'error' && snap.error) {
+        setWorkspaceError(snap.error.message)
+        return
+      }
+
+      // 冷启动没有活着的 agent:直接打开最近一个工作区。停在选择器上时,手机远程
+      // 连过来每条指令都是 NO_WORKSPACE,而人多半不在电脑前,没法点那一下。
+      if (workspaces[0]) await openWorkspace(workspaces[0].path)
+    })()
 
     // agent 是否在跑以 main 的权威快照为准,快捷键条件(Ctrl+.)据此启用
     const offRuntime = api.pi.onRuntime((snap) => {
       setAgentRunning(snap.phase === 'running' || snap.phase === 'awaiting_approval')
       setExecutionSecurity(snap.security)
+      // 工作区也可能是手机远程开的,桌面这边得跟上 —— 否则界面停在选择器上,
+      // agent 却已经在后台跑起来了。
+      if (snap.workspacePath && snap.phase !== 'closed' && snap.phase !== 'error') {
+        adoptWorkspacePath(snap.workspacePath)
+      }
     })
 
     const offAvail = api.update.onAvailable(({ version }) =>
@@ -144,6 +153,20 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     return off
   }, [workspace?.path])
 
+  // UI 已经认下的工作区路径。本地打开和远程打开都更新它,runtime 事件据此分辨
+  // 「这是个新工作区」还是「刚才那次打开的回声」,免得白白 remount 一次 ChatPane。
+  const adoptedPathRef = useRef<string | null>(null)
+
+  function adoptWorkspacePath(path: string): void {
+    if (adoptedPathRef.current === path) return
+    adoptedPathRef.current = path
+    const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path
+    setWorkspace({ path, name, lastOpenedAt: new Date().toISOString() })
+    setWorkspaceError(null)
+    setShowWorkspacePicker(false)
+    setSessionEpoch((n) => n + 1)
+  }
+
   // Optimistic open: close the picker immediately and show a "starting"
   // chat pane — the agent subprocess takes 1–3s to boot, and blocking the
   // modal on it reads as a UI freeze.
@@ -153,12 +176,14 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     setAgentIssue(null)
     setShowWorkspacePicker(false)
     setOpening(true)
+    adoptedPathRef.current = path
     setWorkspace({ path, name, lastOpenedAt: new Date().toISOString() })
     const result = await api.workspace.open(path)
     setOpening(false)
     if ('error' in result) {
       // startWorkspace stops the old subprocess before failing, so no
       // workspace is actually open now — reflect that honestly.
+      adoptedPathRef.current = null
       setWorkspace(null)
       setSandboxMode(null)
       setExecutionSecurity(null)

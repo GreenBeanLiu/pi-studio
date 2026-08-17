@@ -23,6 +23,7 @@ import {
   ShieldAlert,
   Activity,
   Wrench,
+  Copy,
 } from 'lucide-react'
 import {
   api,
@@ -313,6 +314,42 @@ const useStyles = createStyles(({ token, css }) => ({
   msgContentUser: css`
     align-items: flex-end;
     max-width: 70%;
+  `,
+
+  /* 复制按钮常驻会让每条消息都挂个图标,太吵;hover 出现即可。
+     focus-within 单独留着,键盘 Tab 过来时不能是隐形的。 */
+  msgActions: css`
+    display: flex;
+    gap: 4px;
+    height: 20px;
+    opacity: 0;
+    transition: opacity ${token.motionDurationFast};
+
+    .chat-msg-row:hover &,
+    &:focus-within {
+      opacity: 1;
+    }
+  `,
+
+  msgActionBtn: css`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    padding: 0 6px;
+    height: 20px;
+    border-radius: ${token.borderRadiusSM}px;
+    border: none;
+    background: transparent;
+    color: ${token.colorTextTertiary};
+    cursor: pointer;
+    outline: none;
+    font-family: ${token.fontFamily};
+
+    &:hover {
+      background: ${token.colorFillTertiary};
+      color: ${token.colorText};
+    }
   `,
 
   avatarBox: css`
@@ -1112,9 +1149,11 @@ const useStyles = createStyles(({ token, css }) => ({
     padding: 0;
   `,
 
+  /* bottom 要够高:贴着输入区放的话会和输入框上那排「模型 / 运行 / 记忆」挤在
+     一起,想点回到底部反而先碰到那排按钮。 */
   scrollBottomBtn: css`
     position: absolute;
-    bottom: 20px;
+    bottom: 64px;
     left: 50%;
     transform: translateX(-50%);
     width: 32px;
@@ -1129,7 +1168,7 @@ const useStyles = createStyles(({ token, css }) => ({
     cursor: pointer;
     box-shadow: ${token.boxShadow};
     outline: none;
-    z-index: 10;
+    z-index: 100;
   `,
 }))
 
@@ -1393,6 +1432,8 @@ export default function ChatPane({
   // Follow the stream only while the user is at the bottom; scrolling up
   // pauses following so reading history isn't fought by auto-scroll.
   const [autoFollow, setAutoFollow] = useState(true)
+  /** 模型与参数弹层受控:选中模型后要能立刻收起,不然看着像没选上。 */
+  const [paramsOpen, setParamsOpen] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
   // pi 的自动重试(默认 3 次、2/4/8s 退避)期间进程只是在 sleep,不显示出来
@@ -2580,6 +2621,8 @@ export default function ChatPane({
     try {
       const result = await api.pi.setModel(key.slice(0, sep), key.slice(sep + 2))
       setCurrentModel(result)
+      // 选完就收起。弹层赖着不走的话,得点旁边空白处才关,像是"没选上"。
+      setParamsOpen(false)
     } catch (err) {
       setError((err as Error).message ?? '切换模型失败')
     }
@@ -3321,6 +3364,8 @@ export default function ChatPane({
                   placement="topLeft"
                   mouseEnterDelay={0.15}
                   mouseLeaveDelay={0.25}
+                  open={paramsOpen}
+                  onOpenChange={setParamsOpen}
                   content={paramsPanel}
                 >
                   <button className={styles.modelChip} title="模型与参数">
@@ -3471,6 +3516,47 @@ function ToolCallGroup({
   )
 }
 
+/** 气泡里可复制的原文:用户消息取文本块,assistant 取正文(不含思考和工具调用)。 */
+function copyableTextOf(msg: AgentMessage): string {
+  const content = (msg as { content?: unknown }).content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((block) => (block as { type?: string }).type === 'text')
+    .map((block) => (block as { text?: string }).text ?? '')
+    .join('')
+    .trim()
+}
+
+/** 一轮断掉之后想把刚发出去的原文捞回来,现在只能靠手选 —— 给个按钮。 */
+function CopyMessageButton({
+  text,
+  styles,
+}: {
+  text: string
+  styles: StylesType
+}): ReactNode {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className={styles.msgActionBtn}
+      title="复制这条消息的原文"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        } catch (err) {
+          antdMessage.error((err as Error).message ?? '复制失败')
+        }
+      }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? '已复制' : '复制'}
+    </button>
+  )
+}
+
 // memo: during streaming only the message being updated changes reference,
 // so earlier bubbles skip re-rendering (and re-parsing their Markdown).
 const MessageBubble = memo(function MessageBubble({
@@ -3487,9 +3573,10 @@ const MessageBubble = memo(function MessageBubble({
   if (msg.role !== 'user' && msg.role !== 'assistant') return null
 
   const isUser = msg.role === 'user'
+  const copyable = copyableTextOf(msg)
 
   return (
-    <div className={cx(styles.msgRow, isUser && styles.msgRowUser)}>
+    <div className={cx('chat-msg-row', styles.msgRow, isUser && styles.msgRowUser)}>
       <div className={cx(styles.avatarBox, isUser ? styles.userAvatar : styles.agentAvatar)}>
         {isUser ? '我' : 'π'}
       </div>
@@ -3560,6 +3647,11 @@ const MessageBubble = memo(function MessageBubble({
             {msg.role === 'assistant' && msg.errorMessage && (
               <div className={styles.errorText}>{msg.errorMessage}</div>
             )}
+          </div>
+        )}
+        {copyable && (
+          <div className={styles.msgActions}>
+            <CopyMessageButton text={copyable} styles={styles} />
           </div>
         )}
       </div>

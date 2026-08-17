@@ -1,4 +1,4 @@
-import { resolve } from 'path'
+import { resolve, win32 } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
@@ -59,6 +59,12 @@ export type SessionActivatedListener = (context: PiEventContext) => void
 type RpcClient = PiAgentRunHandle
 
 /**
+ * 没打开工作区时每条 RPC 都抛这个。手机端要按它区分「桌面没开工作目录」和
+ * 别的失败(见 remote-control 的 NO_WORKSPACE),所以文案单独拎出来共用。
+ */
+export const NO_WORKSPACE_ERROR = 'No workspace is open'
+
+/**
  * 一轮是否还在跑。agent_end 之后 pi 可能还要重试或压缩后续跑,
  * agent_settled 才是这一轮真正结束的点(和 AgentRuntimeTracker 保持同一口径)。
  */
@@ -71,6 +77,9 @@ export function nextRunActive(current: boolean, eventType: string): boolean {
 /** 同时保活的 agent 进程上限(每个约 150MB)。超了就回收最久没用的空闲会话。 */
 export const MAX_LIVE_AGENTS = 4
 
+/** Windows 盘符或 UNC 路径。一个账户下 Mac 和 Windows 都能被同一台手机控制。 */
+const WINDOWS_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/
+
 /**
  * 会话文件的比较键。手机端传来的路径没经过 main 的规范化(桌面 IPC 走 parseSessionPath),
  * 分隔符或大小写差一点就会认不出"这个会话已经有进程了",于是又起一个 —— 两个 agent
@@ -78,8 +87,12 @@ export const MAX_LIVE_AGENTS = 4
  */
 export function sessionKey(sessionFile: string | null): string | null {
   if (!sessionFile) return null
-  const normalized = resolve(sessionFile)
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  if (process.platform === 'win32') return resolve(sessionFile).toLowerCase()
+  // mac / Linux 上 resolve() 不认反斜杠,会把整条 Windows 路径当成一个文件名,
+  // 还会给它拼上 cwd —— 手机端把那台 Windows 电脑的会话路径发过来时就认不出
+  // "这个会话已经有进程了"。用 win32 的解析规则处理,两种写法才会落到同一个键。
+  if (WINDOWS_PATH.test(sessionFile)) return win32.resolve(sessionFile).toLowerCase()
+  return resolve(sessionFile)
 }
 
 type EvictionCandidate = { runActive: boolean; lastActivatedAt: number }
@@ -194,7 +207,7 @@ class PiClientManager {
   /** 起一个新的 agent 进程;restoreSessionFile 非空时让它接管那个已有会话。 */
   private async spawn(restoreSessionFile: string | null): Promise<AgentEntry> {
     const launch = this.launch
-    if (!launch) throw new Error('No workspace is open')
+    if (!launch) throw new Error(NO_WORKSPACE_ERROR)
 
     const client = await startPiRuntime(launch)
     const job = this.jobs.register({
@@ -402,12 +415,12 @@ class PiClientManager {
   }
 
   private require(): RpcClient {
-    if (!this.active) throw new Error('No workspace is open')
+    if (!this.active) throw new Error(NO_WORKSPACE_ERROR)
     return this.active.client
   }
 
   private requireEntry(): AgentEntry {
-    if (!this.active) throw new Error('No workspace is open')
+    if (!this.active) throw new Error(NO_WORKSPACE_ERROR)
     return this.active
   }
 
@@ -549,7 +562,7 @@ class PiClientManager {
 
   /** 新聊天 = 新进程,当前会话该跑还跑。 */
   async newSession(): Promise<{ cancelled: boolean }> {
-    if (!this.launch) throw new Error('No workspace is open')
+    if (!this.launch) throw new Error(NO_WORKSPACE_ERROR)
     const entry = await this.spawn(null)
     this.activate(entry)
     return { cancelled: false }
@@ -557,7 +570,7 @@ class PiClientManager {
 
   /** 切聊天 = 换看哪个进程;没有进程的会话就现起一个来接管。 */
   async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-    if (!this.launch) throw new Error('No workspace is open')
+    if (!this.launch) throw new Error(NO_WORKSPACE_ERROR)
     const wanted = sessionKey(sessionPath)
     const existing = this.entries.find((entry) => sessionKey(entry.sessionFile) === wanted)
     if (existing) {

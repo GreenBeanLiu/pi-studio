@@ -18,6 +18,10 @@ export type LlmProviderProfile = {
   enabled: boolean
   sort_order: number
   has_key: boolean
+  /** 探活确认调不通、刷新时被剔除的模型(仅刷新响应里带)。 */
+  unavailable_models?: string[]
+  /** 上游有、但本线路还没配上的模型;刷新只报不加,由用户决定(仅刷新响应里带)。 */
+  new_models?: string[]
 }
 
 export type LlmProfileWrite = {

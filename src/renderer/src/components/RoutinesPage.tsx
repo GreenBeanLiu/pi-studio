@@ -6,6 +6,7 @@ import {
   Dropdown,
   Empty,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -127,7 +128,7 @@ const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
     ? {
         imageRef: '{{prev.imageUrl}}',
         appName: '',
-        path: '.pi-studio/app-icons/{{routine.name}}',
+        path: '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
         backgroundColor: '',
         platforms: ['android', 'ios', 'macos', 'windows'] as const,
       }
@@ -172,7 +173,7 @@ function appIconWorkflowTemplate(workspacePath: string): FormState {
         name: '导出四端图标包',
         imageRef: '{{steps.应用图标母图.imageUrl}}',
         appName: '',
-        path: '.pi-studio/app-icons/{{routine.name}}',
+        path: '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
         backgroundColor: '',
         platforms: ['android', 'ios', 'macos', 'windows'],
       },
@@ -728,7 +729,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
             ? {
                 imageRef: step.imageRef ?? '{{prev.imageUrl}}',
                 appName: step.appName ?? '',
-                path: step.path ?? '.pi-studio/app-icons/{{routine.name}}',
+                path: step.path ?? '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
                 backgroundColor: step.backgroundColor ?? '',
                 platforms: step.platforms ?? ['android', 'ios', 'macos', 'windows'],
               }
@@ -1147,7 +1148,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                           value={step.path ?? ''}
                           onChange={(e) => updateStep(step.id, { path: e.target.value })}
                           addonBefore="输出目录"
-                          placeholder=".pi-studio/app-icons/{{routine.name}}"
+                          placeholder=".pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}"
                         />
                         <Input
                           value={step.backgroundColor ?? ''}
@@ -1178,8 +1179,26 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                             ]}
                           />
                         </div>
+                        <div className={styles.formRow}>
+                          <span className={styles.hint}>保留最近</span>
+                          <InputNumber
+                            value={step.keepHistory ?? null}
+                            onChange={(value) =>
+                              updateStep(step.id, { keepHistory: value ?? undefined })
+                            }
+                            min={1}
+                            max={999}
+                            precision={0}
+                            placeholder="留空 = 全部保留"
+                            addonAfter="次"
+                            style={{ flex: 1 }}
+                          />
+                        </div>
                         <span className={styles.hint}>
-                          母图至少 1024×1024；输出目录须位于 .pi-studio/app-icons/ 的独立子目录。导出 Android
+                          母图至少 1024×1024；输出目录须位于 .pi-studio/app-icons/ 的独立子目录。可用{' '}
+                          {'{{trigger.stamp}}'} 让每次生成各占一个目录；目录重名时会自动顺延 -2、-3，不会覆盖上一次的结果。
+                          填了「保留最近 N 次」就只留最新的 N 次，更旧的连同 .zip
+                          一起删掉（只删本工作流自己生成、带 pi-studio manifest 的目录）。导出 Android
                           自适应资源、Xcode Asset Catalog、macOS iconset / Icon Composer 图层和 Windows ICO。
                         </span>
                       </>
@@ -1565,7 +1584,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                         <div className={styles.nodeSub}>⏸ {step.message || '等待人工审核后继续'}</div>
                       ) : step.type === 'app-icon' ? (
                         <div className={styles.nodeSub}>
-                          → {step.path || '.pi-studio/app-icons/app-icon-bundle'} ·{' '}
+                          → {step.path || '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}'} ·{' '}
                           {(step.platforms ?? ['android', 'ios', 'macos', 'windows']).join(' / ')}
                         </div>
                       ) : (

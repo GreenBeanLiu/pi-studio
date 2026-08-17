@@ -16,6 +16,7 @@ import { runDressupWorkflow } from './dressup'
 import type { AppIconPlatform } from './app-icon-spec'
 import { loadChannels, sendToChannel, createFeishuDoc, createWechatDraft, type Channel } from './channels'
 import { appendAppLog, normalizeError } from './app-log'
+import { remoteControl } from './remote-control'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
 import type { RoutineStepType as SharedRoutineStepType } from '../shared/ipc/contract'
@@ -74,6 +75,8 @@ export type RoutineStep = {
   platforms?: AppIconPlatform[]
   /** app-icon:需要不透明底图的平台使用的品牌背景色 */
   backgroundColor?: string
+  /** app-icon:同一个工作流最多保留几次生成;留空或 <=0 就一直堆着 */
+  keepHistory?: number
   /** dressup:人物图与服装图，支持模板、工作区相对路径、data URL 或公网 URL */
   personRef?: string
   garmentRef?: string
@@ -156,6 +159,9 @@ const MAX_RUNS_KEPT = 100
 const MAX_CONCURRENT = 2
 const MAX_STEP_OUTPUT_CHARS = 60_000
 const REVIEW_TIMEOUT_MS = 30 * 60 * 1000
+/** 发给手机的运行历史条数和每条正文长度 —— 一帧 WebSocket 装得下,手机上也看得完 */
+const REMOTE_RUNS_KEPT = 30
+const REMOTE_RUN_SUMMARY_CHARS = 600
 
 const storePath = (): string => join(app.getPath('userData'), 'routines.json')
 const databasePath = (): string => join(app.getPath('userData'), 'routines.sqlite3')
@@ -165,6 +171,7 @@ let jsonDeleteOutbox: JsonWorkflowDeleteOutbox | null = null
 
 type PendingReview = {
   routineId: string
+  // 手机可能在广播之后才连上来(锁屏、切后台、换网),没有原始请求就补不回去
   request: RoutineReviewRequest
   approve: () => void
   reject: (error: Error) => void
@@ -198,6 +205,19 @@ function throwIfWorkflowCancelled(signal: AbortSignal): void {
 // 保留当前运行中工作流的最新节点状态。页面切换会卸载 RoutinesPage，
 // 回来时通过 routines:state 恢复这份快照，而不是等下一次事件广播。
 const liveStepProgress = new Map<string, Map<string, RoutineStepProgress>>()
+
+/** 桌面和手机走同一条路:审核只能应一次,谁先点谁生效。 */
+function respondToReview(
+  reviewId: string,
+  decision: 'approve' | 'reject',
+  comment?: string,
+): { ok: true } | { error: string } {
+  const pending = pendingReviews.get(reviewId)
+  if (!pending) return { error: '审核请求已过期或工作流已结束' }
+  if (decision === 'approve') pending.approve()
+  else pending.reject(new Error(comment?.trim() || '人工审核拒绝'))
+  return { ok: true }
+}
 
 function cancelPendingReviews(routineId: string, reason: string): void {
   for (const [reviewId, pending] of pendingReviews) {
@@ -390,8 +410,19 @@ function routineNodeSchemas<K extends RoutineStepType>(type: K) {
 type RunContext = {
   routine: Routine
   triggerTime: string
+  /** 可直接进文件名的时间戳:{{trigger.time}} 是本地化文本,带冒号和斜杠,进不了路径。 */
+  triggerStamp: string
   products: Map<string, StepProduct> // key = step name
   prev?: StepProduct
+}
+
+/** YYYYMMDD-HHmmss,本地时区。Windows 也能当目录名。 */
+function pathStamp(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  )
 }
 
 /**
@@ -407,6 +438,7 @@ function interpolate(template: string, ctx: RunContext): string {
     if (token === 'routine.workspace') return ctx.routine.workspacePath
     if (token === 'routine.input') return ctx.routine.input ?? ''
     if (token === 'trigger.time') return ctx.triggerTime
+    if (token === 'trigger.stamp') return ctx.triggerStamp
     if (token.startsWith('steps.')) {
       const rest = token.slice('steps.'.length)
       const dot = rest.lastIndexOf('.')
@@ -452,6 +484,9 @@ function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
+  // 手机也是一块屏。人工审核节点尤其要出去 —— 它是阻塞式的,没人应就超时把整条
+  // 工作流拖死,而人多半不在电脑前。
+  remoteControl.forwardHostEvent(channel, payload)
 }
 
 /** agent 节点专属:RpcClient 只在第一次遇到 agent 节点时才拉起(纯生图/通知流程不需要 API Key) */
@@ -580,7 +615,10 @@ async function runAppIconStep(
 ): Promise<StepProduct> {
   const source = interpolate((step.imageRef ?? '{{prev.imageUrl}}').trim(), ctx).trim()
   if (!source || source.includes('{{')) throw new Error('应用图标节点需要上游生图链接或工作区内的母图路径')
-  const outputPath = interpolate(step.path?.trim() || '.pi-studio/app-icons/app-icon-bundle', ctx)
+  const outputPath = interpolate(
+    step.path?.trim() || '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
+    ctx,
+  )
   const result = await generateAppIconBundle(
     {
       source,
@@ -588,12 +626,18 @@ async function runAppIconStep(
       outputPath,
       appName: interpolate(step.appName?.trim() || '', ctx),
       backgroundColor: interpolate(step.backgroundColor?.trim() || '', ctx),
-      platforms: step.platforms?.length ? step.platforms : ['android', 'ios', 'macos', 'windows'],
+      platforms: step.platforms?.length
+        ? step.platforms
+        : ['android', 'ios', 'macos', 'windows'],
+      keepHistory: step.keepHistory,
     },
     signal,
   )
+  const cleaned = result.removedHistory.length
+    ? `\n\n按保留上限清理了 ${result.removedHistory.length} 次历史生成: ${result.removedHistory.join('、')}`
+    : ''
   return {
-    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}${result.warnings.length ? `\n\n检测警告:\n${result.warnings.map((warning) => `- ${formatAppIconWarning(warning)}`).join('\n')}` : ''}`,
+    output: `已生成 ${result.fileCount} 个应用图标资源文件: ${result.archivePath}${result.warnings.length ? `\n\n检测警告:\n${result.warnings.map((warning) => `- ${formatAppIconWarning(warning)}`).join('\n')}` : ''}${cleaned}`,
     artifactPath: result.archivePath,
   }
 }
@@ -1003,9 +1047,11 @@ async function executeRoutine(
     ? (channels.find((c) => c.id === routine.notifyChannelId && c.type !== 'wechat-official') ??
       channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official'))
     : undefined
+  const triggeredAt = new Date()
   const ctx: RunContext = {
     routine,
-    triggerTime: new Date().toLocaleString(),
+    triggerTime: triggeredAt.toLocaleString(),
+    triggerStamp: pathStamp(triggeredAt),
     products: new Map(),
   }
   const journal = (type: WorkflowRunEventType, stepId: string | null, payload: Record<string, unknown>): void => {
@@ -1399,29 +1445,42 @@ export function registerRoutines(): void {
   })
 
   ipcMain.handle('routines:toggle', (_e, id: string, enabled: boolean) => {
-    const r = store.routines.find((x) => x.id === id)
-    if (r) {
-      r.enabled = enabled
-      if (!enabled) {
-        scheduler.cancel(id)
-        cancelPendingReviews(id, '工作流已停用，审核请求已取消')
-      }
-      saveStore(store)
-    }
+    setRoutineEnabled(id, enabled)
     return store.routines
   })
 
-  ipcMain.handle('routines:runNow', (_e, id: string) => {
+  // 手机和桌面共用。失败带上 code —— 「不存在」「正在跑」「到并发上限了」在手机上
+  // 该给三种不同的提示,光靠一句中文字符串区分不了。
+  const runRoutineNow = (id: string): { ok: true } | { error: string; code: string } => {
     const r = store.routines.find((x) => x.id === id)
-    if (!r) return { error: '任务不存在' }
-    if (scheduler.has(r.id)) return { error: '该任务正在执行或排队' }
-    if (!scheduler.hasCapacity()) return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务` }
+    if (!r) return { error: '任务不存在', code: 'ROUTINE_NOT_FOUND' }
+    if (scheduler.has(r.id)) return { error: '该任务正在执行或排队', code: 'ROUTINE_BUSY' }
+    if (!scheduler.hasCapacity()) {
+      return { error: `最多同时执行 ${MAX_CONCURRENT} 个任务`, code: 'ROUTINE_LIMIT' }
+    }
     r.lastRunAt = Date.now()
     triggerSources.set(r.id, 'manual')
     saveStore(store)
     scheduler.enqueue(r)
     return { ok: true }
-  })
+  }
+
+  const setRoutineEnabled = (
+    id: string,
+    enabled: boolean,
+  ): { ok: true } | { error: string; code: string } => {
+    const r = store.routines.find((x) => x.id === id)
+    if (!r) return { error: '任务不存在', code: 'ROUTINE_NOT_FOUND' }
+    r.enabled = enabled
+    if (!enabled) {
+      scheduler.cancel(id)
+      cancelPendingReviews(id, '工作流已停用，审核请求已取消')
+    }
+    saveStore(store)
+    return { ok: true }
+  }
+
+  ipcMain.handle('routines:runNow', (_e, id: string) => runRoutineNow(id))
 
   ipcMain.handle('routines:cancel', (_e, id: string) => {
     const cancelled = scheduler.cancel(id)
@@ -1435,14 +1494,46 @@ export function registerRoutines(): void {
     pendingReviews: [...pendingReviews.values()].map((pending) => pending.request),
   }))
 
-  ipcMain.handle('routines:reviewRespond', (_e, reviewId: string, decision: 'approve' | 'reject', comment?: string) => {
-    const pending = pendingReviews.get(reviewId)
-    if (!pending) return { error: '审核请求已过期或工作流已结束' }
-    if (decision === 'approve') {
-      pending.approve()
-    } else {
-      pending.reject(new Error(comment?.trim() || '人工审核拒绝'))
-    }
-    return { ok: true }
+  ipcMain.handle(
+    'routines:reviewRespond',
+    (_e, reviewId: string, decision: 'approve' | 'reject', comment?: string) =>
+      respondToReview(reviewId, decision, comment),
+  )
+
+  // review 节点是阻塞式的,超时就把整条工作流拖死 —— 人在不在电脑前不该决定它的生死
+  remoteControl.setReviewHost({
+    list: () => [...pendingReviews.values()].map((pending) => pending.request),
+    respond: respondToReview,
+  })
+
+  remoteControl.setRoutineHost({
+    list: () => ({
+      routines: store.routines.map((routine) => ({
+        id: routine.id,
+        name: routine.name,
+        enabled: routine.enabled,
+        stepCount: routine.steps.length,
+        schedule: routine.schedule,
+        workspacePath: routine.workspacePath,
+        createdAt: routine.createdAt,
+        ...(routine.lastRunAt ? { lastRunAt: routine.lastRunAt } : {}),
+      })),
+      // 手机上只回看最近这些;每步产物(steps)一律不带,那才是 store 的大头
+      runs: store.runs.slice(-REMOTE_RUNS_KEPT).reverse().map((run) => ({
+        id: run.id,
+        routineId: run.routineId,
+        routineName: run.routineName,
+        startedAt: run.startedAt,
+        endedAt: run.endedAt,
+        status: run.status,
+        ...(run.triggerSource ? { triggerSource: run.triggerSource } : {}),
+        summary: run.summary.slice(0, REMOTE_RUN_SUMMARY_CHARS),
+        ...(run.error ? { error: run.error.slice(0, REMOTE_RUN_SUMMARY_CHARS) } : {}),
+      })),
+      ...scheduler.getState(),
+      progress: [...liveStepProgress.values()].flatMap((steps) => [...steps.values()]),
+    }),
+    run: runRoutineNow,
+    toggle: setRoutineEnabled,
   })
 }

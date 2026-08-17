@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./pi-client', () => ({
+  NO_WORKSPACE_ERROR: 'No workspace is open',
   piClientManager: {
     prompt: mocks.prompt,
     steer: mocks.steer,
@@ -48,7 +49,7 @@ vi.mock('./model-catalog', () => ({
   },
 }))
 
-import { remoteControl } from './remote-control'
+import { HOST_EVENT_CHANNELS, SUPPORTED_COMMANDS, remoteControl } from './remote-control'
 
 type Listener = (event: { data?: string }) => void
 
@@ -74,7 +75,10 @@ class FakeWebSocket {
     this.sent.push(data)
   }
 
+  closed = false
+
   close(): void {
+    this.closed = true
     this.emit('close')
   }
 
@@ -193,13 +197,31 @@ describe('remote-control command protocol', () => {
   })
 
   it('returns command failures in the top-level error field', async () => {
-    mocks.prompt.mockRejectedValue(new Error('No workspace is open'))
+    mocks.prompt.mockRejectedValue(new Error('agent is busy'))
     const ws = await connect()
 
     ws.receive({ id: 8, type: 'prompt', text: 'run' })
 
     await vi.waitFor(() =>
-      expect(ws.lastSent()).toEqual({ type: 'result', id: 8, error: 'No workspace is open' }),
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 8, error: 'agent is busy' }),
+    )
+  })
+
+  // 手机端据此弹「打开工作目录」而不是笼统报一句失败 —— 桌面冷启动后没人点
+  // 「打开工作区」时,每条指令都会走到这里。
+  it('codes a closed workspace so the phone can offer to open one', async () => {
+    mocks.getAvailableModels.mockRejectedValue(new Error('No workspace is open'))
+    const ws = await connect()
+
+    ws.receive({ id: 30, type: 'getAvailableModels' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 30,
+        error: 'No workspace is open',
+        code: 'NO_WORKSPACE',
+      }),
     )
   })
 
@@ -236,6 +258,389 @@ describe('remote-control command protocol', () => {
       expect(ws.lastSent()).toEqual({ type: 'result', id: 9, data: sessions }),
     )
     expect(mocks.listSessions).toHaveBeenCalledWith('/sessions', '/workspace')
+  })
+
+  it('lets the phone list and open workspaces while none is open', async () => {
+    const recent = [{ path: '/Users/me/Works', name: 'Works', lastOpenedAt: '2026-08-08T00:00:00Z' }]
+    const open = vi.fn().mockResolvedValue({ ok: true, recentWorkspaces: recent })
+    mocks.getWorkspacePath.mockReturnValue(null)
+    remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent }), open })
+    const ws = await connect()
+
+    ws.receive({ id: 40, type: 'listWorkspaces' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 40,
+        data: { current: null, recent },
+      }),
+    )
+
+    ws.receive({ id: 41, type: 'openWorkspace', path: '  /Users/me/Works  ' })
+    await vi.waitFor(() => expect(open).toHaveBeenCalledWith('/Users/me/Works'))
+    expect(ws.lastSent()).toEqual({
+      type: 'result',
+      id: 41,
+      data: { workspacePath: '/Users/me/Works', recent },
+    })
+  })
+
+  it('reports a rejected workspace path and a failed open separately', async () => {
+    const open = vi.fn().mockResolvedValue({ error: '启动工作区失败' })
+    remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open })
+    const ws = await connect()
+
+    ws.receive({ id: 42, type: 'openWorkspace', path: '   ' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 42,
+        error: 'workspace path is required',
+        code: 'INVALID_PATH',
+      }),
+    )
+    expect(open).not.toHaveBeenCalled()
+
+    ws.receive({ id: 43, type: 'openWorkspace', path: '/broken' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 43,
+        error: '启动工作区失败',
+        code: 'OPEN_WORKSPACE_FAILED',
+      }),
+    )
+  })
+
+  // NAT 超时/Wi-Fi 漫游不产生 close,中转早把这个 host 踢了、手机显示离线,
+  // 而桌面 socket 还是 ESTABLISHED —— 只靠 close 事件重连的话永远醒不过来。
+  it('pings the relay and reconnects once the link goes silent', async () => {
+    vi.useFakeTimers()
+    try {
+      const ws = await connect()
+      const sentBefore = ws.sent.length
+
+      await vi.advanceTimersByTimeAsync(25_000)
+      expect(JSON.parse(ws.sent[sentBefore])).toEqual({ type: 'ping' })
+
+      // 一直没有任何回包 —— 越过判死线后应主动关掉这条,交给重连
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ws.closed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('treats a pong as liveness, not as an unknown command', async () => {
+    const ws = await connect()
+    const sentBefore = ws.sent.length
+
+    ws.receive({ type: 'pong' })
+
+    await vi.waitFor(() => expect(ws.sent.length).toBe(sentBefore))
+  })
+
+  it('keeps non-agent desktop events off the chat event channel', async () => {
+    const ws = await connect()
+
+    remoteControl.forwardHostEvent('routines:stepProgress', { routineId: 'r1', stepIndex: 2 })
+
+    expect(ws.lastSent()).toEqual({
+      type: 'hostEvent',
+      channel: 'routines:stepProgress',
+      payload: { routineId: 'r1', stepIndex: 2 },
+    })
+  })
+
+  it('advertises the commands it supports', async () => {
+    const ws = await connect()
+
+    ws.receive({ id: 50, type: 'capabilities' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 50,
+        data: { commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS] },
+      }),
+    )
+  })
+
+  // 指令是一条条加的,清单漏一条,手机就会把一个其实可用的功能藏起来 —— 而且
+  // 没人会注意到,因为不报错。让每条声明过的指令都真的走到 switch 里。
+  it('answers every command it advertises', async () => {
+    mocks.getWorkspacePath.mockReturnValue('/workspace')
+    mocks.getState.mockResolvedValue({ isStreaming: false, sessionFile: null })
+    mocks.listSessions.mockResolvedValue([])
+    remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open: vi.fn() })
+    remoteControl.setReviewHost({ list: () => [], respond: () => ({ ok: true }) })
+    remoteControl.setRoutineHost({
+      list: () => ({ routines: [], runs: [], runningIds: [], queuedIds: [], progress: [] }),
+      run: () => ({ ok: true }),
+      toggle: () => ({ ok: true }),
+    })
+    remoteControl.setImageHost({
+      health: async () => ({ ok: true, model: 'gpt-image-2' }),
+      generate: async () => ({ urls: [] }),
+      history: async () => [],
+    })
+    remoteControl.setVideoHost({
+      health: async () => ({ ok: true, model: 'kling-v1' }),
+      list: () => [],
+      start: vi.fn(),
+    })
+    const ws = await connect()
+
+    for (const [index, command] of SUPPORTED_COMMANDS.entries()) {
+      const id = `cap-${index}`
+      ws.receive({ id, type: command })
+      await vi.waitFor(() => expect(ws.lastSent().id).toBe(id))
+      expect(ws.lastSent()).not.toMatchObject({ code: 'UNKNOWN_COMMAND' })
+    }
+  })
+
+  // 一张图的 base64 有几 MB。它进了 WebSocket 帧,中转和手机一起遭殃 —— 结果只能带链接。
+  it('sends generated images as links, never as base64', async () => {
+    const generate = vi.fn().mockResolvedValue({
+      urls: ['https://cdn.example/a.png'],
+      dataUrl: `data:image/png;base64,${'A'.repeat(5000)}`,
+      publicUrl: 'https://cdn.example/a.png',
+    })
+    remoteControl.setImageHost({
+      health: async () => ({ ok: true, model: 'gpt-image-2' }),
+      generate,
+      history: async () => [],
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 80, type: 'imageGenerate', prompt: '一只猫', n: 1, aspectRatio: '1:1' })
+
+    await vi.waitFor(() =>
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: '一只猫', n: 1, aspectRatio: '1:1' }),
+      ),
+    )
+    expect(ws.lastSent()).toEqual({
+      type: 'result',
+      id: 80,
+      data: { urls: ['https://cdn.example/a.png'] },
+    })
+    expect(JSON.stringify(ws.lastSent())).not.toContain('base64')
+  })
+
+  it('refuses an empty prompt and passes a generation failure through', async () => {
+    remoteControl.setImageHost({
+      health: async () => ({ ok: true, model: '' }),
+      generate: async () => ({ error: '云端中继 429' }),
+      history: async () => ({ error: '连不上云端历史服务' }),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 81, type: 'imageGenerate', prompt: '   ' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 81,
+        error: 'prompt is required',
+        code: 'INVALID_PROMPT',
+      }),
+    )
+
+    ws.receive({ id: 82, type: 'imageGenerate', prompt: '猫' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 82,
+        error: '云端中继 429',
+        code: 'IMAGE_GEN_FAILED',
+      }),
+    )
+
+    ws.receive({ id: 83, type: 'imageGenHistory' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 83,
+        error: '连不上云端历史服务',
+        code: 'IMAGE_HISTORY_FAILED',
+      }),
+    )
+  })
+
+  // 视频一次要跑 5~20 分钟。挂一条长请求等着的话,手机切后台或换网就断了、结果就丢了,
+  // 所以发起必须立刻返回,进度和结果走 video:job 事件。
+  it('returns a video job immediately instead of holding the request', async () => {
+    const job = {
+      id: 'v1',
+      prompt: '一只橘猫趴在窗台上',
+      duration: 5,
+      aspectRatio: '16:9',
+      mode: 'std',
+      status: 'running' as const,
+      stage: 'submitting',
+      createdAt: 1,
+    }
+    const start = vi.fn().mockReturnValue(job)
+    remoteControl.setVideoHost({
+      health: async () => ({ ok: true, model: 'kling-v1' }),
+      list: () => [job],
+      start,
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 90, type: 'klingVideoStart', prompt: '一只橘猫趴在窗台上', duration: 5 })
+
+    await vi.waitFor(() =>
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只橘猫趴在窗台上', duration: 5 })),
+    )
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 90, data: job })
+
+    // 重连后要能把还在跑的补回来 —— 事件是一次性的,断线期间推的那些收不到
+    ws.receive({ id: 91, type: 'listVideoJobs' })
+    await vi.waitFor(() => expect(ws.lastSent()).toEqual({ type: 'result', id: 91, data: [job] }))
+  })
+
+  it('rejects a video request with no prompt', async () => {
+    remoteControl.setVideoHost({
+      health: async () => ({ ok: true, model: 'kling-v1' }),
+      list: () => [],
+      start: vi.fn(),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 92, type: 'klingVideoStart', prompt: '   ' })
+
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 92,
+        error: 'prompt is required',
+        code: 'INVALID_PROMPT',
+      }),
+    )
+  })
+
+  it('gives the phone a routine list, a manual run and an on/off switch', async () => {
+    const snapshot = {
+      routines: [
+        {
+          id: 'r1',
+          name: '每日日报',
+          enabled: true,
+          stepCount: 3,
+          schedule: { type: 'daily' as const, time: '09:00' },
+          workspacePath: '/Users/me/Works',
+          createdAt: 1,
+          lastRunAt: 2,
+        },
+      ],
+      runs: [],
+      runningIds: ['r1'],
+      queuedIds: [],
+      progress: [
+        { routineId: 'r1', stepId: 's2', stepIndex: 1, totalSteps: 3, status: 'running' as const },
+      ],
+    }
+    const run = vi.fn().mockReturnValue({ ok: true })
+    const toggle = vi.fn().mockReturnValue({ ok: true })
+    remoteControl.setRoutineHost({ list: () => snapshot, run, toggle })
+    const ws = await connect()
+
+    ws.receive({ id: 70, type: 'listRoutines' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 70, data: snapshot }),
+    )
+
+    ws.receive({ id: 71, type: 'runRoutine', routineId: 'r1' })
+    await vi.waitFor(() => expect(run).toHaveBeenCalledWith('r1'))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 71, data: { ok: true } })
+
+    ws.receive({ id: 72, type: 'toggleRoutine', routineId: 'r1', enabled: false })
+    await vi.waitFor(() => expect(toggle).toHaveBeenCalledWith('r1', false))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 72, data: { ok: true } })
+  })
+
+  // 「不存在」「正在跑」「到并发上限」在手机上是三种不同的提示
+  it('passes the reason a manual run was refused through to the phone', async () => {
+    remoteControl.setRoutineHost({
+      list: () => ({ routines: [], runs: [], runningIds: [], queuedIds: [], progress: [] }),
+      run: () => ({ error: '该任务正在执行或排队', code: 'ROUTINE_BUSY' }),
+      toggle: () => ({ ok: true }),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 73, type: 'runRoutine', routineId: 'r1' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 73,
+        error: '该任务正在执行或排队',
+        code: 'ROUTINE_BUSY',
+      }),
+    )
+
+    ws.receive({ id: 74, type: 'runRoutine' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 74,
+        error: 'routineId is required',
+        code: 'INVALID_ROUTINE',
+      }),
+    )
+  })
+
+  // review 节点阻塞整条工作流,超时就是全挂 —— 手机必须能应,也必须能在重连后补上
+  it('hands pending reviews to the phone and applies its decision', async () => {
+    const request = {
+      reviewId: 'rv1',
+      routineId: 'r1',
+      routineName: '公众号草稿',
+      stepId: 's3',
+      stepName: '人工确认',
+      message: '确认后继续',
+      preview: '草稿正文…',
+    }
+    const respond = vi.fn().mockReturnValue({ ok: true })
+    remoteControl.setReviewHost({ list: () => [request], respond })
+    const ws = await connect()
+
+    ws.receive({ id: 60, type: 'listPendingReviews' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({ type: 'result', id: 60, data: [request] }),
+    )
+
+    ws.receive({ id: 61, type: 'respondReview', reviewId: 'rv1', decision: 'reject', comment: '图不对' })
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledWith('rv1', 'reject', '图不对'))
+    expect(ws.lastSent()).toEqual({ type: 'result', id: 61, data: { ok: true } })
+  })
+
+  it('separates an expired review from a malformed one', async () => {
+    remoteControl.setReviewHost({
+      list: () => [],
+      respond: () => ({ error: '审核请求已过期或工作流已结束' }),
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 62, type: 'respondReview', reviewId: 'rv1', decision: 'maybe' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 62,
+        error: 'reviewId and a valid decision are required',
+        code: 'INVALID_REVIEW',
+      }),
+    )
+
+    ws.receive({ id: 63, type: 'respondReview', reviewId: 'gone', decision: 'approve' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 63,
+        error: '审核请求已过期或工作流已结束',
+        code: 'REVIEW_GONE',
+      }),
+    )
   })
 
   it('resets phone pairings with the installation token in the authorization header', async () => {

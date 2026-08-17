@@ -48,6 +48,7 @@ import {
   parseSettingsSave,
   requiredString,
 } from '../shared/ipc/validators'
+import type { Workspace } from '../shared/contracts'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const QUEUE_MODES = ['all', 'one-at-a-time'] as const
@@ -432,8 +433,13 @@ export function registerIpcHandlers(): void {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('workspace:open', async (event, workspacePath: string) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
+  // 开工作区的完整流程(备 runtime、装扩展、起 agent 子进程并挂上事件回调)。
+  // 手机远程开工作区必须走同一条路,否则事件转发、run 变更封存这些都会漏,
+  // 所以从 IPC handler 里拎出来复用。
+  const openWorkspace = async (
+    workspacePath: string,
+    win: BrowserWindow | null,
+  ): Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }> => {
     const settings = loadSettings()
 
     syncWebSearchExtension(!!settings.tavilyApiKey)
@@ -539,6 +545,20 @@ export function registerIpcHandlers(): void {
     const recentWorkspaces = addRecentWorkspace(workspacePath)
     appendAppLog('info', 'workspace.open', 'Workspace opened', { workspacePath })
     return { ok: true, recentWorkspaces }
+  }
+
+  ipcMain.handle('workspace:open', (event, workspacePath: string) =>
+    openWorkspace(workspacePath, BrowserWindow.fromWebContents(event.sender)),
+  )
+
+  // 手机端的自救通道:桌面冷启动后没人点「打开工作区」时,除了这两条指令
+  // 其余全会抛 NO_WORKSPACE,而人往往不在电脑前。
+  remoteControl.setWorkspaceHost({
+    list: () => ({
+      current: piClientManager.getWorkspacePath(),
+      recent: loadSettings().recentWorkspaces,
+    }),
+    open: (path) => openWorkspace(path, BrowserWindow.getAllWindows()[0] ?? null),
   })
 
   ipcMain.handle('workspace:remove', (_e, workspacePath: string) => {
