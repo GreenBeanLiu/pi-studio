@@ -251,7 +251,12 @@ export function registerIpcHandlers(): void {
       return ''
     }
   })
-  ipcMain.handle('diagnostics:getLogs', () => ({ ok: true, content: readRecentAppLog() }))
+  // agentJobs 才看得出后台还剩什么:owner、血缘、终态,以及 orphaned 的回收失败证据。
+  ipcMain.handle('diagnostics:getLogs', () => ({
+    ok: true,
+    content: readRecentAppLog(),
+    agentJobs: piClientManager.agentJobs(),
+  }))
   ipcMain.handle(
     'diagnostics:save',
     async (

@@ -167,3 +167,25 @@ process.stdin.on('data', (chunk) => {
     expect(result.stdout).toMatch(/^v\d+\./)
   })
 })
+
+// 后台 agent 和子代理都登记成 job:owner、血缘、终态和"资源真的放掉了"的证据都在
+// registry 上,而不是散在 AgentEntry 数组和界面的前后台概念里。
+describe('agent processes are owned by jobs', () => {
+  const source = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
+
+  it('releases a process through its job instead of an unbounded dispose', () => {
+    // 旧写法 `entry.client.dispose().catch(() => {})` 会把停不下来的进程当成已回收:
+    // 收尾要走 job.finish(),停不住就强杀,强杀也失败就留成 orphaned 带证据。
+    expect(source).not.toContain('entry.client.dispose()')
+    expect(source).toContain('await entry.job.finish(reason)')
+  })
+
+  it('counts liveness from the registry so an orphan is not reported as reclaimed', () => {
+    expect(source).toContain('return this.jobs.live().length')
+  })
+
+  it('gives every subagent run a parent job', () => {
+    expect(source).toContain("kind: 'subagent'")
+    expect(source).toContain('parentId: entry.job.id')
+  })
+})

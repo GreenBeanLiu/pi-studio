@@ -58,7 +58,7 @@ export type DesktopApi = {
     writeText: (value: string) => Promise<void>
   }
   diagnostics: {
-    getLogs: () => Promise<{ ok: true; content: string }>
+    getLogs: () => Promise<{ ok: true; content: string; agentJobs: AgentJobSnapshot[] }>
     save: (payload: {
       defaultPath: string
       content: string
@@ -724,6 +724,41 @@ export type ExecutionSecuritySnapshot = {
   enforcement: 'full' | 'partial' | 'none'
   hostCodeExecution: boolean
   reason: string
+}
+
+export type AgentJobKind = 'chat' | 'routine' | 'code-model' | 'blender-model' | 'subagent'
+
+/**
+ * `done` 表示资源已经放掉,不只是那个函数返回了;`orphaned` 表示回收没被确认,
+ * 进程可能还活着 —— 诊断包里要能看出这两者的差别。
+ */
+export type AgentJobState =
+  | 'starting'
+  | 'running'
+  | 'idle'
+  | 'cancelling'
+  | 'done'
+  | 'failed'
+  | 'orphaned'
+
+export type AgentJobOwner = { sessionId: string | null; sessionFile: string | null }
+
+export type AgentJobSnapshot = {
+  id: string
+  kind: AgentJobKind
+  /** 派生它的那个 job:子代理的父聊天。 */
+  parentId: string | null
+  owner: AgentJobOwner
+  state: AgentJobState
+  runActive: boolean
+  pid: number | null
+  startedAt: number
+  lastActivatedAt: number
+  runStartedAt: number | null
+  endedAt: number | null
+  finishReason: string | null
+  forced: boolean
+  cleanupError: string | null
 }
 
 export type AgentRuntimeSnapshot = {

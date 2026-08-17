@@ -312,6 +312,10 @@ export class PiAgentRunHandle {
     this.detachApprovalGate = null
   }
 
+  processId(): number | null {
+    return (this.client as unknown as { process?: RuntimeProcess }).process?.pid ?? null
+  }
+
   observeProcess(listeners: {
     stderr?: (chunk: Buffer | string) => void
     exit?: (code: number | null, signal: string | null) => void
