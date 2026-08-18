@@ -117,10 +117,10 @@ async function generate(payload: GrokVideoGeneratePayload): Promise<VideoGenResu
  * 手机端的可灵文生视频。
  *
  * 和 Grok 那条(videoGen:generate)不同的是**不下载到本地**:手机要的是 R2 的公网
- * 链接,桌面白下一份几十 MB 的 mp4 没有意义。也不挂长请求 —— 一次生成 5~20 分钟,
+ * 链接,桌面白下一份几十 MB 的 mp4 没有意义。也不挂长请求 ——
  * 手机切后台或换网就断了;这里发起即返回 job,状态变化推 video:job 事件。
  */
-const KLING_TIMEOUT_MS = 20 * 60_000
+const KLING_TIMEOUT_MS = 10 * 60_000
 const KLING_JOBS_KEPT = 20
 const klingJobs: RemoteVideoJob[] = []
 
@@ -164,10 +164,16 @@ async function runKlingJob(job: RemoteVideoJob): Promise<void> {
     })
   } catch (error) {
     appendAppLog('error', 'videoGen.kling', '可灵文生视频失败', normalizeError(error))
+    const timedOut = error instanceof Error && (
+      error.name === 'TimeoutError' || /timed?\s*out|timeout/i.test(error.message)
+    )
     publishKlingJob({
       ...job,
       status: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      stage: timedOut ? 'timeout' : 'error',
+      error: timedOut
+        ? '生成超过 10 分钟，已按失败处理'
+        : error instanceof Error ? error.message : String(error),
     })
   }
 }
