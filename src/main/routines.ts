@@ -19,6 +19,7 @@ import { appendAppLog, normalizeError } from './app-log'
 import { remoteControl } from './remote-control'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
+import { latestAssistantFailure, latestAssistantText, type AgentMessage } from './agent-message'
 import type { RoutineStepType as SharedRoutineStepType } from '../shared/ipc/contract'
 import { readRoutineMaterialFolder } from './routine-material-folder'
 import { inferRoutineImageRole, selectWechatImageAssets, type RoutineImageAsset } from './routine-assets'
@@ -458,28 +459,6 @@ const hasPreviousProductReference = (text: string): boolean => /\{\{\s*(?:prev\.
 
 // ── 执行器 ───────────────────────────────────────────────────────
 
-function latestAssistantText(
-  messages: Array<{
-    role?: string
-    content?: Array<{ type?: string; text?: string }> | string
-  }>,
-): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]
-    if (message.role !== 'assistant') continue
-    const text = Array.isArray(message.content)
-      ? message.content
-          .filter((block) => block.type === 'text' && block.text)
-          .map((block) => block.text)
-          .join('\n')
-      : typeof message.content === 'string'
-        ? message.content
-        : ''
-    if (text.trim()) return text.trim()
-  }
-  return ''
-}
-
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
@@ -514,6 +493,17 @@ async function ensureAgentClient(
   })
   session.client = client
   session.startupCleanup = null
+  // 工作流走 startPiRuntimeCancellable,不经过 PiClient,那条 agent.start 落不下来 ——
+  // 出问题时日志里查不到这次用的哪个模型,只能去翻 pi 的 session jsonl。日志留在这边
+  // 而不是塞进 pi-runtime:eval CLI 会把 pi-runtime 打成纯 Node 包跑,拉不得 electron。
+  appendAppLog('info', 'agent.start', 'Pi agent process started', {
+    kind: 'routine',
+    routineId: routine.id,
+    routine: routine.name,
+    cwd: profile.cwd,
+    provider: profile.provider,
+    model: profile.model ?? null,
+  })
   return client
 }
 
@@ -553,10 +543,7 @@ async function runAgentStep(
     signal.removeEventListener('abort', cancelAgent)
   }
   throwIfWorkflowCancelled(signal)
-  const messages = (await client.getMessages()) as Array<{
-    role?: string
-    content?: Array<{ type?: string; text?: string }> | string
-  }>
+  const messages = (await client.getMessages()) as AgentMessage[]
   const denials = client.deniedApprovals().slice(deniedBefore)
   if (denials.length > 0) {
     appendAppLog('warn', 'routine.approval', 'Denied approvals in an unattended routine step', {
@@ -573,7 +560,14 @@ async function runAgentStep(
   // 审批被拒是例外:那段说明本身就是这一步的产出,留着。
   if (!text) {
     if (!denied) {
-      throw new Error(`「${step.name}」没有产出任何文本,后面的步骤拿不到可用的输入`)
+      // 上游报错时 pi 把原因写在消息的 errorMessage 里,光说「没有产出」
+      // 会让人去查提示词,而真正的毛病可能是网关 502 或模型不存在。
+      const failure = latestAssistantFailure(messages)
+      throw new Error(
+        failure
+          ? `「${step.name}」没有产出任何文本:${failure}`
+          : `「${step.name}」没有产出任何文本,后面的步骤拿不到可用的输入`,
+      )
     }
     return { output: denied.slice(0, MAX_STEP_OUTPUT_CHARS) }
   }

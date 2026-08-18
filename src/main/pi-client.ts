@@ -189,6 +189,7 @@ class PiClientManager {
     appendAppLog('info', 'agent.start', 'Pi agent process started', {
       cwd,
       provider: profile.provider,
+      model: profile.model ?? null,
       modelConfigured: !!profile.model,
       restoredSession: !!restoreSessionFile && entry.sessionFile === restoreSessionFile,
     })
