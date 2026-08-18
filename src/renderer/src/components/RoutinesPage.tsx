@@ -44,6 +44,7 @@ import {
   FolderSearch,
   AppWindow,
   Shirt,
+  ChevronDown,
 } from 'lucide-react'
 import {
   api,
@@ -848,6 +849,19 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
     onClick: ({ key }: { key: string }) => addPresetStep(key),
   }
 
+  const templateMenu = {
+    items: [
+      { key: 'article', label: '文章模板' },
+      { key: 'app-icon', label: '图标模板' },
+      { key: 'dressup', label: '换装模板' },
+    ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === 'article') setForm(articleWorkflowTemplate(workspace?.path ?? '', channels))
+      if (key === 'app-icon') setForm(appIconWorkflowTemplate(workspace?.path ?? ''))
+      if (key === 'dressup') setForm(dressupVideoWorkflowTemplate(workspace?.path ?? ''))
+    },
+  }
+
   return (
     <>
       <div className={styles.page}>
@@ -869,15 +883,9 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
           >
             新建
           </Button>
-          <Button size="small" onClick={() => setForm(articleWorkflowTemplate(workspace?.path ?? '', channels))}>
-            文章模板
-          </Button>
-          <Button size="small" onClick={() => setForm(appIconWorkflowTemplate(workspace?.path ?? ''))}>
-            图标模板
-          </Button>
-          <Button size="small" onClick={() => setForm(dressupVideoWorkflowTemplate(workspace?.path ?? ''))}>
-            换装模板
-          </Button>
+          <Dropdown menu={templateMenu} trigger={['click']}>
+            <Button size="small" icon={<ChevronDown size={13} />}>模板</Button>
+          </Dropdown>
         </div>
 
         {form && (
@@ -979,18 +987,7 @@ function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
                       addonBefore="输入图"
                       placeholder="{{prev.imageUrl}}(解析为图 URL 则图生 3D,否则用上面文字文生 3D)"
                     />
-                    <div className={styles.formRow}>
-                      <span className={styles.hint}>服务商</span>
-                      <Select
-                        value={step.provider ?? 'tripo'}
-                        onChange={(v) => updateStep(step.id, { provider: v })}
-                        style={{ width: 180 }}
-                        options={[
-                          { value: 'tripo', label: 'Tripo(文/图生)' },
-                          { value: 'hi3d', label: 'Hi3D(仅图生)' },
-                        ]}
-                      />
-                    </div>
+                    <span className={styles.hint}>Tripo · 支持文生和图生 3D</span>
                     <span className={styles.hint}>
                       接在「生图」节点后即可图生 3D;glb 存到工作区 .pi-studio/models/
                     </span>

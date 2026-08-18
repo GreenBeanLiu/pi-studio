@@ -26,13 +26,11 @@ import {
 import { assessReferenceImage, normalizeReferenceImage } from '../lib/reference-check'
 import ModelViewer from './ModelViewer'
 
-/** 云端 3D 服务商。Hi3D(hitem3d)只做图生 3D,没有文生 3D 接口。 */
 const PROVIDERS: Array<{
   value: Model3DProvider
   label: string
   supportsText: boolean
   versions: Array<{ value: string; label: string }>
-  /** 每个模型版本各自的合法分辨率枚举(Hi3D 传错会被拒) */
   resolutions?: Record<string, string[]>
   /** 每个模型版本的面数上限(Tripo) */
   faceMax?: Record<string, number>
@@ -64,36 +62,6 @@ const PROVIDERS: Array<{
     },
     // geometry_quality 只对 >=v3.0 有效,且 P1 明确不支持(质量已预调优)
     geometryQuality: ['v3.1-20260211', 'v3.0-20250812'],
-  },
-  {
-    value: 'hi3d',
-    label: 'Hi3D',
-    supportsText: false,
-    versions: [
-      { value: 'hitem3dv2.1', label: '通用 v2.1' },
-      { value: 'hitem3dv2.0', label: '通用 v2.0' },
-      { value: 'hitem3dv1.5', label: '通用 v1.5' },
-      { value: 'scene-portraitv2.1', label: '人像 v2.1' },
-      { value: 'scene-portraitv2.0', label: '人像 v2.0' },
-      { value: 'scene-portraitv1.5', label: '人像 v1.5' },
-    ],
-    // Hi3D 的 face 合法区间是 100000~2000000(10031002)
-    faceMax: {
-      'hitem3dv1.5': 2_000_000,
-      'hitem3dv2.0': 2_000_000,
-      'hitem3dv2.1': 2_000_000,
-      'scene-portraitv1.5': 2_000_000,
-      'scene-portraitv2.0': 2_000_000,
-      'scene-portraitv2.1': 2_000_000,
-    },
-    resolutions: {
-      'hitem3dv1.5': ['512', '1024', '1536', '1536pro'],
-      'hitem3dv2.0': ['512', '1024', '1536', '1536pro'],
-      'hitem3dv2.1': ['1536fast', '1536pro'],
-      'scene-portraitv1.5': ['1536'],
-      'scene-portraitv2.0': ['1536pro'],
-      'scene-portraitv2.1': ['1536profast', '1536pro'],
-    },
   },
 ]
 
@@ -300,7 +268,7 @@ function Model3DPageInner(): React.JSX.Element {
   const [blenderStatus, setBlenderStatus] = useState<BlenderSetupStatus | null>(null)
   const [blenderSetupLoading, setBlenderSetupLoading] = useState(false)
   const [refineText, setRefineText] = useState('')
-  const [provider, setProvider] = useState<Model3DProvider>('tripo')
+  const provider: Model3DProvider = 'tripo'
   const [opts, setOpts] = useState<Model3DOptions>({
     texture: true,
     pbr: false,
@@ -330,27 +298,11 @@ function Model3DPageInner(): React.JSX.Element {
   const cloudProviderMissing =
     (mode === 'text' || mode === 'image') && providerReady?.[provider] === false
   const versionOptions = activeProvider.versions
-  /** Hi3D 每个模型版本的合法分辨率不同,换版本要跟着换 */
   const resolutionOptions =
     activeProvider.resolutions?.[opts.modelVersion ?? versionOptions[0].value] ?? []
   const currentVersion = opts.modelVersion ?? versionOptions[0].value
   const faceMax = activeProvider.faceMax?.[currentVersion] ?? 50_000
   const supportsGeometryQuality = activeProvider.geometryQuality?.includes(currentVersion) ?? false
-
-  /** 切服务商时重置成该服务商的默认版本/分辨率,并把不支持的模式拨回图生 3D。 */
-  function onSwitchProvider(next: Model3DProvider): void {
-    setProvider(next)
-    const target = PROVIDERS.find((p) => p.value === next)
-    if (!target) return
-    const firstVersion = target.versions[0].value
-    const firstRes = target.resolutions?.[firstVersion]?.[0]
-    setOpts((o) => ({
-      ...o,
-      modelVersion: firstVersion || undefined,
-      resolution: firstRes,
-    }))
-    if (!target.supportsText && mode === 'text') setMode('image')
-  }
 
   useEffect(() => {
     void api.model3d.health().then((h) => {
@@ -558,22 +510,6 @@ function Model3DPageInner(): React.JSX.Element {
           ]}
         />
 
-        {kind === 'cloud' && (
-          <div className={styles.field}>
-            <span className={styles.label}>服务商</span>
-            <Segmented
-              block
-              value={provider}
-              onChange={(v) => onSwitchProvider(v as Model3DProvider)}
-              options={PROVIDERS.map((p) => ({
-                label:
-                  providerReady && providerReady[p.value] === false ? `${p.label}(未配置)` : p.label,
-                value: p.value,
-              }))}
-            />
-          </div>
-        )}
-
         <Segmented
           block
           value={mode}
@@ -581,7 +517,6 @@ function Model3DPageInner(): React.JSX.Element {
           options={
             kind === 'cloud'
               ? [
-                  // Hi3D 是纯 image-to-3D 服务
                   { label: '文生 3D', value: 'text', disabled: !activeProvider.supportsText },
                   { label: '图生 3D', value: 'image' },
                 ]
@@ -591,12 +526,6 @@ function Model3DPageInner(): React.JSX.Element {
                 ]
           }
         />
-
-        {kind === 'cloud' && !activeProvider.supportsText && (
-          <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
-            {activeProvider.label} 只支持图生 3D。要用文字直接生成,请切到 Tripo。
-          </div>
-        )}
 
         {mode === 'blender' && (
           <div style={{ fontSize: 12, opacity: 0.6, lineHeight: 1.5 }}>
@@ -823,11 +752,7 @@ function Model3DPageInner(): React.JSX.Element {
             type="warning"
             showIcon
             message={`${activeProvider.label} 尚未配置密钥`}
-            description={
-              activeProvider.value === 'hi3d'
-                ? '在服务端 .env 里填 HI3D_CLIENT_ID / HI3D_CLIENT_SECRET 后重启 worker。'
-                : '在服务端 .env 里填 TRIPO_SECRET 后重启 worker。'
-            }
+            description="在服务端 .env 里填 TRIPO_SECRET 后重启 worker。"
           />
         )}
 

@@ -13,4 +13,10 @@ describe('dressup workflow image library regressions', () => {
     expect(picker).toContain('api.imageGen.history(100)')
     expect(picker).toContain('onChange(item.url)')
   })
+
+  it('keeps workflow templates in one compact dropdown', () => {
+    expect(page).toContain('const templateMenu =')
+    expect(page).toContain('<Dropdown menu={templateMenu}')
+    expect(page).toContain('>模板</Button>')
+  })
 })

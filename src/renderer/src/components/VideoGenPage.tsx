@@ -1,20 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
-import { Alert, App as AntApp, Button, Empty, Input, Popconfirm, Segmented, Select, Spin, Tooltip } from 'antd'
+import { Alert, App as AntApp, Button, Empty, Input, Popconfirm, Select, Spin, Tooltip } from 'antd'
 import { Clapperboard, ImagePlus, Sparkles, Trash2, X } from 'lucide-react'
-import {
-  api,
-  type DressupHistoryItem,
-  type GrokVideoAspectRatio,
-  type GrokVideoResolution,
-  type VideoGenHistoryItem,
-} from '../lib/api'
+import { api, type DressupHistoryItem } from '../lib/api'
 
-type Provider = 'kling' | 'grok'
 type Frame = { dataUrl: string } | null
-type HistoryItem =
-  | (DressupHistoryItem & { provider: 'kling' })
-  | VideoGenHistoryItem
+type HistoryItem = DressupHistoryItem & { provider: 'kling' }
 
 const MAX_BYTES = 18 * 1024 * 1024
 const STAGE_LABEL: Record<string, string> = {
@@ -40,39 +31,24 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export default function VideoGenPage(): React.JSX.Element {
   const { styles } = useStyles()
   const { message } = AntApp.useApp()
-  const [provider, setProvider] = useState<Provider>('kling')
   const [prompt, setPrompt] = useState('')
   const [first, setFirst] = useState<Frame>(null)
   const [tail, setTail] = useState<Frame>(null)
-  const [duration, setDuration] = useState<5 | 10 | 15>(5)
-  const [aspectRatio, setAspectRatio] = useState<GrokVideoAspectRatio>('16:9')
-  const [resolution, setResolution] = useState<GrokVideoResolution>('720p')
+  const [duration, setDuration] = useState<5 | 10>(5)
   const [klingMode, setKlingMode] = useState<'std' | 'pro'>('std')
   const [busy, setBusy] = useState(false)
   const [stage, setStage] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [current, setCurrent] = useState<HistoryItem | null>(null)
-  const [readiness, setReadiness] = useState<{ kling?: boolean; grok?: boolean }>({})
+  const [ready, setReady] = useState<boolean>()
 
   useEffect(() => {
-    void Promise.all([
-      api.dressup.history(),
-      api.videoGen.history(),
-      api.dressup.health(),
-      api.videoGen.health(),
-    ]).then(([klingHistory, grokHistory, klingHealth, grokHealth]) => {
-      setHistory([
-        ...klingHistory.map((item) => ({ ...item, provider: 'kling' as const })),
-        ...grokHistory,
-      ].sort((a, b) => b.createdAt - a.createdAt))
-      setReadiness({ kling: klingHealth.klingReady, grok: grokHealth.grokReady })
+    void Promise.all([api.dressup.history(), api.dressup.health()]).then(([items, health]) => {
+      setHistory(items.map((item) => ({ ...item, provider: 'kling' as const })))
+      setReady(health.klingReady)
     })
     const offKling = api.dressup.onProgress((event) => setStage(event.status))
-    const offGrok = api.videoGen.onProgress((event) => setStage(event.status))
-    return () => {
-      offKling()
-      offGrok()
-    }
+    return offKling
   }, [])
 
   async function pick(setter: (frame: Frame) => void, file?: File): Promise<void> {
@@ -87,36 +63,22 @@ export default function VideoGenPage(): React.JSX.Element {
   }
 
   async function generate(): Promise<void> {
-    if (provider === 'kling' && (!first || !tail)) return void message.warning('Kling 需要首帧和尾帧')
-    if (provider === 'grok' && !prompt.trim()) return void message.warning('请输入视频描述')
+    if (!first || !tail) return void message.warning('Kling 需要首帧和尾帧')
     setBusy(true)
     setStage(first ? 'uploading' : 'submitting')
     setCurrent(null)
     try {
-      if (provider === 'kling') {
-        const result = await api.dressup.generate({
-          firstFrameDataUrl: first!.dataUrl,
-          tailFrameDataUrl: tail!.dataUrl,
-          prompt: prompt.trim() || undefined,
-          mode: klingMode,
-          duration: duration >= 10 ? '10' : '5',
-        })
-        if ('error' in result) return void message.error(result.error)
-        const item = { ...result, provider: 'kling' as const }
-        setCurrent(item)
-        setHistory((items) => [item, ...items])
-      } else {
-        const result = await api.videoGen.generate({
-          prompt: prompt.trim(),
-          imageDataUrl: first?.dataUrl,
-          duration,
-          aspectRatio,
-          resolution,
-        })
-        if ('error' in result) return void message.error(result.error)
-        setCurrent(result)
-        setHistory((items) => [result, ...items])
-      }
+      const result = await api.dressup.generate({
+        firstFrameDataUrl: first.dataUrl,
+        tailFrameDataUrl: tail.dataUrl,
+        prompt: prompt.trim() || undefined,
+        mode: klingMode,
+        duration: duration === 10 ? '10' : '5',
+      })
+      if ('error' in result) return void message.error(result.error)
+      const item = { ...result, provider: 'kling' as const }
+      setCurrent(item)
+      setHistory((items) => [item, ...items])
       message.success('视频已生成')
     } finally {
       setBusy(false)
@@ -125,70 +87,42 @@ export default function VideoGenPage(): React.JSX.Element {
   }
 
   async function remove(item: HistoryItem): Promise<void> {
-    if (item.provider === 'kling') await api.dressup.historyDelete(item.id)
-    else await api.videoGen.historyDelete(item.id)
-    setHistory((items) => items.filter((candidate) => !(candidate.id === item.id && candidate.provider === item.provider)))
-    if (current?.id === item.id && current.provider === item.provider) setCurrent(null)
+    await api.dressup.historyDelete(item.id)
+    setHistory((items) => items.filter((candidate) => candidate.id !== item.id))
+    if (current?.id === item.id) setCurrent(null)
   }
 
   const preview = current ?? history[0] ?? null
-  const ready = readiness[provider]
-
   return (
     <div className={styles.root}>
       <section className={styles.controls}>
         <div className={styles.title}><Clapperboard size={18} /> 视频生成</div>
-        <Segmented
-          block
-          value={provider}
-          onChange={(value) => setProvider(value as Provider)}
-          options={[
-            { label: 'Kling', value: 'kling' },
-            { label: 'Grok · 3A API', value: 'grok' },
-          ]}
-        />
         {ready === false && (
           <Alert
             type="warning"
             showIcon
-            message={provider === 'grok' ? '服务端尚未配置 3A 视频 Key' : '服务端尚未配置 Kling'}
+            message="服务端尚未配置 Kling"
           />
         )}
 
-        {provider === 'kling' ? (
-          <>
-            <div className={styles.hint}>上传首帧和尾帧，Kling 会生成两帧之间的动态过渡。</div>
-            <div className={styles.frames}>
-              <FrameSlot label="首帧" frame={first} onPick={(file) => pick(setFirst, file)} onClear={() => setFirst(null)} styles={styles} />
-              <FrameSlot label="尾帧" frame={tail} onPick={(file) => pick(setTail, file)} onClear={() => setTail(null)} styles={styles} />
-            </div>
-            <div className={styles.formRow}>
-              <Select value={klingMode} onChange={setKlingMode} options={[{ value: 'std', label: '标准模式' }, { value: 'pro', label: '专业模式' }]} />
-              <Select value={duration >= 10 ? 10 : 5} onChange={(value) => setDuration(value as 5 | 10)} options={[{ value: 5, label: '5 秒' }, { value: 10, label: '10 秒' }]} />
-            </div>
-          </>
-        ) : (
-          <>
-            <div className={styles.hint}>支持文生视频；上传首帧后会改为图生视频。3A 视频 Key 与图片 Key 分开配置，可独立轮换。</div>
-            <div className={styles.singleFrame}>
-              <FrameSlot label="首帧（可选）" frame={first} onPick={(file) => pick(setFirst, file)} onClear={() => setFirst(null)} styles={styles} />
-            </div>
-            <div className={styles.formRow}>
-              <Select value={duration} onChange={setDuration} options={[5, 10, 15].map((value) => ({ value, label: `${value} 秒` }))} />
-              <Select value={aspectRatio} onChange={setAspectRatio} options={['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3'].map((value) => ({ value, label: value }))} />
-              <Select value={resolution} onChange={setResolution} options={[{ value: '720p', label: '720p' }, { value: '480p', label: '480p' }]} />
-            </div>
-          </>
-        )}
+        <div className={styles.hint}>上传首帧和尾帧，Kling 会生成两帧之间的动态过渡。</div>
+        <div className={styles.frames}>
+          <FrameSlot label="首帧" frame={first} onPick={(file) => pick(setFirst, file)} onClear={() => setFirst(null)} styles={styles} />
+          <FrameSlot label="尾帧" frame={tail} onPick={(file) => pick(setTail, file)} onClear={() => setTail(null)} styles={styles} />
+        </div>
+        <div className={styles.formRow}>
+          <Select value={klingMode} onChange={setKlingMode} options={[{ value: 'std', label: '标准模式' }, { value: 'pro', label: '专业模式' }]} />
+          <Select value={duration} onChange={setDuration} options={[{ value: 5, label: '5 秒' }, { value: 10, label: '10 秒' }]} />
+        </div>
 
         <Input.TextArea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder={provider === 'grok' ? '描述镜头、主体动作、光线和风格' : '可选：描述首尾帧之间的动作和转场'}
+          placeholder="可选：描述首尾帧之间的动作和转场"
           autoSize={{ minRows: 3, maxRows: 7 }}
         />
         <Button type="primary" size="large" block loading={busy} icon={<Sparkles size={16} />} onClick={generate}>
-          {busy ? STAGE_LABEL[stage] ?? '生成视频中' : `使用 ${provider === 'kling' ? 'Kling' : 'Grok'} 生成`}
+          {busy ? STAGE_LABEL[stage] ?? '生成视频中' : '使用 Kling 生成'}
         </Button>
       </section>
 
@@ -205,7 +139,7 @@ export default function VideoGenPage(): React.JSX.Element {
             {history.map((item) => (
               <button key={`${item.provider}:${item.id}`} className={styles.historyItem} onClick={() => setCurrent(item)}>
                 <video src={item.videoUrl} muted preload="metadata" />
-                <span>{item.provider === 'kling' ? 'Kling' : 'Grok'}</span>
+                <span>Kling</span>
                 <Popconfirm title="删除这条记录？" onConfirm={() => remove(item)} okText="删除" cancelText="取消">
                   <Tooltip title="删除">
                     <span className={styles.delete} onClick={(event) => event.stopPropagation()}><Trash2 size={12} /></span>
