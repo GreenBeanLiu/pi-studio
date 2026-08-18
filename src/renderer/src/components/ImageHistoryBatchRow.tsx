@@ -1,6 +1,6 @@
 import { Button, Popconfirm, Tooltip } from 'antd'
 import { createStyles } from 'antd-style'
-import { Brush, Check, Copy, Download, Link2, Trash2, ZoomIn } from 'lucide-react'
+import { Brush, Copy, Download, Link2, Trash2 } from 'lucide-react'
 
 import type { ImageGenerationBatch } from './image-generation-history'
 
@@ -16,16 +16,19 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
   head: css`
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 8px;
   `,
   prompt: css`
     flex: 1;
     min-width: 0;
     font-size: 12px;
-    line-height: 1.5;
+    line-height: 22px;
     color: ${token.colorTextSecondary};
     user-select: text;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   `,
   meta: css`
     flex-shrink: 0;
@@ -34,7 +37,7 @@ const useStyles = createStyles(({ token, css }) => ({
   `,
   images: css`
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 220px));
     gap: 8px;
   `,
   item: css`
@@ -45,46 +48,46 @@ const useStyles = createStyles(({ token, css }) => ({
     background: ${token.colorBgContainer};
     transition: border-color .15s, box-shadow .15s;
   `,
-  selected: css`
-    border-color: ${token.colorPrimary};
-    box-shadow: 0 0 0 2px ${token.colorPrimaryBg};
-  `,
   picture: css`
     position: relative;
     aspect-ratio: 1;
     overflow: hidden;
     cursor: pointer;
     background: ${token.colorFillTertiary};
-    img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    img { width: 100%; height: 100%; display: block; object-fit: cover; transition: transform .15s; }
     &:hover img { transform: scale(1.035); }
-  `,
-  badge: css`
-    position: absolute;
-    top: 6px;
-    left: 6px;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 3px 6px;
-    border-radius: 999px;
-    background: rgba(0,0,0,.58);
-    color: #fff;
-    font-size: 10px;
+    &:hover .image-actions,
+    &:focus-within .image-actions {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
   `,
   actions: css`
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    z-index: 1;
     display: flex;
+    align-items: center;
     justify-content: center;
-    padding: 3px 2px;
+    padding: 2px 4px;
+    border-radius: ${token.borderRadiusSM}px;
+    background: ${token.colorBgMask};
+    transform: translateX(-50%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .15s, visibility .15s;
+    & .ant-btn:not(.ant-btn-dangerous) { color: ${token.colorTextLightSolid}; }
   `,
 }))
 
 export default function ImageHistoryBatchRow({
   batch,
-  selectedId,
   tag,
   time,
   canUseAsInput,
-  onSelect,
   onPreview,
   onDownload,
   onCopyPrompt,
@@ -94,11 +97,9 @@ export default function ImageHistoryBatchRow({
   onDeleteBatch,
 }: {
   batch: ImageGenerationBatch
-  selectedId?: string
   tag: string
   time: string
   canUseAsInput: boolean
-  onSelect: (id: string) => void
   onPreview: (url: string) => void
   onDownload: (url: string) => void
   onCopyPrompt: () => void
@@ -107,7 +108,7 @@ export default function ImageHistoryBatchRow({
   onDeleteImage: (id: string) => void
   onDeleteBatch: () => void
 }) {
-  const { styles, cx } = useStyles()
+  const { styles } = useStyles()
   return (
     <article className={styles.row}>
       <header className={styles.head}>
@@ -119,16 +120,11 @@ export default function ImageHistoryBatchRow({
         </Popconfirm>
       </header>
       <div className={styles.images}>
-        {batch.images.map((image, index) => {
-          const selected = selectedId === image.id
-          return (
-            <div key={image.id} className={cx(styles.item, selected && styles.selected)}>
-              <div className={styles.picture} onClick={() => onSelect(image.id)} title="点击选中这张图">
-                <img src={image.url} alt={`${batch.prompt} ${index + 1}`} loading="lazy" />
-                <span className={styles.badge}>{selected && <Check size={11} />} {selected ? '已选' : `#${index + 1}`}</span>
-              </div>
-              <div className={styles.actions}>
-                <Tooltip title="放大"><Button size="small" type="text" icon={<ZoomIn size={13} />} onClick={() => onPreview(image.url)} /></Tooltip>
+        {batch.images.map((image, index) => (
+          <div key={image.id} className={styles.item}>
+            <div className={styles.picture} onClick={() => onPreview(image.url)} title="点击放大">
+              <img src={image.url} alt={`${batch.prompt} ${index + 1}`} loading="lazy" />
+              <div className={`${styles.actions} image-actions`} onClick={(event) => event.stopPropagation()}>
                 <Tooltip title="下载"><Button size="small" type="text" icon={<Download size={13} />} onClick={() => onDownload(image.url)} /></Tooltip>
                 <Tooltip title="复制链接"><Button size="small" type="text" icon={<Link2 size={13} />} onClick={() => onCopyLink(image.url)} /></Tooltip>
                 {canUseAsInput && <Tooltip title="作为输入图片"><Button size="small" type="text" icon={<Brush size={13} />} onClick={() => onUseAsInput(image.url)} /></Tooltip>}
@@ -137,8 +133,8 @@ export default function ImageHistoryBatchRow({
                 </Popconfirm>
               </div>
             </div>
-          )
-        })}
+          </div>
+        ))}
       </div>
     </article>
   )

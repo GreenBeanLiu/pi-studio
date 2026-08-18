@@ -231,11 +231,7 @@ imageGen: {
     responseFormat?: ImageGenResponseFormat
     providerStyle?: ImageGenProviderStyle
     user?: string
-    model?: | 'gpt-image-2'
-      | 'gemini-3.1-flash-image-preview'
-      | 'gemini-3-pro-image-preview'
-      | 'grok-imagine-image'
-      | 'grok-imagine-image-quality'
+    model?: ImageModel
   }) => Promise<{ dataUrl: string; publicUrl: string | null; urls?: string[] } | { error: string }>
   history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
   historyDelete: (id: string) => Promise<{ ok: boolean }>
@@ -339,6 +335,11 @@ export type LlmProfileListResult =
   | { error: string }
 
 export type ImageGenEngine = 'openai' | 'gemini' | 'grok'
+export type ImageModel =
+  | 'gpt-image-2'
+  | 'gemini-3-pro-image-preview'
+  | 'grok-imagine-image'
+  | 'grok-imagine-image-quality'
 
 export type GeminiImageAspectRatio =
   | '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'

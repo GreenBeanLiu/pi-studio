@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
-import { App as AntApp, Button, Modal, Spin, Tooltip } from 'antd'
+import { App as AntApp, Button, Spin, Tooltip } from 'antd'
 import { createStyles } from 'antd-style'
 import { Image as ImageIcon, RefreshCw, Sparkles } from 'lucide-react'
 
@@ -7,6 +7,7 @@ import {
   api,
   type ImageGenHealth,
   type ImageGenHistoryItem,
+  type ImageModel,
 } from '../lib/api'
 import ImageHistoryBatchRow from './ImageHistoryBatchRow'
 import ImageInputSection, { type ReferenceUploadState } from './ImageInputSection'
@@ -17,7 +18,6 @@ import {
   buildImageGenerationRequest,
   defaultImageModel,
   imageModel,
-  type ImageModelKey,
   type ImageOutputSettings,
 } from './image-generation-models'
 
@@ -146,7 +146,7 @@ const useStyles = createStyles(({ token, css }) => ({
     z-index: 1200;
     display: grid;
     place-items: center;
-    background: rgba(0, 0, 0, .82);
+    background: ${token.colorBgMask};
     cursor: zoom-out;
     img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
   `,
@@ -163,12 +163,16 @@ function timestampLabel(value: number) {
 
 function providerTag(engine: string, provider: string | null, model: string | null) {
   const providerName = provider === 'three-a-grok'
-    ? '3A Grok'
+    ? '3A'
     : provider === 'three-a'
       ? '3A'
       : provider === 'tikhub'
         ? 'TikHub'
-        : provider
+        : provider === 'tuzi'
+          ? 'Tu-zi'
+          : provider === 'ourzhishi'
+            ? 'OurZhishi'
+            : provider
   // sdxl/comfy 分支保留:历史画廊里可能还有本地引擎时代生成的旧图
   const modelName = model === 'sdxl-local'
     ? 'SDXL'
@@ -190,7 +194,7 @@ export default function ImageGenerationWorkspace({
   const { styles } = useStyles()
   const { message } = AntApp.useApp()
   const [health, setHealth] = useState<ImageGenHealth | null>(null)
-  const [modelKey, setModelKey] = useState<ImageModelKey>('gpt-image-2')
+  const [modelKey, setModelKey] = useState<ImageModel>('gpt-image-2')
   const [prompt, setPrompt] = useState('')
   const [output, setOutput] = useState<ImageOutputSettings>(DEFAULT_OUTPUT)
   const [baseImage, setBaseImage] = useState<string | null>(null)
@@ -200,8 +204,6 @@ export default function ImageGenerationWorkspace({
   const [history, setHistory] = useState<ImageGenHistoryItem[]>([])
   const [sessionImages, setSessionImages] = useState<SessionImage[]>([])
   const [pending, setPending] = useState<PendingBatch[]>([])
-  const [selectedByBatch, setSelectedByBatch] = useState<Record<string, string>>({})
-  const [compareOpen, setCompareOpen] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [historyDone, setHistoryDone] = useState(false)
@@ -215,15 +217,6 @@ export default function ImageGenerationWorkspace({
     () => groupImageGenerationHistory([...sessionImages, ...history]),
     [history, sessionImages],
   )
-  const selectedImages = useMemo(
-    () => batches.flatMap((batch) => {
-      const selectedId = selectedByBatch[batch.id]
-      const selected = batch.images.find((image) => image.id === selectedId)
-      return selected ? [{ batchId: batch.id, prompt: batch.prompt, image: selected }] : []
-    }),
-    [batches, selectedByBatch],
-  )
-
   async function refreshHealth() {
     setHealth(await api.imageGen.health())
   }
@@ -281,7 +274,7 @@ export default function ImageGenerationWorkspace({
     uploadOwnerRef.current = null
   }
 
-  function selectModel(next: ImageModelKey) {
+  function selectModel(next: ImageModel) {
     const definition = imageModel(next)
     if (!definition.acceptsImage) clearInputImage()
     if (!definition.acceptsMask) {
@@ -501,14 +494,6 @@ export default function ImageGenerationWorkspace({
         <div className={styles.galleryHead}>
           历史记录（{batches.length} 批）
           {pending.length > 0 && <span className="sub">{pending.length} 批生成中</span>}
-          <Button
-            size="small"
-            style={{ marginLeft: 'auto' }}
-            disabled={selectedImages.length < 2}
-            onClick={() => setCompareOpen(true)}
-          >
-            对比已选（{selectedImages.length}）
-          </Button>
         </div>
         {!batches.length && !pending.length && (
           <div className={styles.empty}><ImageIcon size={38} strokeWidth={1.2} />还没有生成记录</div>
@@ -524,16 +509,9 @@ export default function ImageGenerationWorkspace({
             <ImageHistoryBatchRow
               key={batch.id}
               batch={batch}
-              selectedId={selectedByBatch[batch.id]}
               tag={providerTag(batch.engine, batch.provider, batch.model)}
               time={timestampLabel(batch.createdAt)}
               canUseAsInput={model.acceptsImage}
-              onSelect={(id) => setSelectedByBatch((current) => {
-                const next = { ...current }
-                if (next[batch.id] === id) delete next[batch.id]
-                else next[batch.id] = id
-                return next
-              })}
               onPreview={setPreview}
               onDownload={(url) => void download(url)}
               onCopyPrompt={() => void api.clipboard.writeText(batch.prompt).then(() => message.success('提示词已复制'))}
@@ -548,23 +526,7 @@ export default function ImageGenerationWorkspace({
         {!!batches.length && <div className={styles.load}>{loadingMore ? <Spin size="small" /> : historyDone ? '没有更多了' : ''}</div>}
       </section>
 
-      {preview && <div className={styles.lightbox} onClick={() => setPreview(null)}><img src={preview} alt="预览" onClick={(event) => event.stopPropagation()} /></div>}
-      <Modal
-        open={compareOpen}
-        title={`图片对比（${selectedImages.length} 张）`}
-        width="min(1200px, 94vw)"
-        footer={null}
-        onCancel={() => setCompareOpen(false)}
-      >
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, Math.max(1, selectedImages.length))}, minmax(0, 1fr))`, gap: 10 }}>
-          {selectedImages.map(({ batchId, prompt: selectedPrompt, image }) => (
-            <div key={batchId} style={{ minWidth: 0 }}>
-              <img src={image.url} alt={selectedPrompt} style={{ width: '100%', aspectRatio: '1', objectFit: 'contain', background: '#111', borderRadius: 6 }} />
-              <div title={selectedPrompt} style={{ marginTop: 6, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedPrompt}</div>
-            </div>
-          ))}
-        </div>
-      </Modal>
+      {preview && <div className={styles.lightbox} onClick={() => setPreview(null)}><img src={preview} alt="预览" /></div>}
       {baseImage && (
         <MaskEditorComponent
           open={maskEditorOpen}

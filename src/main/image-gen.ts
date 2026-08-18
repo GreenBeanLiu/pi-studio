@@ -3,6 +3,7 @@ import { appendAppLog } from './app-log'
 import { getCloudConnection } from './cloud-connection'
 import { resolveCloudImageResult } from './image-gen-result'
 import { remoteControl } from './remote-control'
+import type { ImageModel } from '../shared/ipc/contract'
 
 // 本地 ComfyUI 引擎已移除(2026-07-17):生图全走云端(TrailAI 中继)。
 // Provider 调度、Hatchet 执行和 R2 归档均在服务端。
@@ -98,7 +99,7 @@ async function cloudGenerate(
   size?: ImageGenSize,
   options?: ImageGenOptions,
   downloadResult = true,
-  model?: CloudImageModel,
+  model?: ImageModel,
 ): Promise<ImageGenResult> {
   const cloud = getCloudConnection()
   if (!cloud.available) {
@@ -162,12 +163,6 @@ async function cloudGenerate(
 
 /** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
 export type ImageGenSize = '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
-export type CloudImageModel =
-  | 'gpt-image-2'
-  | 'gemini-3.1-flash-image-preview'
-  | 'gemini-3-pro-image-preview'
-  | 'grok-imagine-image'
-  | 'grok-imagine-image-quality'
 export type GeminiImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
 export type GeminiImageResolution = '1K' | '2K' | '4K'
 export type GrokImageAspectRatio =
@@ -194,7 +189,7 @@ export async function generateImage(payload: {
   prompt: string
   engine: 'openai' | 'gemini' | 'grok'
   batchId?: string
-  model?: CloudImageModel
+  model?: ImageModel
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
@@ -273,7 +268,7 @@ export function registerImageGenHandlers(): void {
         prompt: string
         engine: 'openai' | 'gemini' | 'grok'
         batchId?: string
-        model?: CloudImageModel
+        model?: ImageModel
         referenceUrls?: string[]
         maskDataUrl?: string
         size?: ImageGenSize
@@ -362,7 +357,7 @@ export function registerImageGenHandlers(): void {
       const result = await generateImage({
         ...payload,
         engine,
-        model: payload.model as CloudImageModel | undefined,
+        model: payload.model as ImageModel | undefined,
         size: payload.size as ImageGenSize | undefined,
         aspectRatio: payload.aspectRatio as GeminiImageAspectRatio | undefined,
         downloadResult: false,

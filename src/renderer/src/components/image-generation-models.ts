@@ -10,23 +10,17 @@ import type {
   ImageGenQuality,
   ImageGenResponseFormat,
   ImageGenSize,
+  ImageModel,
 } from '../lib/api'
 
 // 本地 ComfyUI 引擎已移除(2026-07-17):生图全走服务端
-export type ImageModelKey =
-  | 'gpt-image-2'
-  | 'gemini-3.1-flash-image-preview'
-  | 'gemini-3-pro-image-preview'
-  | 'grok-imagine-image'
-  | 'grok-imagine-image-quality'
-
 export type ImageModelDefinition = {
-  key: ImageModelKey
+  key: ImageModel
   label: string
   description: string
   group: '云端模型'
   engine: ImageGenEngine
-  cloudModel?: Exclude<ImageModelKey, 'gpt-image-2'>
+  cloudModel?: Exclude<ImageModel, 'gpt-image-2'>
   parameters: 'gpt' | 'gemini' | 'grok'
   acceptsImage: boolean
   acceptsMask: boolean
@@ -42,17 +36,6 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
     parameters: 'gpt',
     acceptsImage: true,
     acceptsMask: true,
-  },
-  {
-    key: 'gemini-3.1-flash-image-preview',
-    label: 'Gemini 3.1 Flash',
-    description: '文生图 / 参考图改图 · 更快更便宜',
-    group: '云端模型',
-    engine: 'gemini',
-    cloudModel: 'gemini-3.1-flash-image-preview',
-    parameters: 'gemini',
-    acceptsImage: true,
-    acceptsMask: false,
   },
   {
     key: 'gemini-3-pro-image-preview',
@@ -91,14 +74,14 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
 
 const MODEL_BY_KEY = new Map(IMAGE_MODELS.map((model) => [model.key, model]))
 
-export function imageModel(key: ImageModelKey): ImageModelDefinition {
+export function imageModel(key: ImageModel): ImageModelDefinition {
   const model = MODEL_BY_KEY.get(key)
   if (!model) throw new Error(`Unknown image model: ${key}`)
   return model
 }
 
-export function defaultImageModel(engine: string | undefined): ImageModelKey {
-  if (engine === 'gemini') return 'gemini-3.1-flash-image-preview'
+export function defaultImageModel(engine: string | undefined): ImageModel {
+  if (engine === 'gemini') return 'gemini-3-pro-image-preview'
   if (engine === 'grok') return 'grok-imagine-image'
   return 'gpt-image-2'
 }
@@ -141,7 +124,7 @@ export type ImageGenerationRequest = {
 }
 
 export function buildImageGenerationRequest(args: {
-  modelKey: ImageModelKey
+  modelKey: ImageModel
   prompt: string
   batchId: string
   referenceUrls?: string[]

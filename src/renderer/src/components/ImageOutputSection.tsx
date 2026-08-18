@@ -1,3 +1,4 @@
+import { Input, InputNumber, Select } from 'antd'
 import { createStyles } from 'antd-style'
 
 import type {
@@ -8,7 +9,8 @@ import type {
   ImageGenQuality,
   ImageGenSize,
 } from '../lib/api'
-import { imageModel, type ImageModelKey, type ImageOutputSettings } from './image-generation-models'
+import { imageModel, type ImageOutputSettings } from './image-generation-models'
+import type { ImageModel } from '../lib/api'
 
 const GPT_SIZES: ImageGenSize[] = [
   '256x256', '512x512', '1024x1024', '1024x1536',
@@ -79,14 +81,16 @@ const useStyles = createStyles(({ token, css }) => ({
     gap: 8px;
     color: ${token.colorTextSecondary};
     font-size: 12px;
-    & select,
-    & input {
+    & label {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    & .ant-select,
+    & .ant-input,
+    & .ant-input-number {
       width: 100%;
-      background: ${token.colorFillQuaternary};
-      color: ${token.colorText};
-      border: 1px solid ${token.colorBorder};
-      border-radius: 4px;
-      padding: 2px 4px;
     }
   `,
   maskHint: css`
@@ -127,7 +131,7 @@ export default function ImageOutputSection({
   hasMask,
   onChange,
 }: {
-  modelKey: ImageModelKey
+  modelKey: ImageModel
   value: ImageOutputSettings
   hasMask: boolean
   onChange: (patch: Partial<ImageOutputSettings>) => void
@@ -157,12 +161,12 @@ export default function ImageOutputSection({
           </button>
           {value.advanced && (
             <div className={styles.advancedGrid}>
-              <label>背景<select value={value.background} onChange={(event) => onChange({ background: event.target.value as ImageOutputSettings['background'] })}><option>auto</option><option>transparent</option><option>opaque</option></select></label>
-              <label>格式<select value={value.outputFormat} onChange={(event) => onChange({ outputFormat: event.target.value as ImageOutputSettings['outputFormat'] })}><option>png</option><option>jpeg</option><option>webp</option></select></label>
-              <label>压缩<input type="number" min={0} max={100} disabled={value.outputFormat === 'png'} value={value.outputCompression} onChange={(event) => onChange({ outputCompression: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} /></label>
-              <label>审核<select value={value.moderation} onChange={(event) => onChange({ moderation: event.target.value as ImageOutputSettings['moderation'] })}><option>auto</option><option>low</option></select></label>
-              <label>响应<select value={value.responseFormat} onChange={(event) => onChange({ responseFormat: event.target.value as ImageOutputSettings['responseFormat'] })}><option>b64_json</option><option>url</option></select></label>
-              <label>用户<input maxLength={64} value={value.requestUser} onChange={(event) => onChange({ requestUser: event.target.value })} /></label>
+              <label>背景<Select value={value.background} options={['auto', 'transparent', 'opaque'].map((item) => ({ value: item, label: item }))} onChange={(background) => onChange({ background })} /></label>
+              <label>格式<Select value={value.outputFormat} options={['png', 'jpeg', 'webp'].map((item) => ({ value: item, label: item }))} onChange={(outputFormat) => onChange({ outputFormat })} /></label>
+              <label>压缩<InputNumber min={0} max={100} disabled={value.outputFormat === 'png'} value={value.outputCompression} onChange={(outputCompression) => onChange({ outputCompression: outputCompression ?? 0 })} /></label>
+              <label>审核<Select value={value.moderation} options={['auto', 'low'].map((item) => ({ value: item, label: item }))} onChange={(moderation) => onChange({ moderation })} /></label>
+              <label>响应<Select value={value.responseFormat} options={['b64_json', 'url'].map((item) => ({ value: item, label: item }))} onChange={(responseFormat) => onChange({ responseFormat })} /></label>
+              <label>用户<Input maxLength={64} value={value.requestUser} onChange={(event) => onChange({ requestUser: event.target.value })} /></label>
             </div>
           )}
         </>

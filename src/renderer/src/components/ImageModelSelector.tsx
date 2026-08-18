@@ -1,21 +1,22 @@
 import { Select } from 'antd'
 
-import { IMAGE_MODELS, type ImageModelKey } from './image-generation-models'
+import { IMAGE_MODELS } from './image-generation-models'
+import type { ImageModel } from '../lib/api'
 
 export default function ImageModelSelector({
   value,
   cloudAvailable,
   onChange,
 }: {
-  value: ImageModelKey
+  value: ImageModel
   cloudAvailable: boolean
-  onChange: (value: ImageModelKey) => void
+  onChange: (value: ImageModel) => void
 }) {
   const groups = ['云端模型', '本地模型'] as const
   return (
     <Select
       value={value}
-      onChange={(next) => onChange(next as ImageModelKey)}
+      onChange={(next) => onChange(next as ImageModel)}
       style={{ width: '100%' }}
       size="large"
       optionLabelProp="label"

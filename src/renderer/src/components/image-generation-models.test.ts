@@ -22,8 +22,8 @@ const output: ImageOutputSettings = {
 describe('image generation model catalog', () => {
   it('maps stored engine preferences to a model', () => {
     expect(defaultImageModel('openai')).toBe('gpt-image-2')
-    // gemini 默认选 flash:价格约为 pro 的 1/3,质量足够日常用
-    expect(defaultImageModel('gemini')).toBe('gemini-3.1-flash-image-preview')
+    // Gemini Flash currently returns 400 through the configured relay; Pro is verified.
+    expect(defaultImageModel('gemini')).toBe('gemini-3-pro-image-preview')
     expect(defaultImageModel('grok')).toBe('grok-imagine-image')
     // 本地引擎已移除:老设置里存的 'comfy' 回退到云端默认
     expect(defaultImageModel('comfy')).toBe('gpt-image-2')
