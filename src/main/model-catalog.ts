@@ -14,33 +14,19 @@ import {
 } from './llm-gateway'
 import {
   agentConfigDir,
-  loadSettings,
   migrateOfficialDeepSeekFavorites,
-  saveCustomModelIds,
   writeModelsOverride,
   migrateDirectProviderRetirement,
-  type PiProvider,
 } from './settings'
-import { piClientManager } from './pi-client'
 import type { LlmProfileSavePayload, ModelCatalogView } from '../shared/contracts'
-import { favoriteRouteKey, type ModelRoute } from '../shared/model-route'
 import { DEEPSEEK_PROFILE_ID } from '../shared/deepseek-profile'
 
-type LocalModelSettings = {
-  provider: PiProvider
-  baseUrl: string
-  heliconeEnabled: boolean
-  customModelIds: string[]
-  favoriteModelRoutes: ModelRoute[]
-}
-
-type ModelProjection = LocalModelSettings & {
+type ModelProjection = {
   gatewayRelay: string
-  gatewayProfiles?: LlmProviderProfile[]
+  gatewayProfiles: LlmProviderProfile[]
 }
 
 export type ModelCatalogDependencies = {
-  loadLocalSettings: () => LocalModelSettings
   getConnection: () => CloudConnection
   fetchCatalog: (relay: string, appKey: string) => Promise<LlmCatalog>
   createSessionToken: typeof createLlmSessionToken
@@ -54,8 +40,6 @@ export type ModelCatalogDependencies = {
   saveCachedProfiles: (profiles: LlmProviderProfile[]) => void
   migrateOfficialDeepSeekFavorites: (profiles: LlmProviderProfile[]) => boolean
   migrateDirectProviderRetirement: (profiles: LlmProviderProfile[]) => boolean
-  loadAvailableModels: () => Promise<Array<{ provider: string; id: string }>>
-  saveCustomModelIds: (ids: string[]) => void
 }
 
 export type ModelCatalogSync = {
@@ -71,27 +55,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function legacyThreeAProviderLabel(settings: LocalModelSettings): string | undefined {
-  if (settings.provider !== 'openai' || !settings.baseUrl.trim()) return undefined
-  try {
-    const hostname = new URL(settings.baseUrl).hostname.toLowerCase()
-    if (hostname === '3a-api.com' || hostname.endsWith('.3a-api.com')) return '3A API'
-  } catch {
-    return undefined
-  }
-  return undefined
-}
-
-function providerLabelView(
-  profiles: LlmProviderProfile[],
-  local: LocalModelSettings,
-): ModelCatalogView {
-  const localLabel = legacyThreeAProviderLabel(local)
+function providerLabelView(profiles: LlmProviderProfile[]): ModelCatalogView {
   return {
-    providerLabels: {
-      ...Object.fromEntries(profiles.map((profile) => [profile.id, profile.display_name])),
-      ...(localLabel ? { [local.provider]: localLabel } : {}),
-    },
+    providerLabels: Object.fromEntries(
+      profiles.map((profile) => [profile.id, profile.display_name]),
+    ),
   }
 }
 
@@ -142,16 +110,6 @@ function saveCatalogCache(profiles: LlmProviderProfile[]): void {
 
 export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
   return {
-    loadLocalSettings: () => {
-      const settings = loadSettings()
-      return {
-        provider: settings.provider,
-        baseUrl: settings.baseUrl,
-        heliconeEnabled: !!settings.heliconeApiKey,
-        customModelIds: settings.customModelIds,
-        favoriteModelRoutes: settings.favoriteModelRoutes,
-      }
-    },
     getConnection: getCloudConnection,
     fetchCatalog: fetchLlmCatalog,
     createSessionToken: createLlmSessionToken,
@@ -161,14 +119,7 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
     deleteProfile: deleteLlmProfile,
     refreshProfileModels: refreshLlmProfileModels,
     projectModels: (projection) =>
-      writeModelsOverride(
-        projection.provider,
-        projection.baseUrl,
-        projection.heliconeEnabled,
-        projection.customModelIds,
-        projection.gatewayRelay,
-        projection.gatewayProfiles,
-      ),
+      writeModelsOverride(projection.gatewayRelay, projection.gatewayProfiles),
     loadCachedProfiles: loadCatalogCache,
     saveCachedProfiles: saveCatalogCache,
     migrateOfficialDeepSeekFavorites: (profiles) => {
@@ -181,8 +132,6 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
       return deepSeek ? migrateOfficialDeepSeekFavorites(deepSeek.models) : false
     },
     migrateDirectProviderRetirement,
-    loadAvailableModels: () => piClientManager.getAvailableModels(),
-    saveCustomModelIds,
   }
 }
 
@@ -202,13 +151,8 @@ export class ModelCatalogCoordinator {
     if (deepSeekChanged || retirementChanged) this.onChanged()
   }
 
-  private project(
-    connection: CloudConnection,
-    gatewayProfiles?: LlmProviderProfile[],
-  ): void {
-    const local = this.dependencies.loadLocalSettings()
+  private project(connection: CloudConnection, gatewayProfiles: LlmProviderProfile[]): void {
     this.dependencies.projectModels({
-      ...local,
       gatewayRelay: connection.relay,
       gatewayProfiles,
     })
@@ -238,7 +182,7 @@ export class ModelCatalogCoordinator {
     const profiles = validProfiles(this.dependencies.loadCachedProfiles())
       .filter((profile) => profile.enabled && profile.models.length > 0)
     this.runConfigMigrationsAndNotify(profiles)
-    this.project(connection, profiles.length > 0 ? profiles : undefined)
+    this.project(connection, profiles)
     return profiles
   }
 
@@ -289,13 +233,11 @@ export class ModelCatalogCoordinator {
   }
 
   async loadProviderLabels(): Promise<ModelCatalogView> {
-    const local = this.dependencies.loadLocalSettings()
-    const localLabel = legacyThreeAProviderLabel(local)
     const connection = this.dependencies.getConnection()
     let profiles: LlmProviderProfile[]
     if (!connection.available) {
       profiles = validProfiles(this.dependencies.loadCachedProfiles())
-      if (!localLabel && profiles.length === 0) {
+      if (profiles.length === 0) {
         throw new Error(connection.error || 'Pi Studio cloud service is not configured')
       }
     } else {
@@ -303,17 +245,14 @@ export class ModelCatalogCoordinator {
         profiles = await this.fetchAndCacheProfiles(connection)
       } catch (error) {
         profiles = validProfiles(this.dependencies.loadCachedProfiles())
-        if (!localLabel && profiles.length === 0) throw error
+        if (profiles.length === 0) throw error
       }
     }
-    return providerLabelView(profiles, local)
+    return providerLabelView(profiles)
   }
 
   loadCachedProviderLabels(): ModelCatalogView {
-    return providerLabelView(
-      validProfiles(this.dependencies.loadCachedProfiles()),
-      this.dependencies.loadLocalSettings(),
-    )
+    return providerLabelView(validProfiles(this.dependencies.loadCachedProfiles()))
   }
 
   private async mutateAndPublish<T>(mutation: () => Promise<T>): Promise<{
@@ -336,26 +275,6 @@ export class ModelCatalogCoordinator {
         : this.dependencies.updateProfile(connection.relay, connection.key, payload.profile),
     )
     return { profile: result.value, warning: result.warning }
-  }
-
-  async reconcileFavoriteRoutes(): Promise<{ changed: boolean; warning?: string }> {
-    const local = this.dependencies.loadLocalSettings()
-    const available = await this.dependencies.loadAvailableModels()
-    const known = new Set(
-      available.map((model) => favoriteRouteKey(model.provider, model.id)),
-    )
-    const missing = local.favoriteModelRoutes
-      .filter(
-        (route) =>
-          route.provider === local.provider &&
-          !known.has(favoriteRouteKey(route.provider, route.model)),
-      )
-      .map((route) => route.model)
-    const next = [...new Set([...local.customModelIds, ...missing])]
-    if (next.length === local.customModelIds.length) return { changed: false }
-    this.dependencies.saveCustomModelIds(next)
-    const sync = await this.sync()
-    return { changed: true, warning: sync.warning }
   }
 
   async deleteProfile(id: string): Promise<{ warning?: string }> {

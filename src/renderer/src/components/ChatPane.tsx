@@ -1563,17 +1563,6 @@ export default function ChatPane({
   useEffect(() => {
     syncedCustomModelsRef.current = false
   }, [workspace?.path])
-  useEffect(() => {
-    if (models.length === 0 || syncedCustomModelsRef.current) return
-    syncedCustomModelsRef.current = true
-    api.modelCatalog
-      .reconcileFavoriteRoutes()
-      .then(async (result) => {
-        if ('error' in result || !result.changed) return
-        setModels(await api.pi.getAvailableModels())
-      })
-      .catch(() => {})
-  }, [models, favoriteModels])
 
   // 设置页保存后即时同步(无需重开工作区):重载模型切换列表 + 可用模型清单,
   // 并让上面的自定义模型注册重新评估(新增的第三方 id 立刻可选)。
@@ -2185,12 +2174,9 @@ export default function ChatPane({
         },
         settings: settings
           ? {
-              provider: settings.provider,
-              model: settings.model,
-              baseUrlConfigured: !!settings.baseUrl,
-              apiKeyConfigured: !!settings.apiKey,
+              selectedModelRoute: settings.selectedModelRoute,
+              modelAccessConfigured: settings.modelAccessConfigured,
               tavilyConfigured: !!settings.tavilyApiKey,
-              heliconeConfigured: !!settings.heliconeApiKey,
               subagentsEnabled: settings.subagentsEnabled,
             }
           : null,

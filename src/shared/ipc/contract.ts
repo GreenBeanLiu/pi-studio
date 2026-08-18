@@ -23,7 +23,6 @@ import type {
   LlmProfileSavePayload,
   LlmProviderProfile,
   ModelCatalogView,
-  PiProvider,
   SettingsSaveInput,
   SettingsView,
   Workspace,
@@ -34,7 +33,6 @@ export type {
   LlmProfileSavePayload,
   LlmProviderProfile,
   ModelCatalogView,
-  PiProvider,
   SettingsSaveInput,
   SettingsView,
   Workspace,
@@ -71,18 +69,6 @@ export type DesktopApi = {
       sandboxChanged?: boolean
       workspaceOpen?: boolean
     }>
-    testConnection: (s: {
-      provider: PiProvider
-      apiKey: string
-      model: string
-      baseUrl: string
-    }) => Promise<ProviderConnectionResult>
-    listModels: (s: {
-      provider: PiProvider
-      apiKey: string
-      model: string
-      baseUrl: string
-    }) => Promise<ProviderModelListResult>
     listCloudModels: (s: { relay: string; key: string }) => Promise<ProviderModelListResult>
     onChanged: (cb: () => void) => () => void
   }
@@ -98,7 +84,6 @@ export type DesktopApi = {
   }
   modelCatalog: {
     loadProviderLabels: () => Promise<{ ok: true; view: ModelCatalogView } | { error: string }>
-    reconcileFavoriteRoutes: () => Promise<{ ok: true; changed: boolean; warning?: string } | { error: string }>
   }
   sandbox: {
     detect: () => Promise<SandboxDetect>

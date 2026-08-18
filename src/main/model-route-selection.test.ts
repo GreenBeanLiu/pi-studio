@@ -27,38 +27,42 @@ const cloudProfiles: LlmProviderProfile[] = [
   },
 ]
 
+// 直连 provider 退役后选路只剩网关一条线:选中的还在供就用它,否则默认 profile,
+// 再否则任意一个有模型的 profile。
 describe('canonical model route selection', () => {
-  it('keeps the selected cloud route even when a local API key exists', () => {
+  it('keeps the selected route while its profile still serves that model', () => {
     expect(
       selectRuntimeModelRoute({
         selected: { provider: 'three-a-main', model: 'grok-4' },
-        localProvider: 'openai',
-        localModel: 'gpt-4o',
-        localKeyConfigured: true,
         gatewayProfiles: cloudProfiles,
       }),
     ).toEqual({ provider: 'three-a-main', model: 'grok-4' })
   })
 
-  it('falls back to the local route when the persisted route no longer exists', () => {
+  it('drops a selection whose profile is gone', () => {
     expect(
       selectRuntimeModelRoute({
         selected: { provider: 'deleted-profile', model: 'old-model' },
-        localProvider: 'openai',
-        localModel: 'gpt-4o',
-        localKeyConfigured: true,
         gatewayProfiles: cloudProfiles,
       }),
-    ).toEqual({ provider: 'openai', model: 'gpt-4o' })
+    ).toEqual({ provider: 'three-a-main', model: 'gpt-5.5' })
+  })
+
+  // 退役前的真实故障:selectedModelRoute 里躺着 openai::gpt-4-turbo,它在 pi 内置注册表
+  // 里有、自建网关却不供,于是每次调用都是 502。现在这种线路根本不再被接受。
+  it('drops a selection left over from the retired direct provider', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: { provider: 'openai', model: 'gpt-4-turbo' },
+        gatewayProfiles: cloudProfiles,
+      }),
+    ).toEqual({ provider: 'three-a-main', model: 'gpt-5.5' })
   })
 
   it('uses the default cloud route on first run when it is available', () => {
     expect(
       selectRuntimeModelRoute({
         selected: null,
-        localProvider: 'openai',
-        localModel: 'gpt-4o',
-        localKeyConfigured: true,
         gatewayProfiles: [
           {
             ...cloudProfiles[0],
@@ -76,9 +80,6 @@ describe('canonical model route selection', () => {
     expect(
       selectRuntimeModelRoute({
         selected: null,
-        localProvider: 'openai',
-        localModel: 'gpt-4o',
-        localKeyConfigured: false,
         gatewayProfiles: [
           { ...cloudProfiles[1], models: ['grok-4'] },
           { ...cloudProfiles[0], models: ['gpt-5.7-whatever'] },
@@ -87,59 +88,17 @@ describe('canonical model route selection', () => {
     ).toEqual({ provider: 'three-a-main', model: 'gpt-5.7-whatever' })
   })
 
-  // 2026-08-18:selectedModelRoute 里躺着一条 openai::gpt-4-turbo。它在 pi 内置注册表
-  // 里有,但自建网关不供,于是每次调用都是 502,工作流报「没有产出任何文本」。本地线路
-  // 当时只比对 provider 名字,这条脏数据就一路盖过配好的 gpt-5.5 跑到网关才炸。
-  it('drops a selected local model the direct provider does not actually offer', () => {
+  it('falls back to any profile that still has models when the default one is missing', () => {
     expect(
       selectRuntimeModelRoute({
-        selected: { provider: 'openai', model: 'gpt-4-turbo' },
-        localProvider: 'openai',
-        localModel: 'gpt-5.5',
-        localKeyConfigured: true,
-        localModels: ['gpt-5.6-sol', 'grok-4.5'],
-        gatewayProfiles: [],
+        selected: null,
+        gatewayProfiles: [{ ...cloudProfiles[1], models: ['grok-4'] }],
       }),
-    ).toEqual({ provider: 'openai', model: 'gpt-5.5' })
+    ).toEqual({ provider: 'other-main', model: 'grok-4' })
   })
 
-  it('keeps a selected local model that is on the switcher list', () => {
-    expect(
-      selectRuntimeModelRoute({
-        selected: { provider: 'openai', model: 'grok-4.5' },
-        localProvider: 'openai',
-        localModel: 'gpt-5.5',
-        localKeyConfigured: true,
-        localModels: ['gpt-5.6-sol', 'grok-4.5'],
-        gatewayProfiles: [],
-      }),
-    ).toEqual({ provider: 'openai', model: 'grok-4.5' })
-  })
-
-  it('honours the configured default even when it is not on the switcher list', () => {
-    expect(
-      selectRuntimeModelRoute({
-        selected: { provider: 'openai', model: 'gpt-5.5' },
-        localProvider: 'openai',
-        localModel: 'gpt-5.5',
-        localKeyConfigured: true,
-        localModels: ['gpt-5.6-sol'],
-        gatewayProfiles: [],
-      }),
-    ).toEqual({ provider: 'openai', model: 'gpt-5.5' })
-  })
-
-  // 没配模型切换列表就无从判断该 provider 到底有哪些模型,不能瞎拦。
-  it('leaves the selected local route alone when no local model list is known', () => {
-    expect(
-      selectRuntimeModelRoute({
-        selected: { provider: 'openai', model: 'gpt-4o' },
-        localProvider: 'openai',
-        localModel: 'gpt-5.5',
-        localKeyConfigured: true,
-        gatewayProfiles: [],
-      }),
-    ).toEqual({ provider: 'openai', model: 'gpt-4o' })
+  it('gives up when no profile has any model', () => {
+    expect(selectRuntimeModelRoute({ selected: null, gatewayProfiles: [] })).toBeNull()
   })
 
   it('scopes favorites by provider when model ids are identical', () => {

@@ -3,15 +3,10 @@ import { createSettingsView } from './settings-view'
 import type { SettingsData } from './settings'
 
 const settings: SettingsData = {
-  provider: 'openai',
-  apiKey: 'local-model-key',
-  model: 'gpt-4o',
-  baseUrl: '',
   favoriteModels: '',
   favoriteModelRoutes: [],
   selectedModelRoute: null,
   tavilyApiKey: '',
-  heliconeApiKey: '',
   sandboxEnabled: false,
   subagentsEnabled: true,
   remoteEnabled: false,
@@ -20,7 +15,6 @@ const settings: SettingsData = {
   feishuAppId: '',
   feishuAppSecret: '',
   feishuChatId: '',
-  customModelIds: [],
   imageEngine: '',
   cloudImageRelay: 'https://trail-api.glanger.xyz',
   cloudImageKey: 'desktop-admin-key',
@@ -35,5 +29,10 @@ describe('renderer settings view', () => {
     expect(view.cloudImageKeyConfigured).toBe(true)
     expect(view.modelAccessConfigured).toBe(true)
     expect(JSON.stringify(view)).not.toContain('desktop-admin-key')
+  })
+
+  // 直连退役后能不能用模型完全看云端线路,没有本地 key 兜底了。
+  it('reports no model access when the cloud lane is unavailable', () => {
+    expect(createSettingsView(settings, false).modelAccessConfigured).toBe(false)
   })
 })

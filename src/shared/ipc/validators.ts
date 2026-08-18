@@ -146,7 +146,6 @@ export function parseRoutineSave(value: unknown): ParsedRoutineSave {
 // settings:save 原来直接 `...settings` 落盘:多余字段跟着持久化,
 // cloudImageKey 不是字符串时 `.trim()` 直接抛 TypeError 崩掉 handler。
 
-const PI_PROVIDERS = ['anthropic', 'openai'] as const
 const IMAGE_ENGINES = ['', 'openai', 'gemini', 'grok'] as const
 
 function stringField(value: unknown, label: string): string {
@@ -162,13 +161,8 @@ function boolField(value: unknown, fallback: boolean, label: string): boolean {
 }
 
 export type ParsedSettingsSave = {
-  provider: (typeof PI_PROVIDERS)[number]
-  apiKey: string
-  model: string
-  baseUrl: string
   favoriteModels: string
   tavilyApiKey: string
-  heliconeApiKey: string
   sandboxEnabled: boolean
   subagentsEnabled: boolean
   remoteEnabled: boolean
@@ -186,13 +180,8 @@ export type ParsedSettingsSave = {
 export function parseSettingsSave(value: unknown): ParsedSettingsSave {
   if (!isRecord(value)) throw new TypeError('设置参数无效')
   const out: ParsedSettingsSave = {
-    provider: oneOf(value.provider, PI_PROVIDERS, 'Provider'),
-    apiKey: stringField(value.apiKey, 'API Key'),
-    model: stringField(value.model, '模型'),
-    baseUrl: stringField(value.baseUrl, 'Base URL'),
     favoriteModels: stringField(value.favoriteModels, '常用模型'),
     tavilyApiKey: stringField(value.tavilyApiKey, 'Tavily Key'),
-    heliconeApiKey: stringField(value.heliconeApiKey, 'Helicone Key'),
     sandboxEnabled: boolField(value.sandboxEnabled, false, '沙箱开关'),
     subagentsEnabled: boolField(value.subagentsEnabled, false, '子代理开关'),
     remoteEnabled: boolField(value.remoteEnabled, false, '远程控制开关'),

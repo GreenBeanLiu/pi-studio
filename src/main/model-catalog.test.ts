@@ -28,13 +28,6 @@ function dependencies(
   overrides: Partial<ModelCatalogDependencies> = {},
 ): ModelCatalogDependencies {
   return {
-    loadLocalSettings: () => ({
-      provider: 'openai',
-      baseUrl: '',
-      heliconeEnabled: false,
-      customModelIds: [],
-      favoriteModelRoutes: [],
-    }),
     getConnection: () => ({
       available: true,
       relay: 'https://trail-api.glanger.xyz',
@@ -61,8 +54,6 @@ function dependencies(
     saveCachedProfiles: vi.fn(),
     migrateOfficialDeepSeekFavorites: vi.fn(() => false),
     migrateDirectProviderRetirement: vi.fn(() => false),
-    loadAvailableModels: vi.fn(async () => []),
-    saveCustomModelIds: vi.fn(),
     ...overrides,
   }
 }
@@ -108,7 +99,7 @@ describe('model catalog coordination', () => {
     expect(result.profiles).toEqual([])
     expect(result.warning).toBe('gateway offline')
     expect(deps.projectModels).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayProfiles: undefined }),
+      expect.objectContaining({ gatewayProfiles: [] }),
     )
   })
 
@@ -239,76 +230,6 @@ describe('model catalog coordination', () => {
     })
   })
 
-  it('labels a legacy OpenAI-compatible 3A route as 3A API', async () => {
-    const catalog = new ModelCatalogCoordinator(
-      dependencies({
-        loadLocalSettings: () => ({
-          provider: 'openai',
-          baseUrl: 'https://www.3a-api.com',
-          heliconeEnabled: false,
-          customModelIds: [],
-          favoriteModelRoutes: [],
-        }),
-      }),
-    )
-
-    await expect(catalog.loadProviderLabels()).resolves.toEqual({
-      providerLabels: {
-        openai: '3A API',
-        'three-a-main': '3A Main',
-      },
-    })
-  })
-
-  it('keeps the local 3A label when the cloud catalog is unavailable', async () => {
-    const catalog = new ModelCatalogCoordinator(
-      dependencies({
-        loadLocalSettings: () => ({
-          provider: 'openai',
-          baseUrl: 'https://www.3a-api.com',
-          heliconeEnabled: false,
-          customModelIds: [],
-          favoriteModelRoutes: [],
-        }),
-        getConnection: () => ({
-          available: false,
-          relay: '',
-          key: null,
-          error: 'cloud unavailable',
-        }),
-      }),
-    )
-
-    await expect(catalog.loadProviderLabels()).resolves.toEqual({
-      providerLabels: { openai: '3A API' },
-    })
-  })
-
-  it('loads local and cached labels without waiting for the cloud catalog', () => {
-    const fetchCatalog = vi.fn(async () => ({ providers: [profile] }))
-    const catalog = new ModelCatalogCoordinator(
-      dependencies({
-        loadLocalSettings: () => ({
-          provider: 'openai',
-          baseUrl: 'https://www.3a-api.com',
-          heliconeEnabled: false,
-          customModelIds: [],
-          favoriteModelRoutes: [],
-        }),
-        loadCachedProfiles: vi.fn(() => [deepSeekProfile]),
-        fetchCatalog,
-      }),
-    )
-
-    expect(catalog.loadCachedProviderLabels()).toEqual({
-      providerLabels: {
-        openai: '3A API',
-        deepseek: 'DeepSeek 官方',
-      },
-    })
-    expect(fetchCatalog).not.toHaveBeenCalled()
-  })
-
   it('loads provider labels from the last valid cache when the gateway is offline', async () => {
     const catalog = new ModelCatalogCoordinator(
       dependencies({
@@ -337,51 +258,7 @@ describe('model catalog coordination', () => {
 
     await expect(catalog.sync()).resolves.toEqual({ profiles: [], warning: 'offline' })
     expect(deps.projectModels).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayProfiles: undefined }),
+      expect.objectContaining({ gatewayProfiles: [] }),
     )
-  })
-
-  it('reconciles only missing favorites for the active direct provider', async () => {
-    const deps = dependencies({
-      loadLocalSettings: () => ({
-        provider: 'openai',
-        baseUrl: '',
-        heliconeEnabled: false,
-        customModelIds: ['existing-model'],
-        favoriteModelRoutes: [
-          { provider: 'openai', model: 'custom-direct' },
-          { provider: 'three-a-main', model: 'cloud-only' },
-        ],
-      }),
-      loadAvailableModels: vi.fn(async () => [
-        { provider: 'openai', id: 'existing-model' },
-        { provider: 'three-a-main', id: 'gpt-5.5' },
-      ]),
-    })
-    const catalog = new ModelCatalogCoordinator(deps)
-
-    await expect(catalog.reconcileFavoriteRoutes()).resolves.toEqual({ changed: true })
-    expect(deps.saveCustomModelIds).toHaveBeenCalledWith(['existing-model', 'custom-direct'])
-    expect(deps.projectModels).toHaveBeenCalledOnce()
-  })
-
-  it('matches favorite routes case-insensitively using the shared route identity', async () => {
-    const deps = dependencies({
-      loadLocalSettings: () => ({
-        provider: 'openai',
-        baseUrl: '',
-        heliconeEnabled: false,
-        customModelIds: [],
-        favoriteModelRoutes: [{ provider: 'openai', model: 'custom-direct' }],
-      }),
-      loadAvailableModels: vi.fn(async () => [
-        { provider: 'OpenAI', id: 'CUSTOM-DIRECT' },
-      ]),
-    })
-
-    await expect(new ModelCatalogCoordinator(deps).reconcileFavoriteRoutes()).resolves.toEqual({
-      changed: false,
-    })
-    expect(deps.saveCustomModelIds).not.toHaveBeenCalled()
   })
 })

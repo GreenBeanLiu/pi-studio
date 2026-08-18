@@ -45,8 +45,6 @@ const api = {
   settings: {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (s: SettingsSaveInput) => ipcRenderer.invoke('settings:save', s),
-    testConnection: (s: unknown) => ipcRenderer.invoke('settings:testConnection', s),
-    listModels: (s: unknown) => ipcRenderer.invoke('settings:listModels', s),
     listCloudModels: (s: unknown) => ipcRenderer.invoke('settings:listCloudModels', s),
     onChanged: (cb: () => void) => {
       const handler = (): void => cb()
@@ -64,7 +62,6 @@ const api = {
 
   modelCatalog: {
     loadProviderLabels: () => ipcRenderer.invoke('modelCatalog:loadProviderLabels'),
-    reconcileFavoriteRoutes: () => ipcRenderer.invoke('modelCatalog:reconcileFavoriteRoutes'),
   },
 
   sandbox: {

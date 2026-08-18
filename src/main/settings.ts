@@ -11,7 +11,6 @@ import {
 } from '../shared/model-route'
 import {
   createDefaultSettingsForm,
-  type PiProvider,
   type SettingsForm,
   type Workspace,
 } from '../shared/contracts'
@@ -23,12 +22,11 @@ import {
   migrateDirectSelectedRoute,
 } from '../shared/direct-provider-retirement'
 
-export type { PiProvider, Workspace } from '../shared/contracts'
+export type { Workspace } from '../shared/contracts'
 
 export type SettingsData = SettingsForm & {
   favoriteModelRoutes: ModelRoute[]
   selectedModelRoute: ModelRoute | null
-  customModelIds: string[]
   recentWorkspaces: Workspace[]
 }
 
@@ -36,7 +34,6 @@ const DEFAULTS: SettingsData = {
   ...createDefaultSettingsForm(),
   favoriteModelRoutes: [],
   selectedModelRoute: null,
-  customModelIds: [],
   recentWorkspaces: [],
 }
 
@@ -102,20 +99,13 @@ export function loadSettings(): SettingsData {
     for (const key of legacyImageProviderKeys) delete raw[key]
     writeRaw(raw)
   }
-  const apiKey = decryptField(raw, 'apiKey', 'apiKeyEncrypted')
-
-  const provider = (raw.provider as PiProvider) ?? DEFAULTS.provider
   const selectedModelRoute = raw.selectedModelRoute as Partial<ModelRoute> | undefined
 
   return {
-    provider,
-    apiKey,
-    model: (raw.model as string) ?? DEFAULTS.model,
-    baseUrl: (raw.baseUrl as string) ?? DEFAULTS.baseUrl,
     favoriteModels: (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
     favoriteModelRoutes: parseFavoriteModelRoutes(
       (raw.favoriteModels as string) ?? DEFAULTS.favoriteModels,
-      provider,
+      DEFAULT_DIRECT_PROVIDER,
     ),
     selectedModelRoute:
       typeof selectedModelRoute?.provider === 'string' &&
@@ -125,7 +115,6 @@ export function loadSettings(): SettingsData {
         ? { provider: selectedModelRoute.provider.trim(), model: selectedModelRoute.model.trim() }
         : null,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
-    heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
     sandboxEnabled:
       typeof raw.sandboxEnabled === 'boolean' ? raw.sandboxEnabled : DEFAULTS.sandboxEnabled,
     subagentsEnabled:
@@ -137,9 +126,6 @@ export function loadSettings(): SettingsData {
     feishuAppId: (raw.feishuAppId as string) ?? DEFAULTS.feishuAppId,
     feishuAppSecret: decryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted'),
     feishuChatId: (raw.feishuChatId as string) ?? DEFAULTS.feishuChatId,
-    customModelIds: Array.isArray(raw.customModelIds)
-      ? (raw.customModelIds as string[])
-      : DEFAULTS.customModelIds,
     imageEngine:
       raw.imageEngine === 'openai' || raw.imageEngine === 'gemini' || raw.imageEngine === 'grok'
         ? raw.imageEngine
@@ -155,15 +141,10 @@ export function loadSettings(): SettingsData {
 export function saveSettings(settings: SettingsForm): void {
   const raw = readRaw()
 
-  encryptField(raw, 'apiKey', 'apiKeyEncrypted', settings.apiKey)
   encryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted', settings.tavilyApiKey)
-  encryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted', settings.heliconeApiKey)
   encryptField(raw, 'feishuSecret', 'feishuSecretEncrypted', settings.feishuSecret)
   encryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted', settings.feishuAppSecret)
   encryptField(raw, 'cloudImageKey', 'cloudImageKeyEncrypted', settings.cloudImageKey)
-  raw.provider = settings.provider
-  raw.model = settings.model
-  raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
   delete raw.securityGuardEnabled
   raw.sandboxEnabled = settings.sandboxEnabled
@@ -198,12 +179,6 @@ export function addRecentWorkspace(path: string): Workspace[] {
   return next
 }
 
-export function saveCustomModelIds(ids: string[]): void {
-  const raw = readRaw()
-  raw.customModelIds = ids
-  writeRaw(raw)
-}
-
 export function saveSelectedModelRoute(provider: string, model: string): void {
   const raw = readRaw()
   raw.selectedModelRoute = { provider: provider.trim(), model: model.trim() }
@@ -218,7 +193,7 @@ export function migrateOfficialDeepSeekFavorites(enabledModels: string[]): boole
     typeof raw.favoriteModels === 'string' ? raw.favoriteModels : DEFAULTS.favoriteModels
   const next = migrateDeepSeekFavoriteModels({
     favoriteModels: current,
-    legacyProvider: (raw.provider as PiProvider) ?? DEFAULTS.provider,
+    legacyProvider: (raw.provider as string) ?? DEFAULT_DIRECT_PROVIDER,
     enabledModels,
   })
 
@@ -284,11 +259,6 @@ export function removeRecentWorkspace(path: string): Workspace[] {
   return next
 }
 
-/** Provider env var name pi's RpcClient subprocess needs for auth. */
-export function apiKeyEnvVar(provider: PiProvider): string {
-  return provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'
-}
-
 /**
  * pi's config (auth.json, models.json) normally lives at ~/.pi/agent — global
  * and shared with any other `pi` CLI install the user has. Point the spawned
@@ -300,76 +270,25 @@ export function agentConfigDir(): string {
   return join(app.getPath('userData'), 'pi-agent')
 }
 
-const DEFAULT_TARGET: Record<PiProvider, string> = {
-  anthropic: 'https://api.anthropic.com',
-  openai: 'https://api.openai.com',
-}
-
 /**
- * Built-in providers support an "override-only" models.json entry (baseUrl +
- * headers, no custom model list) that redirects every built-in model id for
- * that provider through a different endpoint. Two uses here:
+ * 把云端网关的 provider 列表投影成 pi 的 models.json。
  *
- *  - Third-party OpenAI-compatible gateway: just a baseUrl override.
- *  - Helicone logging: route through Helicone's universal gateway
- *    (gateway.helicone.ai) with `Helicone-Auth` (the key, via the
- *    HELICONE_API_KEY env var so it never lands in models.json) and
- *    `Helicone-Target-Url` pointing at the *real* endpoint (the user's
- *    gateway if set, else the provider default). pi forwards its normal
- *    provider auth headers through, so Helicone just observes + relays.
- *
- * Auth for the model itself still comes from the provider's normal env var.
+ * 直连 provider 退役后这里只剩网关一条路:不再有 baseUrl 覆写、不再有自定义模型 id
+ * (那是给内置 registry 补模型用的,网关 profile 自带完整模型列表),Helicone 那套
+ * 包装也一并去掉 —— 它是靠改写直连 provider 条目实现的,没有直连就无处可挂,而且
+ * 中转自己的 chat_logs 已经在记全量请求响应了。
  */
 export function writeModelsOverride(
-  provider: PiProvider,
-  baseUrl: string,
-  heliconeEnabled: boolean,
-  customModelIds: string[] = [],
-  gatewayRelay = '',
-  gatewayProfiles?: LlmProviderProfile[],
+  gatewayRelay: string,
+  gatewayProfiles: LlmProviderProfile[],
 ): void {
   const dir = agentConfigDir()
   mkdirSync(dir, { recursive: true })
   const modelsPath = join(dir, 'models.json')
 
-  let providerConfig: Record<string, unknown> | null = null
+  const providers: Record<string, unknown> = gatewayRelay.trim()
+    ? buildGatewayProviderConfigs(gatewayRelay, gatewayProfiles)
+    : {}
 
-  if (heliconeEnabled) {
-    const realTarget = baseUrl.trim() || DEFAULT_TARGET[provider]
-    providerConfig = {
-      baseUrl: 'https://gateway.helicone.ai',
-      headers: {
-        'Helicone-Auth': 'Bearer ${HELICONE_API_KEY}',
-        'Helicone-Target-Url': realTarget,
-      },
-    }
-  } else if (baseUrl.trim()) {
-    providerConfig = { baseUrl: baseUrl.trim() }
-  }
-
-  // 第三方网关的自定义模型 id(内置 registry 没有的):写进 models 数组,
-  // pi 会 merge 进该 provider(内置模型保留)。注意同 id 会替换内置条目
-  // 丢失元数据,所以调用方只传"缺失"的 id。
-  const ids = customModelIds.map((s) => s.trim()).filter(Boolean)
-  if (ids.length > 0) {
-    providerConfig = { ...(providerConfig ?? {}), models: ids.map((id) => ({ id })) }
-  }
-
-  let providers: Record<string, unknown> = {}
-  if (gatewayProfiles === undefined && existsSync(modelsPath)) {
-    try {
-      const existing = JSON.parse(readFileSync(modelsPath, 'utf-8')) as {
-        providers?: Record<string, unknown>
-      }
-      providers = { ...(existing.providers ?? {}) }
-    } catch {
-      providers = {}
-    }
-  }
-  if (providerConfig) providers[provider] = providerConfig
-  else delete providers[provider]
-  if (gatewayRelay.trim() && gatewayProfiles) {
-    Object.assign(providers, buildGatewayProviderConfigs(gatewayRelay, gatewayProfiles))
-  }
   writeFileSync(modelsPath, JSON.stringify({ providers }, null, 2), 'utf-8')
 }

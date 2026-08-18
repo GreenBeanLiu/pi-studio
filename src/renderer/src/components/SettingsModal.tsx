@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Alert, Input, Segmented, Button, Modal, Select, Switch, Tag, Popconfirm, message } from 'antd'
-import { Eye, EyeOff, Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
+import { Alert, Input, Button, Modal, Select, Switch, Tag, Popconfirm, message } from 'antd'
+import { Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
 import {
   api,
   type Channel,
   type ChannelType,
-  type PiProvider,
   type SettingsView,
   type LlmProfileWrite,
   type LlmProviderProfile,
@@ -32,10 +31,9 @@ import { QRCodeSVG } from 'qrcode.react'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
-// 云端线路管理 + 本地直连(备用)配置暂不展示(2026-07-19 用户定):
-// 云端能用即可,线路/权限开通后台化;私有直连的配置形态未定(且不能叫 OpenAI)。
-// 已存的 apiKey/provider/线路继续生效,只是 UI 收起;置 true 可恢复完整管理界面。
-const SHOW_ADVANCED_MODEL_CONFIG: boolean = false
+// 云端线路管理界面暂不展示(2026-07-19 用户定):云端能用即可,线路/权限开通后台化。
+// 本地直连已于 2026-08-19 整体退役,不再有可恢复的开关。
+const SHOW_CLOUD_LANE_ADMIN: boolean = false
 
 // 安全策略分类已移除(2026-07-17):隔离职责交给沙箱(WSL2+bubblewrap),
 // 规则式软拦截(securityGuard/策略编辑器)不再暴露,后端代码保留但不启用。
@@ -196,11 +194,8 @@ export default function SettingsModal({
   const [category, setCategory] = useState<Category>('model')
   const [settings, setSettings] = useState<Settings>(() => createDefaultSettingsView())
   const [saving, setSaving] = useState(false)
-  const [showKey, setShowKey] = useState(false)
   const [version, setVersion] = useState('')
   const [piVersion, setPiVersion] = useState('')
-  const [testingConnection, setTestingConnection] = useState(false)
-  const [connectionResult, setConnectionResult] = useState<ProviderConnectionResult | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [modelFetchResult, setModelFetchResult] = useState<ProviderModelListResult | null>(null)
   const [channels, setChannels] = useState<Channel[]>([])
@@ -429,7 +424,7 @@ export default function SettingsModal({
       setDeepSeekApiKey('')
       await loadLlmProfiles()
       setSettings((current) => {
-        const routes = parseFavoriteModelRoutes(current.favoriteModels, current.provider)
+        const routes = parseFavoriteModelRoutes(current.favoriteModels, DEEPSEEK_PROFILE_ID)
         const seen = new Set(
           routes.map((route) => favoriteRouteKey(route.provider, route.model)),
         )
@@ -475,7 +470,6 @@ export default function SettingsModal({
 
   function patch(update: Partial<Settings>) {
     setSettings((s) => ({ ...s, ...update }))
-    setConnectionResult(null)
     setModelFetchResult(null)
   }
 
@@ -529,56 +523,17 @@ export default function SettingsModal({
     }
   }
 
-  async function handleTestConnection() {
-    setTestingConnection(true)
-    setConnectionResult(null)
-    try {
-      const result = await api.settings.testConnection({
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        baseUrl: settings.baseUrl,
-      })
-      setConnectionResult(result)
-    } catch (err) {
-      setConnectionResult({
-        ok: false,
-        message: '连接测试失败',
-        details: (err as Error).message ?? String(err),
-      })
-    } finally {
-      setTestingConnection(false)
-    }
-  }
-
   async function handleFetchModels() {
     setFetchingModels(true)
     setModelFetchResult(null)
     try {
-      const useCloudCatalog =
-        !SHOW_ADVANCED_MODEL_CONFIG ||
-        !!settings.cloudImageKey.trim() ||
-        (settings.cloudImageKeyConfigured && !settings.clearCloudImageKey)
-      const result = useCloudCatalog
-        ? await api.settings.listCloudModels({
-            relay: settings.cloudImageRelay,
-            key: settings.cloudImageKey,
-          })
-        : await api.settings.listModels({
-            provider: settings.provider,
-            apiKey: settings.apiKey,
-            model: settings.model,
-            baseUrl: settings.baseUrl,
-          })
+      const result = await api.settings.listCloudModels({
+        relay: settings.cloudImageRelay,
+        key: settings.cloudImageKey,
+      })
       setModelFetchResult(result)
       if (result.ok) {
-        setSettings((s) => ({
-          ...s,
-          favoriteModels: useCloudCatalog
-            ? result.models.join(',')
-            : result.models.map((model) => `${settings.provider}::${model}`).join(','),
-          model: useCloudCatalog ? s.model : s.model || result.models[0] || '',
-        }))
+        setSettings((s) => ({ ...s, favoriteModels: result.models.join(',') }))
       }
     } catch (err) {
       setModelFetchResult({
@@ -717,7 +672,7 @@ export default function SettingsModal({
                 )}
               </div>
 
-              {SHOW_ADVANCED_MODEL_CONFIG && (<>
+              {SHOW_CLOUD_LANE_ADMIN && (
               <div className={styles.section}>
                 <span className={styles.label}>
                   云端模型线路
@@ -753,87 +708,8 @@ export default function SettingsModal({
                   </div>
                 ))}
               </div>
-
-              <Alert
-                type="info"
-                showIcon
-                message="本地直连（备用）"
-                description="云端线路不可用时仍可使用下面的单一 API Key；不需要备用可留空。"
-              />
-              <div className={styles.section}>
-                <span className={styles.label}>AI 提供商</span>
-                <Segmented
-                  value={settings.provider}
-                  onChange={(v) => patch({ provider: v as PiProvider, model: '', baseUrl: '' })}
-                  options={[
-                    { label: 'Anthropic (Claude)', value: 'anthropic' },
-                    { label: 'OpenAI', value: 'openai' },
-                  ]}
-                  block
-                />
-              </div>
-
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  API Key
-                  <span className={styles.labelHint}>本地加密存储，传给 pi CLI 子进程，不上传</span>
-                </span>
-                <Input
-                  type={showKey ? 'text' : 'password'}
-                  value={settings.apiKey}
-                  onChange={(e) => patch({ apiKey: e.target.value })}
-                  placeholder={settings.provider === 'anthropic' ? 'sk-ant-…' : 'sk-…'}
-                  suffix={
-                    <button
-                      onClick={() => setShowKey((v) => !v)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--ant-color-text-tertiary)', padding: 0 }}
-                    >
-                      {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </button>
-                  }
-                />
-                <div className={styles.actionRow}>
-                  <Button size="small" onClick={handleTestConnection} loading={testingConnection}>
-                    测试连接
-                  </Button>
-                  <span className={styles.labelHint}>使用当前表单内容测试，不需要先保存。</span>
-                </div>
-                {connectionResult && (
-                  <Alert
-                    type={connectionResult.ok ? 'success' : 'error'}
-                    showIcon
-                    message={connectionResult.message}
-                    description={connectionResult.details}
-                  />
-                )}
-              </div>
-
-              {settings.provider === 'openai' && (
-                <div className={styles.section}>
-                  <span className={styles.label}>
-                    API Base URL
-                    <span className={styles.labelHint}>第三方兼容 OpenAI 接口时填，留空用官方</span>
-                  </span>
-                  <Input
-                    value={settings.baseUrl}
-                    onChange={(e) => patch({ baseUrl: e.target.value })}
-                    placeholder="https://api.openai.com"
-                  />
-                </div>
               )}
 
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  默认模型
-                  <span className={styles.labelHint}>不填则使用 pi 默认模型</span>
-                </span>
-                <Input
-                  value={settings.model}
-                  onChange={(e) => patch({ model: e.target.value })}
-                  placeholder={settings.provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o'}
-                />
-              </div>
-              </>)}
 
               <div className={styles.section}>
                 <span className={styles.label}>
@@ -842,12 +718,10 @@ export default function SettingsModal({
                 </span>
                 <div className={styles.actionRow}>
                   <Button size="small" onClick={handleFetchModels} loading={fetchingModels}>
-                    {SHOW_ADVANCED_MODEL_CONFIG ? '从接口拉取模型' : '从云端拉取模型'}
+                    从云端拉取模型
                   </Button>
                   <span className={styles.labelHint}>
-                    {SHOW_ADVANCED_MODEL_CONFIG
-                      ? '支持 OpenAI 兼容网关的 /v1/models。'
-                      : '读取 Pi Studio 云端已启用的模型线路。'}
+                    读取 Pi Studio 云端已启用的模型线路。
                   </span>
                 </div>
                 <Input.TextArea
@@ -885,20 +759,6 @@ export default function SettingsModal({
                 </span>
               </div>
 
-              <div className={styles.section}>
-                <span className={styles.label}>
-                  对话日志（Helicone API Key）
-                  <span className={styles.labelHint}>配置后所有对话经 Helicone 记录，可在其面板分析；留空关闭</span>
-                </span>
-                <Input.Password
-                  value={settings.heliconeApiKey}
-                  onChange={(e) => patch({ heliconeApiKey: e.target.value })}
-                  placeholder="sk-helicone-…"
-                />
-                <span className={styles.labelHint}>
-                  改后需重新打开工作区生效。经 gateway.helicone.ai 转发到你当前的 API 端点，密钥仅通过环境变量传给子进程。
-                </span>
-              </div>
 
               <div className={styles.section}>
                 <span className={styles.label}>

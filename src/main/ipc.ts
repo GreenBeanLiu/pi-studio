@@ -15,7 +15,6 @@ import {
   saveRemoteEnabled,
   addRecentWorkspace,
   removeRecentWorkspace,
-  type PiProvider,
 } from './settings'
 import { piClientManager, resolvePiCliPath, type AgentStatusEvent } from './pi-client'
 import { syncSubagentWorkflow } from './subagent-workflow'
@@ -28,7 +27,6 @@ import {
   isGitWorkspace,
   sealGitRunChanges,
 } from './git-diff'
-import { listProviderModels, testProviderConnection } from './provider-test'
 import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
 import {
   loadWorkspaceMemory,
@@ -336,13 +334,6 @@ export function registerIpcHandlers(): void {
       return { error: (err as Error).message ?? String(err) }
     }
   })
-  ipcMain.handle('modelCatalog:reconcileFavoriteRoutes', async () => {
-    try {
-      return { ok: true, ...(await modelCatalog.reconcileFavoriteRoutes()) }
-    } catch (err) {
-      return { error: (err as Error).message ?? String(err) }
-    }
-  })
   ipcMain.handle(
     'llmProfiles:save',
     async (_event, payload: unknown) => {
@@ -370,30 +361,6 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(
-    'settings:testConnection',
-    (
-      _e,
-      settings: {
-        provider: PiProvider
-        apiKey: string
-        model: string
-        baseUrl: string
-      },
-    ) => testProviderConnection(settings),
-  )
-  ipcMain.handle(
-    'settings:listModels',
-    (
-      _e,
-      settings: {
-        provider: PiProvider
-        apiKey: string
-        model: string
-        baseUrl: string
-      },
-    ) => listProviderModels(settings),
-  )
   ipcMain.handle('settings:listCloudModels', async (_event, payload: unknown) => {
     try {
       if (!isRecord(payload)) throw new TypeError('云服务配置无效')

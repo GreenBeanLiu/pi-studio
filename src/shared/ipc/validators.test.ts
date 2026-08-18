@@ -147,13 +147,8 @@ describe('parseRoutineSave', () => {
 
 describe('parseSettingsSave', () => {
   const base = {
-    provider: 'openai',
-    apiKey: 'k',
-    model: 'gpt-5.5',
-    baseUrl: '',
     favoriteModels: '',
     tavilyApiKey: '',
-    heliconeApiKey: '',
     sandboxEnabled: false,
     subagentsEnabled: true,
     remoteEnabled: true,
@@ -176,8 +171,12 @@ describe('parseSettingsSave', () => {
     expect(() => parseSettingsSave({ ...base, cloudImageKey: 42 })).toThrow('云端 Key')
   })
 
-  it('rejects an unknown provider', () => {
-    expect(() => parseSettingsSave({ ...base, provider: 'gemini' })).toThrow('Provider')
+  // 直连 provider 退役后 provider 只是个未知字段,由「drops unknown fields」那条覆盖。
+  it('drops the retired direct-provider fields from legacy clients', () => {
+    const parsed = parseSettingsSave({ ...base, provider: 'openai', apiKey: 'k', baseUrl: 'x' })
+    expect('provider' in parsed).toBe(false)
+    expect('apiKey' in parsed).toBe(false)
+    expect('baseUrl' in parsed).toBe(false)
   })
 
   it('drops unknown fields instead of persisting them', () => {

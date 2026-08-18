@@ -1,6 +1,5 @@
 import type { ModelRoute } from './model-route'
 
-export type PiProvider = 'anthropic' | 'openai'
 export type ImageEngine = '' | 'openai' | 'gemini' | 'grok'
 
 export type Workspace = {
@@ -40,13 +39,8 @@ export type LlmProfileSavePayload =
   | { create: false; profile: LlmProfileWrite }
 
 export type SettingsForm = {
-  provider: PiProvider
-  apiKey: string
-  model: string
-  baseUrl: string
   favoriteModels: string
   tavilyApiKey: string
-  heliconeApiKey: string
   sandboxEnabled: boolean
   subagentsEnabled: boolean
   remoteEnabled: boolean
@@ -78,13 +72,8 @@ export type ModelCatalogView = {
 
 export function createDefaultSettingsForm(): SettingsForm {
   return {
-    provider: 'anthropic',
-    apiKey: '',
-    model: '',
-    baseUrl: '',
     favoriteModels: '',
     tavilyApiKey: '',
-    heliconeApiKey: '',
     sandboxEnabled: false,
     subagentsEnabled: true,
     remoteEnabled: false,

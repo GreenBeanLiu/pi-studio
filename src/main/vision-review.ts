@@ -1,32 +1,19 @@
-import { loadSettings } from './settings'
+import { prepareAgentRuntime } from './agent-runtime-config'
+import { getCloudConnection } from './cloud-connection'
 
 /**
- * AI 视觉还原度评审:把参考图(或提示词)和 3D 模型渲染图交给用户配置的
- * 聊天模型对比打分。走 settings 的 provider/apiKey/baseUrl,与 pi 引擎共用凭据,
- * 不引入新的服务依赖。灵感来自 threejs-object-sculptor 的 Screenshot Feedback Gate
+ * AI 视觉还原度评审:把参考图(或提示词)和 3D 模型渲染图交给当前聊天模型对比打分。
+ * 灵感来自 threejs-object-sculptor 的 Screenshot Feedback Gate
  * ("像素对比不是验收权威,AI 视觉才是")。
+ *
+ * 直连 provider 退役后,这里跟聊天走同一条云端网关线路(profile + 模型 + 会话令牌都
+ * 取自 prepareAgentRuntime),不再自己持有 key。网关只有 openai-completions 一种形状,
+ * 所以 Anthropic 那套 /v1/messages 调法一并去掉。
  */
 
 export type VisionReview = { score: number; notes: string; model: string }
 
 const TIMEOUT_MS = 60_000
-
-const FALLBACK_MODEL: Record<string, string> = {
-  openai: 'gpt-5.4',
-  anthropic: 'claude-haiku-4-5-20251001',
-}
-
-function joinApiPath(baseUrl: string, path: string): string {
-  const base = baseUrl.replace(/\/+$/, '')
-  if (base.endsWith('/v1')) return `${base}${path.replace(/^\/v1/, '')}`
-  return `${base}${path}`
-}
-
-function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } {
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl)
-  if (!m) throw new Error('图片 data URL 无法解析')
-  return { mediaType: m[1], base64: m[2] }
-}
 
 /** 从模型输出里抠出 JSON(容忍 ```json 围栏和前后废话)。 */
 function extractReview(text: string, model: string): VisionReview {
@@ -53,30 +40,33 @@ export async function reviewModelRender(input: {
   referenceDataUrl?: string
   renderDataUrl: string
 }): Promise<VisionReview> {
-  const s = loadSettings()
-  if (!s.apiKey.trim()) throw new Error('未配置模型服务 API Key,跳过评分')
-  const model = s.model.trim() || FALLBACK_MODEL[s.provider]
+  const connection = getCloudConnection()
+  if (!connection.available) throw new Error('未配置云端模型线路,跳过评分')
+  const runtime = await prepareAgentRuntime()
+  const model = runtime.model
+  const chatToken = runtime.env.PI_STUDIO_LLM_KEY
+  if (!model || !chatToken) throw new Error('云端模型线路不可用,跳过评分')
+
   const question = buildPrompt(input.mode, input.prompt)
   const images = [
     ...(input.mode === 'image' && input.referenceDataUrl ? [input.referenceDataUrl] : []),
     input.renderDataUrl,
   ]
 
-  const text =
-    s.provider === 'openai'
-      ? await callOpenAI(s.baseUrl || 'https://api.openai.com', s.apiKey, model, question, images)
-      : await callAnthropic(s.baseUrl || 'https://api.anthropic.com', s.apiKey, model, question, images)
+  const relay = connection.relay.trim().replace(/\/+$/, '')
+  const endpoint = `${relay}/llm/v1/${encodeURIComponent(runtime.provider)}/chat/completions`
+  const text = await callGateway(endpoint, chatToken, model, question, images)
   return extractReview(text, model)
 }
 
-async function callOpenAI(
-  baseUrl: string,
+async function callGateway(
+  endpoint: string,
   apiKey: string,
   model: string,
   question: string,
   imageDataUrls: string[],
 ): Promise<string> {
-  const resp = await fetch(joinApiPath(baseUrl, '/v1/chat/completions'), {
+  const resp = await fetch(endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -97,45 +87,6 @@ async function callOpenAI(
   if (!resp.ok) throw new Error(`评分请求失败 HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`)
   const data = (await resp.json()) as { choices?: { message?: { content?: string } }[] }
   const content = data.choices?.[0]?.message?.content
-  if (!content) throw new Error('评分响应没有内容')
-  return content
-}
-
-async function callAnthropic(
-  baseUrl: string,
-  apiKey: string,
-  model: string,
-  question: string,
-  imageDataUrls: string[],
-): Promise<string> {
-  const resp = await fetch(joinApiPath(baseUrl, '/v1/messages'), {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey.trim(),
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 300,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: question },
-            ...imageDataUrls.map((url) => {
-              const { mediaType, base64 } = parseDataUrl(url)
-              return { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } }
-            }),
-          ],
-        },
-      ],
-    }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  })
-  if (!resp.ok) throw new Error(`评分请求失败 HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`)
-  const data = (await resp.json()) as { content?: { type: string; text?: string }[] }
-  const content = data.content?.find((b) => b.type === 'text')?.text
   if (!content) throw new Error('评分响应没有内容')
   return content
 }

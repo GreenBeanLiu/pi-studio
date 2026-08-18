@@ -1,6 +1,5 @@
 import { createServer, type Server } from 'http'
 import { connect } from 'net'
-import { loadSettings } from './settings'
 import { appendAppLog } from './app-log'
 
 /**
@@ -19,17 +18,10 @@ function allowedHosts(): string[] {
     'api.openai.com',
     'api.anthropic.com',
     'api.tavily.com',
-    'gateway.helicone.ai',
     'trail-api.glanger.xyz',
     'registry.npmjs.org',
     'registry.npmmirror.com',
   ])
-  const s = loadSettings()
-  try {
-    if (s.baseUrl) hosts.add(new URL(s.baseUrl).hostname)
-  } catch {
-    /* baseUrl 非法就不加 */
-  }
   return [...hosts]
 }
 

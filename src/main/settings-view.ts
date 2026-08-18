@@ -6,13 +6,13 @@ export function createSettingsView(
   settings: SettingsData,
   cloudAvailable: boolean,
 ): SettingsView {
-  const { cloudImageKey: _cloudImageKey, customModelIds: _customModelIds, ...visible } = settings
+  const { cloudImageKey: _cloudImageKey, ...visible } = settings
   void _cloudImageKey
-  void _customModelIds
   return {
     ...visible,
     cloudImageKey: '',
     cloudImageKeyConfigured: !!settings.cloudImageKey,
-    modelAccessConfigured: !!settings.apiKey || cloudAvailable,
+    // 直连退役后,能不能用模型完全取决于云端线路。
+    modelAccessConfigured: cloudAvailable,
   }
 }
