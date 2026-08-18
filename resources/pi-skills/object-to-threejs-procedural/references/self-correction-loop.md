@@ -20,6 +20,42 @@ Use this reference when a model construction pass has just finished.
 
 For visual passes, `continue` requires a rendered screenshot, a comparison image, a global AI vision score at or above threshold, and every critical feature at or above its own threshold. Without them, the review is not evidence-backed enough. Pixel comparison code is never the acceptance authority.
 
+## Review Entry Shape
+
+Each review entry records (the same fields `append_sculpt_review.py` writes):
+
+```text
+passId:
+estimatedFidelity: 0..1
+matched:
+mismatches:
+rootCause: spec gap | code gap | rendering/lighting gap | reference ambiguity | performance tradeoff
+decision: continue | refine-spec | refine-code | request-input | stop
+specFixes:
+codeFixes:
+evidence:
+visualEvidence:
+  referenceScreenshot:
+  renderScreenshot:
+  comparisonImage:
+  cameraView:
+  notes:
+  aiVisionNotes:
+aiVisionScore: 0..1
+visualAcceptanceThreshold: 0..1
+layerScores:
+  silhouetteProportion: 0..1
+  componentStructure: 0..1
+  formDetail: 0..1
+  materialSurface: 0..1
+  lightingCamera: 0..1
+featureReviews:
+  - id:
+    score: 0..1
+    visible: true
+    notes:
+```
+
 ## Root Cause Guide
 
 Use `refine-spec` when:
