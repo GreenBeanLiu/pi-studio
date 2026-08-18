@@ -123,6 +123,8 @@ const darkBase = {
 function buildTheme(mode: 'dark' | 'light'): AppTheme {
   const base = mode === 'dark' ? darkBase : lightBase
   const token = { ...base, ...sharedTokens }
+  const controlBg = base.colorFillQuaternary
+  const controlHoverBg = base.colorFillTertiary
 
   return {
     algorithm: mode === 'dark' ? darkAlgorithm : defaultAlgorithm,
@@ -137,16 +139,23 @@ function buildTheme(mode: 'dark' | 'light'): AppTheme {
       Input: {
         activeBorderColor: base.colorPrimaryBorder,
         hoverBorderColor: mode === 'dark' ? '#444444' : '#bbbbbb',
-        colorBgContainer: base.colorBgContainer,
+        colorBgContainer: controlBg,
+        activeBg: controlBg,
+        hoverBg: controlHoverBg,
         colorBorder: base.colorBorder,
       },
       Select: {
-        colorBgContainer: base.colorBgContainer,
+        colorBgContainer: controlBg,
+        selectorBg: controlBg,
         colorBorder: base.colorBorder,
+        optionActiveBg: controlHoverBg,
+        optionSelectedBg: base.colorPrimaryBg,
+        optionSelectedColor: base.colorPrimaryText,
       },
       Button: {
         defaultBorderColor: base.colorBorder,
-        defaultBg: base.colorBgContainer,
+        defaultBg: controlBg,
+        defaultHoverBg: controlHoverBg,
         defaultColor: base.colorTextSecondary,
       },
       Tooltip: {
