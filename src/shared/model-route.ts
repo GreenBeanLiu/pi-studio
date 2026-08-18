@@ -67,15 +67,22 @@ export function selectRuntimeModelRoute(input: RuntimeModelRouteInput): ModelRou
     if (selectedIsLocal || selectedIsCloud) return input.selected
   }
 
-  const defaultCloudProfile = input.gatewayProfiles.find(
-    (profile) =>
-      profile.id === DEFAULT_MODEL_ROUTE.provider &&
-      profile.models.includes(DEFAULT_MODEL_ROUTE.model),
+  const defaultProfile = input.gatewayProfiles.find(
+    (profile) => profile.id === DEFAULT_MODEL_ROUTE.provider,
   )
-  if (defaultCloudProfile) return { ...DEFAULT_MODEL_ROUTE }
+  if (defaultProfile?.models.includes(DEFAULT_MODEL_ROUTE.model)) {
+    return { ...DEFAULT_MODEL_ROUTE }
+  }
 
+  // 本地直连是用户自己配的(key + 模型),优先级高于"从默认 profile 里随便挑一个"。
   if (input.localKeyConfigured) {
     return { provider: input.localProvider, model: input.localModel }
+  }
+
+  // 默认模型被服务端改名/下架时,宁可退到同一个 profile 的别的模型,也别甩到另一家
+  // provider 去 —— 那个 profile 是特意选的默认。
+  if (defaultProfile?.models.length) {
+    return { provider: defaultProfile.id, model: defaultProfile.models[0] }
   }
 
   const firstProfile = input.gatewayProfiles.find((profile) => profile.models.length > 0)

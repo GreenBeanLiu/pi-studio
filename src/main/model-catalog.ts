@@ -18,6 +18,7 @@ import {
   migrateOfficialDeepSeekFavorites,
   saveCustomModelIds,
   writeModelsOverride,
+  migrateDirectProviderRetirement,
   type PiProvider,
 } from './settings'
 import { piClientManager } from './pi-client'
@@ -52,6 +53,7 @@ export type ModelCatalogDependencies = {
   loadCachedProfiles: () => LlmProviderProfile[]
   saveCachedProfiles: (profiles: LlmProviderProfile[]) => void
   migrateOfficialDeepSeekFavorites: (profiles: LlmProviderProfile[]) => boolean
+  migrateDirectProviderRetirement: (profiles: LlmProviderProfile[]) => boolean
   loadAvailableModels: () => Promise<Array<{ provider: string; id: string }>>
   saveCustomModelIds: (ids: string[]) => void
 }
@@ -178,6 +180,7 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
       )
       return deepSeek ? migrateOfficialDeepSeekFavorites(deepSeek.models) : false
     },
+    migrateDirectProviderRetirement,
     loadAvailableModels: () => piClientManager.getAvailableModels(),
     saveCustomModelIds,
   }
@@ -190,13 +193,13 @@ export class ModelCatalogCoordinator {
     private readonly onChanged?: () => void,
   ) {}
 
-  private migrateOfficialDeepSeekFavoritesAndNotify(
-    profiles: LlmProviderProfile[],
-  ): void {
+  /** 一次性配置搬迁,拿到真实 profile 列表才能跑(要照它判断模型归属)。 */
+  private runConfigMigrationsAndNotify(profiles: LlmProviderProfile[]): void {
     if (!this.onChanged) return
-    if (this.dependencies.migrateOfficialDeepSeekFavorites(profiles)) {
-      this.onChanged()
-    }
+    // 两个都得跑,别用 || 串起来 —— 那样前一个改动了后一个就被短路掉了。
+    const deepSeekChanged = this.dependencies.migrateOfficialDeepSeekFavorites(profiles)
+    const retirementChanged = this.dependencies.migrateDirectProviderRetirement(profiles)
+    if (deepSeekChanged || retirementChanged) this.onChanged()
   }
 
   private project(
@@ -227,14 +230,14 @@ export class ModelCatalogCoordinator {
     const catalog = await this.dependencies.fetchCatalog(connection.relay, connection.key)
     const profiles = validProfiles(catalog.providers)
     this.dependencies.saveCachedProfiles(profiles)
-    this.migrateOfficialDeepSeekFavoritesAndNotify(profiles)
+    this.runConfigMigrationsAndNotify(profiles)
     return profiles
   }
 
   private loadCachedAndProject(connection: CloudConnection): LlmProviderProfile[] {
     const profiles = validProfiles(this.dependencies.loadCachedProfiles())
       .filter((profile) => profile.enabled && profile.models.length > 0)
-    this.migrateOfficialDeepSeekFavoritesAndNotify(profiles)
+    this.runConfigMigrationsAndNotify(profiles)
     this.project(connection, profiles.length > 0 ? profiles : undefined)
     return profiles
   }

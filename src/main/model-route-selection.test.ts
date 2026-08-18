@@ -52,7 +52,7 @@ describe('canonical model route selection', () => {
     ).toEqual({ provider: 'openai', model: 'gpt-4o' })
   })
 
-  it('uses gpt-5.6-luna as the first-run cloud default when available', () => {
+  it('uses the default cloud route on first run when it is available', () => {
     expect(
       selectRuntimeModelRoute({
         selected: null,
@@ -62,11 +62,29 @@ describe('canonical model route selection', () => {
         gatewayProfiles: [
           {
             ...cloudProfiles[0],
-            models: ['codex-auto-review', 'gpt-5.6-luna', 'gpt-5.6-sol'],
+            models: ['codex-auto-review', 'gpt-5.6-sol', 'gpt-5.6-terra'],
           },
         ],
       }),
-    ).toEqual({ provider: 'three-a-main', model: 'gpt-5.6-luna' })
+    ).toEqual({ provider: 'three-a-main', model: 'gpt-5.6-sol' })
+  })
+
+  // DEFAULT_MODEL_ROUTE 的模型被服务端改名/下架时,原来会一路掉到最后一档「第一个
+  // profile 的第一个模型」—— 那是 codex-auto-review,代码审查专用模型当聊天默认。
+  // 宁可退到同一个默认 profile 的别的模型。
+  it('stays on the default profile when its named default model is gone', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: null,
+        localProvider: 'openai',
+        localModel: 'gpt-4o',
+        localKeyConfigured: false,
+        gatewayProfiles: [
+          { ...cloudProfiles[1], models: ['grok-4'] },
+          { ...cloudProfiles[0], models: ['gpt-5.7-whatever'] },
+        ],
+      }),
+    ).toEqual({ provider: 'three-a-main', model: 'gpt-5.7-whatever' })
   })
 
   // 2026-08-18:selectedModelRoute 里躺着一条 openai::gpt-4-turbo。它在 pi 内置注册表

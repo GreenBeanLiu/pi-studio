@@ -60,6 +60,7 @@ function dependencies(
     loadCachedProfiles: vi.fn(() => []),
     saveCachedProfiles: vi.fn(),
     migrateOfficialDeepSeekFavorites: vi.fn(() => false),
+    migrateDirectProviderRetirement: vi.fn(() => false),
     loadAvailableModels: vi.fn(async () => []),
     saveCustomModelIds: vi.fn(),
     ...overrides,
@@ -153,6 +154,34 @@ describe('model catalog coordination', () => {
     await new ModelCatalogCoordinator(deps, onChanged).sync()
 
     expect(migrateOfficialDeepSeekFavorites).toHaveBeenCalledWith([deepSeekProfile])
+    expect(onChanged).toHaveBeenCalledOnce()
+  })
+
+  // 两个一次性搬迁都要跑。曾经写成 `a() || b()`,DeepSeek 那个一返回 true 就把退役
+  // 搬迁短路掉了 —— 收藏项永远停在 openai::*。
+  it('runs the direct-provider retirement migration even when the DeepSeek one already changed something', async () => {
+    const migrateDirectProviderRetirement = vi.fn(() => false)
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => ({ providers: [profile, deepSeekProfile] })),
+      migrateOfficialDeepSeekFavorites: vi.fn(() => true),
+      migrateDirectProviderRetirement,
+    } as never)
+
+    await new ModelCatalogCoordinator(deps, vi.fn()).sync()
+
+    expect(migrateDirectProviderRetirement).toHaveBeenCalledWith([profile, deepSeekProfile])
+  })
+
+  it('publishes a refresh when only the retirement migration changed something', async () => {
+    const onChanged = vi.fn()
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => ({ providers: [profile] })),
+      migrateOfficialDeepSeekFavorites: vi.fn(() => false),
+      migrateDirectProviderRetirement: vi.fn(() => true),
+    } as never)
+
+    await new ModelCatalogCoordinator(deps, onChanged).sync()
+
     expect(onChanged).toHaveBeenCalledOnce()
   })
 

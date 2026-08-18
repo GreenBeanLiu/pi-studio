@@ -18,6 +18,10 @@ import {
 import {
   migrateDeepSeekFavoriteModels,
 } from '../shared/deepseek-profile'
+import {
+  migrateDirectFavoritesToGateway,
+  migrateDirectSelectedRoute,
+} from '../shared/direct-provider-retirement'
 
 export type { PiProvider, Workspace } from '../shared/contracts'
 
@@ -38,6 +42,9 @@ const DEFAULTS: SettingsData = {
 
 const MAX_RECENT_WORKSPACES = 10
 const DEEPSEEK_FAVORITES_MIGRATION_KEY = 'deepSeekFavoriteModelsMigrated'
+const DIRECT_RETIREMENT_MIGRATION_KEY = 'directProviderRetired'
+/** 退役前那个唯一的直连 provider;搬迁读老配置时的兜底值。 */
+const DEFAULT_DIRECT_PROVIDER = 'openai'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
@@ -219,6 +226,54 @@ export function migrateOfficialDeepSeekFavorites(enabledModels: string[]): boole
   if (next !== current) raw.favoriteModels = next
   writeRaw(raw)
   return next !== current
+}
+
+/**
+ * 直连 provider 退役的一次性搬迁:收藏项和当前选中线路从 `openai::X` 挪到真正供这个
+ * 模型的网关 profile 上。
+ *
+ * 有意直接读 raw 里的 provider / model 而不走 loadSettings():这两个字段本身就是要被
+ * 退役的,搬迁得在它们从 SettingsForm 里消失之后仍然能读到老值。
+ */
+export function migrateDirectProviderRetirement(gatewayProfiles: LlmProviderProfile[]): boolean {
+  const raw = readRaw()
+  if (raw[DIRECT_RETIREMENT_MIGRATION_KEY] === true) return false
+  if (gatewayProfiles.length === 0) return false
+
+  const directProvider = (raw.provider as string)?.trim() || DEFAULT_DIRECT_PROVIDER
+  const directModel = (raw.model as string)?.trim() ?? ''
+  const currentFavorites =
+    typeof raw.favoriteModels === 'string' ? raw.favoriteModels : DEFAULTS.favoriteModels
+
+  const nextFavorites = migrateDirectFavoritesToGateway({
+    favoriteModels: currentFavorites,
+    directProvider,
+    gatewayProfiles,
+  })
+
+  const selected = raw.selectedModelRoute as Partial<ModelRoute> | undefined
+  const nextSelected = migrateDirectSelectedRoute({
+    selected:
+      typeof selected?.provider === 'string' && typeof selected?.model === 'string'
+        ? { provider: selected.provider.trim(), model: selected.model.trim() }
+        : null,
+    directProvider,
+    directModel,
+    gatewayProfiles,
+  })
+
+  const favoritesChanged = nextFavorites !== currentFavorites
+  const selectedChanged =
+    JSON.stringify(nextSelected) !== JSON.stringify(raw.selectedModelRoute ?? null)
+
+  raw[DIRECT_RETIREMENT_MIGRATION_KEY] = true
+  if (favoritesChanged) raw.favoriteModels = nextFavorites
+  if (selectedChanged) {
+    if (nextSelected) raw.selectedModelRoute = nextSelected
+    else delete raw.selectedModelRoute
+  }
+  writeRaw(raw)
+  return favoritesChanged || selectedChanged
 }
 
 export function removeRecentWorkspace(path: string): Workspace[] {
