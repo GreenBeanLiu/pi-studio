@@ -11,6 +11,7 @@ import { piClientManager } from './pi-client'
 import { remoteControl } from './remote-control'
 import { loadSettings } from './settings'
 import { appendAppLog, attachWindowLoggers, installProcessLoggers, normalizeError } from './app-log'
+import { isMissingUpdateChannel } from './update-error'
 import {
   isAllowedExternalUrl,
   isAllowedRendererNavigation,
@@ -121,6 +122,12 @@ function setupAutoUpdater(): void {
   })
 
   autoUpdater.on('error', (err) => {
+    if (isMissingUpdateChannel(err)) {
+      appendAppLog('info', 'updater', 'No update channel for this platform; skipping', {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return
+    }
     if (checkInFlight) {
       appendAppLog('warn', 'updater', 'Auto update emitted an error during active check', normalizeError(err))
       return
@@ -148,6 +155,8 @@ function setupAutoUpdater(): void {
         retryCount = 0
       })
       .catch((err) => {
+        // 这个平台没有发布通道 ≠ 更新失败,别在右上角红一次
+        if (isMissingUpdateChannel(err)) return
         if (scheduleRetry(err)) return
         appendAppLog('error', 'updater', 'Update check failed', normalizeError(err))
         broadcast('update:error', { message: err.message ?? String(err) })
