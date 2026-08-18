@@ -69,6 +69,61 @@ describe('canonical model route selection', () => {
     ).toEqual({ provider: 'three-a-main', model: 'gpt-5.6-luna' })
   })
 
+  // 2026-08-18:selectedModelRoute 里躺着一条 openai::gpt-4-turbo。它在 pi 内置注册表
+  // 里有,但自建网关不供,于是每次调用都是 502,工作流报「没有产出任何文本」。本地线路
+  // 当时只比对 provider 名字,这条脏数据就一路盖过配好的 gpt-5.5 跑到网关才炸。
+  it('drops a selected local model the direct provider does not actually offer', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: { provider: 'openai', model: 'gpt-4-turbo' },
+        localProvider: 'openai',
+        localModel: 'gpt-5.5',
+        localKeyConfigured: true,
+        localModels: ['gpt-5.6-sol', 'grok-4.5'],
+        gatewayProfiles: [],
+      }),
+    ).toEqual({ provider: 'openai', model: 'gpt-5.5' })
+  })
+
+  it('keeps a selected local model that is on the switcher list', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: { provider: 'openai', model: 'grok-4.5' },
+        localProvider: 'openai',
+        localModel: 'gpt-5.5',
+        localKeyConfigured: true,
+        localModels: ['gpt-5.6-sol', 'grok-4.5'],
+        gatewayProfiles: [],
+      }),
+    ).toEqual({ provider: 'openai', model: 'grok-4.5' })
+  })
+
+  it('honours the configured default even when it is not on the switcher list', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: { provider: 'openai', model: 'gpt-5.5' },
+        localProvider: 'openai',
+        localModel: 'gpt-5.5',
+        localKeyConfigured: true,
+        localModels: ['gpt-5.6-sol'],
+        gatewayProfiles: [],
+      }),
+    ).toEqual({ provider: 'openai', model: 'gpt-5.5' })
+  })
+
+  // 没配模型切换列表就无从判断该 provider 到底有哪些模型,不能瞎拦。
+  it('leaves the selected local route alone when no local model list is known', () => {
+    expect(
+      selectRuntimeModelRoute({
+        selected: { provider: 'openai', model: 'gpt-4o' },
+        localProvider: 'openai',
+        localModel: 'gpt-5.5',
+        localKeyConfigured: true,
+        gatewayProfiles: [],
+      }),
+    ).toEqual({ provider: 'openai', model: 'gpt-4o' })
+  })
+
   it('scopes favorites by provider when model ids are identical', () => {
     expect(favoriteRouteKey('three-a-main', 'gpt-5.5')).not.toBe(
       favoriteRouteKey('other-main', 'gpt-5.5'),

@@ -31,11 +31,22 @@ export async function prepareAgentRuntime(): Promise<AgentRuntimeConfig> {
     )
   }
 
+  // 本地直连 provider 供得出什么,以用户自己配过的为准:自定义模型 id(写进 models.json
+  // 的那批)加模型切换列表里点名的。pi 内置注册表不能拿来当判据 —— 自建网关不供的老模型
+  // 也在里面躺着。
+  const localModels = [
+    ...settings.customModelIds,
+    ...settings.favoriteModelRoutes
+      .filter((route) => route.provider === settings.provider)
+      .map((route) => route.model),
+  ]
+
   const selectedRoute = selectRuntimeModelRoute({
     selected: settings.selectedModelRoute,
     localProvider: settings.provider,
     localModel: settings.model,
     localKeyConfigured: !!settings.apiKey,
+    localModels,
     gatewayProfiles,
   })
 
