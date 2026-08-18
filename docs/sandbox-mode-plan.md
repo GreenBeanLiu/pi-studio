@@ -16,8 +16,8 @@ pi-studio 默认把 pi CLI 作为子进程跑在 Windows 主机上；开启沙�
 `%APPDATA%/pi-studio/sandbox-rpc-shim.cjs`。shim 透明转发 stdin/stdout，
 再由 `docker run` 启动容器内的 `pi --mode rpc`。
 
-唯一防护是可选的 **securityGuard** 扩展（`src/main/security-guard-extension.ts`）——
-进程内软拦截危险命令/敏感路径写入，基于规则黑名单，**不是隔离**，而且用户默认可关。
+旧版 `securityGuard` 进程内软拦截已移除：它不是隔离，且设置值与真实启动路径长期不一致。
+当前以 `ExecutionSecuritySnapshot` 报告实际 enforcement；未开启沙箱时明确标记为主机 full access。
 
 沙箱容器只挂载当前工作区到 `/workspace`，并挂载 pi-studio 专用的
 `agentConfigDir()` 到 `/agent`；API key 等环境变量按名称透传，不把值写进镜像或命令行。
@@ -55,7 +55,7 @@ RpcClient 只是管这条 stdin/stdout 管道，所有方法（prompt/getState/g
 |---|---|
 | **镜像** | 需要一个含 node + 对应版本 pi + git + ripgrep 的镜像（pi 现为 **v0.79.10**，见 `docs/containerization.md` 的 `Dockerfile.pi`）。electron-builder 塞不进 Docker 镜像，得首次 `docker build`（拉 npm 装 pi，约几分钟）或 `docker pull` 预构建镜像。版本要跟 pi-studio 捆的一致，否则行为漂移。 |
 | **工作区挂载** | `-v <host workspace>:/workspace -w /workspace`。Windows 路径要转 Docker Desktop 接受的形式；WSL2 跨界文件性能/大小写/换行有坑。 |
-| **agent 配置目录** | pi-studio 把 models.json 覆盖、扩展（web-search/security-guard）、sessions 都写在 `agentConfigDir()`（userData/pi-agent）。要 `-v agentConfigDir:/agent` 挂进去 + `-e PI_CODING_AGENT_DIR=/agent`，容器里 pi 才能读到网关覆盖/扩展、且 session 落回主机。 |
+| **agent 配置目录** | pi-studio 把 models.json 覆盖、审核扩展和 sessions 写在 `agentConfigDir()`（userData/pi-agent）。要 `-v agentConfigDir:/agent` 挂进去 + `-e PI_CODING_AGENT_DIR=/agent`，容器里 pi 才能读到网关覆盖/扩展、且 session 落回主机。 |
 | **env 转发** | API key、TAVILY_API_KEY、PI_* 等要用 `-e` 传进容器（注意别把主机绝对路径类的 env 原样带进去）。 |
 | **session 目录名** | pi 按 cwd 生成 session 子目录名；容器里 cwd 是 `/workspace`，和主机模式的目录名不同 ⇒ 沙箱/非沙箱模式的历史会分叉（session sidebar 靠 getState().sessionFile 仍能找到当前会话，但两套历史不互通）。可接受，需提示。 |
 | **cli 路径** | shim 里用镜像内的 `pi` bin（`docker run … IMAGE pi --mode rpc …`）最省心。 |

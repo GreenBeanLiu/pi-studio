@@ -47,7 +47,6 @@ export type SettingsForm = {
   favoriteModels: string
   tavilyApiKey: string
   heliconeApiKey: string
-  securityGuardEnabled: boolean
   sandboxEnabled: boolean
   subagentsEnabled: boolean
   remoteEnabled: boolean
@@ -86,7 +85,6 @@ export function createDefaultSettingsForm(): SettingsForm {
     favoriteModels: '',
     tavilyApiKey: '',
     heliconeApiKey: '',
-    securityGuardEnabled: true,
     sandboxEnabled: false,
     subagentsEnabled: true,
     remoteEnabled: false,

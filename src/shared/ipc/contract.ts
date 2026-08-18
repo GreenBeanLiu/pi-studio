@@ -45,294 +45,261 @@ export type {
 export type DesktopApi = {
   platform: NodeJS.Platform
   win: {
-  minimize: () => void
-  maximize: () => void
-  close: () => void
-  flash: () => void
-}
-app: {
-  version: () => Promise<string>
-  piVersion: () => Promise<string>
-}
-clipboard: {
-  writeText: (value: string) => Promise<void>
-}
-diagnostics: {
-  getLogs: () => Promise<{ ok: true; content: string }>
-  save: (payload: {
-    defaultPath: string
-    content: string
-  }) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
-}
-settings: {
-  load: () => Promise<SettingsView>
-  save: (s: SettingsSaveInput) => Promise<{
-    ok: boolean
-    sandboxChanged?: boolean
-    workspaceOpen?: boolean
-  }>
-  testConnection: (s: {
-    provider: PiProvider
-    apiKey: string
-    model: string
-    baseUrl: string
-  }) => Promise<ProviderConnectionResult>
-  listModels: (s: {
-    provider: PiProvider
-    apiKey: string
-    model: string
-    baseUrl: string
-  }) => Promise<ProviderModelListResult>
-  listCloudModels: (s: {
-    relay: string
-    key: string
-  }) => Promise<ProviderModelListResult>
-  onChanged: (cb: () => void) => () => void
-}
-llmProfiles: {
-  list: () => Promise<LlmProfileListResult>
-  save: (payload: LlmProfileSavePayload) => Promise<
-    { ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }
-  >
-  delete: (id: string) => Promise<{ ok: true; warning?: string } | { error: string }>
-  refreshModels: (
-    id: string,
-  ) => Promise<
-    { ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }
-  >
-}
-modelCatalog: {
-  loadProviderLabels: () => Promise<
-    { ok: true; view: ModelCatalogView } | { error: string }
-  >
-  reconcileFavoriteRoutes: () => Promise<
-    { ok: true; changed: boolean; warning?: string } | { error: string }
-  >
-}
-sandbox: {
-  detect: () => Promise<SandboxDetect>
-  imageStatus: () => Promise<SandboxImageStatus>
-  buildImage: () => Promise<{ ok: true } | { error: string }>
-  onBuildProgress: (cb: (line: string) => void) => () => void
-}
-remote: {
-  getStatus: () => Promise<RemoteControlSnapshot>
-  setEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>
-  generatePairingCode: () => Promise<RemotePairingCode | { error: string }>
-  resetPairings: () => Promise<{ ok: true } | { error: string }>
-  onStatus: (cb: (snap: RemoteControlSnapshot) => void) => () => void
-}
-securityPolicy: {
-  load: () => Promise<SecurityPolicyLoadResult>
-  save: (
-    policy: SecurityPolicy,
-  ) => Promise<
-    | ({ ok: true } & SecurityPolicyLoadResult)
-    | { error: string }
-  >
-  addRule: (
-    payload: { target: SecurityPolicyRuleTarget; rule: string },
-  ) => Promise<({ ok: true } & SecurityPolicyLoadResult) | { error: string }>
-}
-workspace: {
-  list: () => Promise<Workspace[]>
-  pickDirectory: () => Promise<string | null>
-  open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
-  remove: (path: string) => Promise<Workspace[]>
-}
-memory: {
-  load: () => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
-  save: (
-    content: string,
-  ) => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
-}
-sessions: {
-  list: () => Promise<SessionInfo[]>
-  switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
-  rename: (name: string) => Promise<void>
-  delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
-  exportCurrent: (
-    format: SessionExportFormat,
-  ) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
-}
-git: {
-  diff: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
-  acceptChanges: () => Promise<{ ok: true } | { error: string }>
-  discardChanges: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
-  showFile: (path: string) => Promise<{ ok: true } | { error: string }>
-}
-pi: {
-  prompt: (message: string, images?: ImageContent[]) => Promise<void>
-  steer: (message: string, images?: ImageContent[]) => Promise<void>
-  followUp: (message: string, images?: ImageContent[]) => Promise<void>
-  abort: () => Promise<void>
-  bash: (command: string) => Promise<unknown>
-  extensionUiResponse: (response: ExtensionUiResponse) => Promise<void>
-  newSession: () => Promise<{ cancelled: boolean }>
-  /** 后台会话(没在看的那些聊天)的运行状态变化。 */
-  onSessionActivity: (cb: (event: SessionActivity) => void) => () => void
-  getState: () => Promise<RpcSessionState>
-  getMessages: () => Promise<AgentMessage[]>
-  getAvailableModels: () => Promise<ModelInfo[]>
-  getCommands: () => Promise<SlashCommand[]>
-  setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
-  setThinkingLevel: (level: ThinkingLevel) => Promise<void>
-  setSteeringMode: (mode: QueueMode) => Promise<void>
-  setFollowUpMode: (mode: QueueMode) => Promise<void>
-  setAutoCompaction: (enabled: boolean) => Promise<void>
-  compact: () => Promise<unknown>
-  onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
-  onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
-  getRuntimeSnapshot: () => Promise<AgentRuntimeSnapshot>
-  onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => () => void
-}
-routines: {
-  list: () => Promise<{ routines: Routine[]; runs: RoutineRun[] }>
-  save: (
-    routine: Partial<Routine> &
-      Pick<Routine, 'name' | 'steps' | 'workspacePath' | 'schedule' | 'notify'>,
-  ) => Promise<Routine[]>
-  delete: (id: string) => Promise<Routine[]>
-  toggle: (id: string, enabled: boolean) => Promise<Routine[]>
-  runNow: (id: string) => Promise<{ ok: true } | { error: string }>
-  state: () => Promise<{
-    runningIds: string[]
-    queuedIds: string[]
-    progress?: RoutineStepProgress[]
-  }>
-  onRunFinished: (cb: (run: RoutineRun) => void) => () => void
-  onStepProgress: (cb: (progress: RoutineStepProgress) => void) => () => void
-  reviewRespond: (reviewId: string, decision: 'approve' | 'reject', comment?: string) => Promise<{ ok: true } | { error: string }>
-  onReviewRequested: (cb: (request: RoutineReviewRequest) => void) => () => void
-  onReviewCancelled: (cb: (payload: { reviewId: string; reason: string }) => void) => () => void
-}
-channels: {
-  list: () => Promise<Channel[]>
-  save: (channels: Channel[]) => Promise<Channel[]>
-  test: (channel: Channel) => Promise<{ ok: true } | { error: string }>
-}
-imageGen: {
-  health: () => Promise<ImageGenHealth>
-  generate: (payload: {
-    prompt: string
-    engine: ImageGenEngine
-    batchId?: string
-    referenceUrls?: string[]
-    maskDataUrl?: string
-    size?: ImageGenSize
-    aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
-    imageSize?: GeminiImageResolution | GrokImageResolution
-    n?: number
-    quality?: ImageGenQuality
-    background?: ImageGenBackground
-    outputFormat?: ImageGenOutputFormat
-    outputCompression?: number
-    moderation?: ImageGenModeration
-    responseFormat?: ImageGenResponseFormat
-    providerStyle?: ImageGenProviderStyle
-    user?: string
-    model?: ImageModel
-  }) => Promise<{ dataUrl: string; publicUrl: string | null; urls?: string[] } | { error: string }>
-  history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
-  historyDelete: (id: string) => Promise<{ ok: boolean }>
-  historyDeleteBatch: (batchId: string) => Promise<{ ok: boolean }>
-  uploadReference: (dataUrl: string) => Promise<{ ok: true; url: string } | { error: string }>
-}
-model3d: {
-  health: () => Promise<Model3DHealth>
-  generate: (payload: {
-    mode: 'text' | 'image' | 'code' | 'blender'
-    prompt: string
-    imageDataUrl?: string
-    /** 图生模式:true = 先用 gpt-image-2 按 prompt 生成参考图再图生 3D */
-    aiImage?: boolean
-    provider?: Model3DProvider
-    options?: Model3DOptions
-  }) => Promise<Model3DHistoryItem | { error: string }>
-  generateBlender: (payload: {
-    prompt: string
-    sourceId?: string
-  }) => Promise<Model3DHistoryItem | { error: string }>
-  blenderHealth: () => Promise<boolean>
-  blenderStatus: () => Promise<BlenderSetupStatus>
-  setupBlender: () => Promise<BlenderSetupStatus>
-  generateCode: (payload: {
-    prompt: string
-    sourceId?: string
-  }) => Promise<Model3DHistoryItem | { error: string }>
-  history: () => Promise<Model3DHistoryItem[]>
-  historyDelete: (id: string) => Promise<{ ok: boolean }>
-  saveThumbnail: (payload: {
-    id: string
-    dataUrl: string
-  }) => Promise<Model3DHistoryItem | { error: string }>
-  /** 视觉闭环:存渲染截图 + 同步 AI 评审 + 返回分数 */
-  reviewRound: (payload: {
-    id: string
-    dataUrl: string
-    prompt: string
-  }) => Promise<Model3DFidelity | { error: string }>
-  onProgress: (
-    cb: (data: {
+    minimize: () => void
+    maximize: () => void
+    close: () => void
+    flash: () => void
+  }
+  app: {
+    version: () => Promise<string>
+    piVersion: () => Promise<string>
+  }
+  clipboard: {
+    writeText: (value: string) => Promise<void>
+  }
+  diagnostics: {
+    getLogs: () => Promise<{ ok: true; content: string; agentJobs: AgentJobSnapshot[] }>
+    save: (payload: {
+      defaultPath: string
+      content: string
+    }) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
+  }
+  settings: {
+    load: () => Promise<SettingsView>
+    save: (s: SettingsSaveInput) => Promise<{
+      ok: boolean
+      sandboxChanged?: boolean
+      workspaceOpen?: boolean
+    }>
+    testConnection: (s: {
+      provider: PiProvider
+      apiKey: string
+      model: string
+      baseUrl: string
+    }) => Promise<ProviderConnectionResult>
+    listModels: (s: {
+      provider: PiProvider
+      apiKey: string
+      model: string
+      baseUrl: string
+    }) => Promise<ProviderModelListResult>
+    listCloudModels: (s: { relay: string; key: string }) => Promise<ProviderModelListResult>
+    onChanged: (cb: () => void) => () => void
+  }
+  llmProfiles: {
+    list: () => Promise<LlmProfileListResult>
+    save: (
+      payload: LlmProfileSavePayload,
+    ) => Promise<{ ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }>
+    delete: (id: string) => Promise<{ ok: true; warning?: string } | { error: string }>
+    refreshModels: (
+      id: string,
+    ) => Promise<{ ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }>
+  }
+  modelCatalog: {
+    loadProviderLabels: () => Promise<{ ok: true; view: ModelCatalogView } | { error: string }>
+    reconcileFavoriteRoutes: () => Promise<{ ok: true; changed: boolean; warning?: string } | { error: string }>
+  }
+  sandbox: {
+    detect: () => Promise<SandboxDetect>
+    imageStatus: () => Promise<SandboxImageStatus>
+    buildImage: () => Promise<{ ok: true } | { error: string }>
+    onBuildProgress: (cb: (line: string) => void) => () => void
+  }
+  remote: {
+    getStatus: () => Promise<RemoteControlSnapshot>
+    setEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>
+    generatePairingCode: () => Promise<RemotePairingCode | { error: string }>
+    resetPairings: () => Promise<{ ok: true } | { error: string }>
+    onStatus: (cb: (snap: RemoteControlSnapshot) => void) => () => void
+  }
+  workspace: {
+    list: () => Promise<Workspace[]>
+    pickDirectory: () => Promise<string | null>
+    open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
+    remove: (path: string) => Promise<Workspace[]>
+  }
+  memory: {
+    load: () => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
+    save: (content: string) => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
+  }
+  sessions: {
+    list: () => Promise<SessionInfo[]>
+    switch: (sessionPath: string) => Promise<{ cancelled: boolean }>
+    rename: (name: string) => Promise<void>
+    delete: (sessionPath: string) => Promise<{ ok: true } | { error: string }>
+    exportCurrent: (
+      format: SessionExportFormat,
+    ) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
+  }
+  git: {
+    diff: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
+    acceptChanges: () => Promise<{ ok: true } | { error: string }>
+    discardChanges: () => Promise<{ ok: true; snapshot: GitDiffSnapshot } | { error: string }>
+    showFile: (path: string) => Promise<{ ok: true } | { error: string }>
+  }
+  pi: {
+    prompt: (message: string, images?: ImageContent[]) => Promise<void>
+    steer: (message: string, images?: ImageContent[]) => Promise<void>
+    followUp: (message: string, images?: ImageContent[]) => Promise<void>
+    abort: () => Promise<void>
+    bash: (command: string) => Promise<unknown>
+    extensionUiResponse: (response: ExtensionUiResponse) => Promise<void>
+    newSession: () => Promise<{ cancelled: boolean }>
+    /** 后台会话(没在看的那些聊天)的运行状态变化。 */
+    onSessionActivity: (cb: (event: SessionActivity) => void) => () => void
+    getState: () => Promise<RpcSessionState>
+    getMessages: () => Promise<AgentMessage[]>
+    getAvailableModels: () => Promise<ModelInfo[]>
+    getCommands: () => Promise<SlashCommand[]>
+    setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
+    setThinkingLevel: (level: ThinkingLevel) => Promise<void>
+    setSteeringMode: (mode: QueueMode) => Promise<void>
+    setFollowUpMode: (mode: QueueMode) => Promise<void>
+    setAutoCompaction: (enabled: boolean) => Promise<void>
+    compact: () => Promise<unknown>
+    onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
+    onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
+    getRuntimeSnapshot: () => Promise<AgentRuntimeSnapshot>
+    getCapabilities: () => Promise<PiRuntimeCapabilities | null>
+    onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => () => void
+    getSessionProjection: () => Promise<SessionProjectionSnapshot>
+    getSessionChanges: (sessionId: string | null, afterSeq: number) => Promise<SessionProjectionChanges>
+    onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => () => void
+  }
+  routines: {
+    list: () => Promise<{ routines: Routine[]; runs: RoutineRun[] }>
+    save: (
+      routine: Partial<Routine> & Pick<Routine, 'name' | 'steps' | 'workspacePath' | 'schedule' | 'notify'>,
+    ) => Promise<Routine[]>
+    delete: (id: string) => Promise<Routine[]>
+    toggle: (id: string, enabled: boolean) => Promise<Routine[]>
+    runNow: (id: string) => Promise<{ ok: true } | { error: string }>
+    cancel: (id: string) => Promise<{ ok: true } | { error: string }>
+    state: () => Promise<{
+      runningIds: string[]
+      waitingIds: string[]
+      cancellingIds: string[]
+      queuedIds: string[]
+      progress?: RoutineStepProgress[]
+      pendingReviews: RoutineReviewRequest[]
+    }>
+    onRunFinished: (cb: (run: RoutineRun) => void) => () => void
+    onStepProgress: (cb: (progress: RoutineStepProgress) => void) => () => void
+    reviewRespond: (
+      reviewId: string,
+      decision: 'approve' | 'reject',
+      comment?: string,
+    ) => Promise<{ ok: true } | { error: string }>
+    onReviewRequested: (cb: (request: RoutineReviewRequest) => void) => () => void
+    onReviewCancelled: (cb: (payload: { reviewId: string; routineId: string; reason: string }) => void) => () => void
+  }
+  channels: {
+    list: () => Promise<Channel[]>
+    save: (channels: Channel[]) => Promise<Channel[]>
+    test: (channel: Channel) => Promise<{ ok: true } | { error: string }>
+  }
+  imageGen: {
+    health: () => Promise<ImageGenHealth>
+    generate: (payload: {
+      prompt: string
+      engine: ImageGenEngine
+      batchId?: string
+      referenceUrls?: string[]
+      maskDataUrl?: string
+      size?: ImageGenSize
+      aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+      imageSize?: GeminiImageResolution | GrokImageResolution
+      n?: number
+      quality?: ImageGenQuality
+      background?: ImageGenBackground
+      outputFormat?: ImageGenOutputFormat
+      outputCompression?: number
+      moderation?: ImageGenModeration
+      responseFormat?: ImageGenResponseFormat
+      providerStyle?: ImageGenProviderStyle
+      user?: string
+      model?: ImageModel
+    }) => Promise<{ dataUrl: string; publicUrl: string | null; urls?: string[] } | { error: string }>
+    history: (limit?: number) => Promise<ImageGenHistoryItem[] | { error: string }>
+    historyDelete: (id: string) => Promise<{ ok: boolean }>
+    historyDeleteBatch: (batchId: string) => Promise<{ ok: boolean }>
+    uploadReference: (dataUrl: string) => Promise<{ ok: true; url: string } | { error: string }>
+  }
+  model3d: {
+    health: () => Promise<Model3DHealth>
+    generate: (payload: {
+      mode: 'text' | 'image' | 'code' | 'blender'
+      prompt: string
+      imageDataUrl?: string
+      /** 图生模式:true = 先用 gpt-image-2 按 prompt 生成参考图再图生 3D */
+      aiImage?: boolean
+      provider?: Model3DProvider
+      options?: Model3DOptions
+    }) => Promise<Model3DHistoryItem | { error: string }>
+    generateBlender: (payload: { prompt: string; sourceId?: string }) => Promise<Model3DHistoryItem | { error: string }>
+    blenderHealth: () => Promise<boolean>
+    blenderStatus: () => Promise<BlenderSetupStatus>
+    setupBlender: () => Promise<BlenderSetupStatus>
+    generateCode: (payload: { prompt: string; sourceId?: string }) => Promise<Model3DHistoryItem | { error: string }>
+    history: () => Promise<Model3DHistoryItem[]>
+    historyDelete: (id: string) => Promise<{ ok: boolean }>
+    saveThumbnail: (payload: { id: string; dataUrl: string }) => Promise<Model3DHistoryItem | { error: string }>
+    /** 视觉闭环:存渲染截图 + 同步 AI 评审 + 返回分数 */
+    reviewRound: (payload: {
       id: string
-      status: string
-      progress: number
+      dataUrl: string
+      prompt: string
+    }) => Promise<Model3DFidelity | { error: string }>
+    onProgress: (
+      cb: (data: { id: string; status: string; progress: number; prompt?: string; mode?: 'text' | 'image' }) => void,
+    ) => () => void
+    onScored: (cb: (data: { id: string; fidelity: Model3DFidelity }) => void) => () => void
+  }
+  dressup: {
+    health: () => Promise<DressupHealth>
+    generate: (payload: {
+      firstFrameDataUrl: string
+      tailFrameDataUrl: string
       prompt?: string
-      mode?: 'text' | 'image'
-    }) => void,
-  ) => () => void
-  onScored: (cb: (data: { id: string; fidelity: Model3DFidelity }) => void) => () => void
-}
-dressup: {
-  health: () => Promise<DressupHealth>
-  generate: (payload: {
-    firstFrameDataUrl: string
-    tailFrameDataUrl: string
-    prompt?: string
-    mode?: 'std' | 'pro'
-    duration?: '5' | '10'
-    model?: string
-  }) => Promise<DressupHistoryItem | { error: string }>
-  // AI 试衣工作流:人物 + 衣服 → gpt-image-2 试衣 → Kling 换装视频。
-  // firstFrameDataUrl 由渲染进程用 canvas 合成(人物 + 左上角衣服)。
-  workflow: (payload: {
-    personDataUrl: string
-    garmentDataUrl: string
-    firstFrameDataUrl: string
-    prompt?: string
-  }) => Promise<DressupHistoryItem | { error: string }>
-  history: () => Promise<DressupHistoryItem[]>
-  historyDelete: (id: string) => Promise<{ ok: boolean }>
-  onProgress: (
-    cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void,
-  ) => () => void
-}
-videoGen: {
-  health: () => Promise<VideoGenHealth>
-  generate: (payload: {
-    prompt: string
-    imageDataUrl?: string
-    duration?: 5 | 10 | 15
-    aspectRatio?: GrokVideoAspectRatio
-    resolution?: GrokVideoResolution
-  }) => Promise<VideoGenHistoryItem | { error: string }>
-  history: () => Promise<VideoGenHistoryItem[]>
-  historyDelete: (id: string) => Promise<{ ok: boolean }>
-  onProgress: (
-    cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void,
-  ) => () => void
-}
-update: {
-  onAvailable: (cb: (data: { version: string }) => void) => () => void
-  onDownloaded: (cb: (data: { version: string }) => void) => () => void
-  onError: (cb: (data: { message: string }) => void) => () => void
-  install: () => void
-}
+      mode?: 'std' | 'pro'
+      duration?: '5' | '10'
+      model?: string
+    }) => Promise<DressupHistoryItem | { error: string }>
+    // AI 试衣工作流:人物 + 衣服 → gpt-image-2 试衣 → Kling 换装视频。
+    // firstFrameDataUrl 由渲染进程用 canvas 合成(人物 + 左上角衣服)。
+    workflow: (payload: {
+      personDataUrl: string
+      garmentDataUrl: string
+      firstFrameDataUrl: string
+      prompt?: string
+    }) => Promise<DressupHistoryItem | { error: string }>
+    history: () => Promise<DressupHistoryItem[]>
+    historyDelete: (id: string) => Promise<{ ok: boolean }>
+    onProgress: (cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void) => () => void
+  }
+  videoGen: {
+    health: () => Promise<VideoGenHealth>
+    generate: (payload: {
+      prompt: string
+      imageDataUrl?: string
+      duration?: 5 | 10 | 15
+      aspectRatio?: GrokVideoAspectRatio
+      resolution?: GrokVideoResolution
+    }) => Promise<VideoGenHistoryItem | { error: string }>
+    history: () => Promise<VideoGenHistoryItem[]>
+    historyDelete: (id: string) => Promise<{ ok: boolean }>
+    onProgress: (cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void) => () => void
+  }
+  update: {
+    onAvailable: (cb: (data: { version: string }) => void) => () => void
+    onDownloaded: (cb: (data: { version: string }) => void) => () => void
+    onError: (cb: (data: { message: string }) => void) => () => void
+    install: () => void
+  }
 }
 
-export type LlmProfileListResult =
-  | { ok: true; profiles: LlmProviderProfile[] }
-  | { error: string }
+export type LlmProfileListResult = { ok: true; profiles: LlmProviderProfile[] } | { error: string }
 
 export type ImageGenEngine = 'openai' | 'gemini' | 'grok'
 export type ImageModel =
@@ -341,12 +308,23 @@ export type ImageModel =
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'
 
-export type GeminiImageAspectRatio =
-  | '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
+export type GeminiImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
 export type GeminiImageResolution = '1K' | '2K' | '4K'
 export type GrokImageAspectRatio =
-  | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
-  | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
+  | '1:1'
+  | '16:9'
+  | '9:16'
+  | '4:3'
+  | '3:4'
+  | '3:2'
+  | '2:3'
+  | '2:1'
+  | '1:2'
+  | '19.5:9'
+  | '9:19.5'
+  | '20:9'
+  | '9:20'
+  | 'auto'
 export type GrokImageResolution = '1K' | '2K'
 
 export type Model3DHealth = {
@@ -468,7 +446,18 @@ export type RoutineNotify = 'always' | 'error' | 'never'
 
 export type AppIconPlatform = 'android' | 'ios' | 'macos' | 'windows'
 
-export type RoutineStepType = 'agent' | 'folder-input' | 'imagegen' | 'app-icon' | 'model3d' | 'dressup' | 'review' | 'notify' | 'export' | 'feishu-doc' | 'wechat-draft'
+export type RoutineStepType =
+  | 'agent'
+  | 'folder-input'
+  | 'imagegen'
+  | 'app-icon'
+  | 'model3d'
+  | 'dressup'
+  | 'review'
+  | 'notify'
+  | 'export'
+  | 'feishu-doc'
+  | 'wechat-draft'
 
 export type RoutineStep = {
   id: string
@@ -515,7 +504,7 @@ export type Routine = {
 export type RoutineStepResult = {
   id: string
   name: string
-  status: 'ok' | 'error' | 'timeout' | 'skipped'
+  status: 'ok' | 'error' | 'timeout' | 'cancelled' | 'skipped'
   summary: string
   imageUrl?: string
   artifactPath?: string
@@ -554,7 +543,7 @@ export type RoutineRun = {
   routineName: string
   startedAt: number
   endedAt: number
-  status: 'ok' | 'error' | 'timeout'
+  status: 'ok' | 'error' | 'timeout' | 'cancelled' | 'interrupted'
   triggerSource?: 'manual' | 'schedule'
   summary: string
   steps?: RoutineStepResult[]
@@ -566,7 +555,7 @@ export type RoutineStepProgress = {
   stepId: string
   stepIndex: number
   totalSteps: number
-  status: 'running' | 'ok' | 'error' | 'timeout'
+  status: 'running' | 'ok' | 'error' | 'timeout' | 'cancelled'
 }
 
 export type ImageGenHistoryItem = {
@@ -620,28 +609,6 @@ export type WorkspaceMemory = {
   content: string
 }
 
-export type SecurityPolicy = {
-  commandAllowlist: string[]
-  commandBlocklist: string[]
-  writeAllowlist: string[]
-  writeBlocklist: string[]
-  requireConfirmationForDangerousCommands: boolean
-  blockProtectedPaths: boolean
-  blockOutsideWorkspace: boolean
-}
-
-export type SecurityPolicyRuleTarget =
-  | 'commandAllowlist'
-  | 'commandBlocklist'
-  | 'writeAllowlist'
-  | 'writeBlocklist'
-
-export type SecurityPolicyLoadResult = {
-  scope: 'default' | 'workspace'
-  workspacePath?: string
-  policy: SecurityPolicy
-}
-
 export type QueueMode = 'all' | 'one-at-a-time'
 
 export type RpcSessionState = {
@@ -670,7 +637,12 @@ export type ModelInfo = {
   baseUrl?: string
   input?: string[]
   maxTokens?: number
-  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+  cost?: {
+    input?: number
+    output?: number
+    cacheRead?: number
+    cacheWrite?: number
+  }
 }
 
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
@@ -743,24 +715,170 @@ export type PiRuntimeEvent = AgentSessionEvent | ExtensionUiRequest | PiRunFaile
 /** 每个聊天各自一个 agent 进程,后台那些只上报这个。 */
 export type SessionActivity = { sessionFile: string | null; running: boolean }
 
-export type AgentRuntimePhase =
-  | 'closed'
-  | 'starting'
-  | 'idle'
-  | 'running'
-  | 'awaiting_approval'
-  | 'stopping'
-  | 'error'
+export type AgentRuntimePhase = 'closed' | 'starting' | 'idle' | 'running' | 'awaiting_approval' | 'stopping' | 'error'
 
 /** main 维护的 Agent 生命周期权威快照;revision 单调递增,乱序事件可弃 */
+export type ExecutionSecuritySnapshot = {
+  requested: 'confined' | 'full-access'
+  filesystemMode: 'workspace-write' | 'danger-full-access'
+  networkMode: 'allowlist' | 'unrestricted'
+  backend: 'wsl-bwrap' | 'docker' | 'host'
+  enforcement: 'full' | 'partial' | 'none'
+  hostCodeExecution: boolean
+  reason: string
+}
+
+export type AgentJobKind = 'chat' | 'routine' | 'code-model' | 'blender-model' | 'subagent'
+
+/**
+ * `done` 表示资源已经放掉,不只是那个函数返回了;`orphaned` 表示回收没被确认,
+ * 进程可能还活着 —— 诊断包里要能看出这两者的差别。
+ */
+export type AgentJobState =
+  | 'starting'
+  | 'running'
+  | 'idle'
+  | 'cancelling'
+  | 'done'
+  | 'failed'
+  | 'orphaned'
+
+export type AgentJobOwner = { sessionId: string | null; sessionFile: string | null }
+
+export type AgentJobSnapshot = {
+  id: string
+  kind: AgentJobKind
+  /** 派生它的那个 job:子代理的父聊天。 */
+  parentId: string | null
+  owner: AgentJobOwner
+  state: AgentJobState
+  runActive: boolean
+  pid: number | null
+  startedAt: number
+  lastActivatedAt: number
+  runStartedAt: number | null
+  endedAt: number | null
+  finishReason: string | null
+  forced: boolean
+  cleanupError: string | null
+}
+
 export type AgentRuntimeSnapshot = {
   revision: number
   phase: AgentRuntimePhase
   workspacePath: string | null
+  sessionId: string | null
   sessionFile: string | null
   sandbox: 'wsl' | 'docker' | null
+  security: ExecutionSecuritySnapshot | null
+  profileDigest: string | null
   activeRun: { startedAt: number } | null
   error: { message: string } | null
+}
+
+export type PiRuntimeCapabilities = {
+  engine: 'pi'
+  engineVersion: string
+  protocolVersion: 'rpc-v1'
+  sessionFormatVersion: 'pi-jsonl-v1'
+  handshake: {
+    verified: true
+    state: true
+    messages: true
+    commands: true
+  }
+  features: {
+    listSessions: boolean
+    resume: boolean
+    fork: boolean
+    subagents: boolean
+    images: boolean
+    compact: boolean
+    approvals: boolean
+    sessionRead: boolean
+  }
+}
+
+export type StudioAgentEvent = {
+  seq: number
+  sessionId: string
+  type:
+    | 'session.changed'
+    | 'session.cleared'
+    | 'conversation.replaced'
+    | 'approvals.replaced'
+    | 'agent.started'
+    | 'agent.ended'
+    | 'agent.settled'
+    | 'message.started'
+    | 'message.updated'
+    | 'message.finished'
+    | 'tool.started'
+    | 'tool.updated'
+    | 'tool.finished'
+    | 'approval.requested'
+    | 'approval.decided'
+    | 'run.failed'
+    | 'agent.event'
+  data: Record<string, unknown>
+}
+
+export type ToolExecutionProjection = {
+  callId: string
+  sessionId: string
+  runId: string | null
+  toolName: string
+  args?: unknown
+  status: 'running' | 'done' | 'error'
+  result?: unknown
+  details?: unknown
+  startedAt: string
+  endedAt?: string
+}
+
+export type ApprovalProjection = {
+  id: string
+  sessionId: string
+  runId: string | null
+  /** Real Pi tool call id when the request can be associated without guessing. */
+  callId: string | null
+  /** Stable audit correlation when no real tool call id is available. */
+  correlation: {
+    kind: 'tool-call' | 'extension-request'
+    id: string
+  }
+  tool: string
+  action: 'read' | 'write' | 'execute' | 'network' | 'credential' | 'external-side-effect'
+  policy: { decision: 'ask'; reason?: string }
+  title: string
+  message: string
+  command?: string
+  reason?: string
+  createdAt: string
+  resolvedAt?: string
+  outcome: 'pending' | 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+  error?: string
+}
+
+export type SessionProjectionChanges = {
+  sessionId: string | null
+  afterSeq: number
+  asOfSeq: number
+  resetRequired: boolean
+  events: StudioAgentEvent[]
+}
+
+export type SessionProjectionSnapshot = {
+  revision: number
+  asOfSeq: number
+  workspacePath: string | null
+  sessionFile: string | null
+  sessionId: string | null
+  source: 'durable-session'
+  messages: AgentMessage[]
+  tools: Record<string, ToolExecutionProjection>
+  approvals: ApprovalProjection[]
+  updatedAt: string | null
 }
 
 export type AgentStatusEvent =
@@ -768,10 +886,20 @@ export type AgentStatusEvent =
       status: 'started'
       cwd: string
       restoredSession: boolean
+      sessionId?: string
       sessionFile?: string
       sandbox?: 'wsl' | 'docker'
+      security?: ExecutionSecuritySnapshot
+      profileDigest?: string
     }
-  | { status: 'exited'; cwd: string; code: number | null; signal: string | null; expected: boolean; message: string }
+  | {
+      status: 'exited'
+      cwd: string
+      code: number | null
+      signal: string | null
+      expected: boolean
+      message: string
+    }
   | { status: 'error'; cwd: string; message: string }
 
 export type SessionInfo = {

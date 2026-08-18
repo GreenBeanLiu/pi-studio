@@ -107,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.loadCachedProviderLabels.mockReturnValue({ providerLabels: {} })
   ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket
+  remoteControl.setProjectionProvider(null)
 })
 
 afterEach(() => {
@@ -148,6 +149,51 @@ describe('remote-control command protocol', () => {
 
     await vi.waitFor(() => expect(mocks.prompt).toHaveBeenCalledWith('ship it', undefined))
     expect(ws.lastSent()).toEqual({ type: 'result', id: 'phone-a:7', data: { ok: true } })
+  })
+
+  it('pushes a projection snapshot on reconnect and serves session-bound changes', async () => {
+    const snapshot = {
+      revision: 3,
+      asOfSeq: 8,
+      workspacePath: '/workspace',
+      sessionFile: '/sessions/a.jsonl',
+      sessionId: 'session-a',
+      source: 'durable-session' as const,
+      messages: [],
+      tools: {},
+      approvals: [],
+      updatedAt: null,
+    }
+    const changes = vi.fn().mockReturnValue({
+      sessionId: 'session-a',
+      afterSeq: 5,
+      asOfSeq: 8,
+      resetRequired: false,
+      events: [],
+    })
+    remoteControl.setProjectionProvider({ snapshot: () => snapshot, changes })
+    const ws = await connect()
+
+    ws.receive({ type: 'controller_online' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({ type: 'sessionProjection', snapshot }),
+    )
+
+    ws.receive({ id: 'changes-1', type: 'getSessionChanges', sessionId: 'session-a', afterSeq: 5 })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'changes-1',
+        data: {
+          sessionId: 'session-a',
+          afterSeq: 5,
+          asOfSeq: 8,
+          resetRequired: false,
+          events: [],
+        },
+      }),
+    )
+    expect(changes).toHaveBeenCalledWith('session-a', 5)
   })
 
   it('returns command failures in the top-level error field', async () => {

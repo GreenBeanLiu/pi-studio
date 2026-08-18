@@ -1,15 +1,9 @@
 import { app, ipcMain } from 'electron'
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { spawn } from 'child_process'
-import {
-  loadRpcClient,
-  resolvePiCliPath,
-  embeddedNodeEnv,
-  resolveEmbeddedNodePath,
-} from './pi-client'
-import { prepareAgentRuntime } from './agent-runtime-config'
+import { runProfileCompiler } from './run-profile'
 import {
   modelsDir,
   loadHistory,
@@ -20,7 +14,7 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
-import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
+import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
 
 /**
  * 第三种 3D 引擎「代码建模」:不走 Tripo,由内嵌的 pi agent 程序化手搓
@@ -32,6 +26,7 @@ import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
  */
 
 const AGENT_TIMEOUT_MS = 12 * 60_000
+const REPAIR_ROUNDS = 3
 
 /** 预打包的 three + GLTFExporter bundle 的 file:// URL(骨架 import 它)。 */
 function bundleUrl(): string {
@@ -150,8 +145,8 @@ function refinePrompt(instruction: string): string {
 - 保持既有结构与命名,只做必要的增量修改;不要推翻重写。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败)。
 - 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入 ≥0.01 或留 ≥0.005 间隙。
-- 每改一版就运行 \`node build-model.js test.glb\` 自测；若出现 MODEL_Z_FIGHTING，按报出的部件名错开共面结构；直到打印 MODEL_OK。
-- 完成后清理掉 test.glb 等临时产物。`
+- 修改完成后结束回合；宿主会运行 build-model.js 自测，并在失败时把错误原文回传给你修复。
+- 若收到 MODEL_Z_FIGHTING，按报出的部件名错开共面结构。`
 }
 
 function agentPrompt(prompt: string): string {
@@ -165,8 +160,8 @@ function agentPrompt(prompt: string): string {
 - 做成"可动画/可拆解":每个能独立运动的部件放各自的 THREE.Group(pivot 节点),mesh 作为其 child,并在 group.userData 里标注 pivot/axis 等语义。
 - 不要用位图纹理或 CanvasTexture(node 导出没有 canvas 会失败);用纯色、顶点色或 MeshStandardMaterial 的参数表达材质。
 - 避免共面重叠(z-fighting 会闪烁):相邻部件的面不要完全贴合,嵌入 ≥0.01 或留 ≥0.005 间隙。
-- 每改一版就运行 \`node build-model.js test.glb\` 自测；若出现 MODEL_Z_FIGHTING，按报出的部件名错开共面结构；直到打印 MODEL_OK 且无报错。
-- 完成后清理掉 test.glb 等临时产物,只保留改好的 build-model.js。`
+- 修改完成后结束回合；宿主会运行 build-model.js 自测，并在失败时把错误原文回传给你修复。
+- 若收到 MODEL_Z_FIGHTING，按报出的部件名错开共面结构。只保留改好的 build-model.js。`
 }
 
 /** 用 embedded node(不依赖系统 node)权威执行骨架,产出最终 glb。 */
@@ -192,12 +187,6 @@ async function generateCodeModel(payload: {
 }): Promise<Model3DResult> {
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return { error: '请输入模型描述' }
-  let runtime
-  try {
-    runtime = await prepareAgentRuntime()
-  } catch (err) {
-    return { error: (err as Error).message ?? '代码建模需要配置模型线路' }
-  }
 
   let sourceScript: string | null = null
   let displayPrompt = prompt
@@ -236,39 +225,44 @@ async function generateCodeModel(payload: {
     } else writeFileSync(scriptPath, skeleton(), 'utf-8')
     pr('building')
 
-    const RpcClient = await loadRpcClient()
-    const env = embeddedNodeEnv(runtime.env)
-    const client = new RpcClient({
-      cwd: dir,
-      env,
-      runtimePath: resolveEmbeddedNodePath(),
-      provider: runtime.provider,
-      model: runtime.model,
-      cliPath: resolvePiCliPath(),
-    })
-    await client.start()
-    await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
+    const profile = await runProfileCompiler.compile('code-model', dir)
+    const client = await startPiRuntime(profile)
+    const runAgentTurn = async (instruction: string): Promise<void> => {
+      try {
+        await runPromptToSettled(client, instruction, AGENT_TIMEOUT_MS)
+      } catch (err) {
+        if (err instanceof PiRunTimeoutError) {
+          throw new Error(`代码建模超时(${AGENT_TIMEOUT_MS / 60000} 分钟)`, { cause: err })
+        }
+        throw err
+      }
+    }
+
+    const testOut = join(dir, 'test.glb')
     try {
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          off()
-          reject(new Error(`代码建模超时(${AGENT_TIMEOUT_MS / 60000} 分钟)`))
-        }, AGENT_TIMEOUT_MS)
-        const off = client.onEvent((e: { type?: string }) => {
-          if (e?.type === 'agent_end') {
-            clearTimeout(timer)
-            off()
-            resolve()
-          }
-        })
-        client.prompt(sourceScript ? refinePrompt(prompt) : agentPrompt(prompt)).catch((err: unknown) => {
-          clearTimeout(timer)
-          off()
-          reject(err instanceof Error ? err : new Error(String(err)))
-        })
-      })
+      await runAgentTurn(sourceScript ? refinePrompt(prompt) : agentPrompt(prompt))
+
+      let lastError = ''
+      let ok = false
+      for (let round = 0; round <= REPAIR_ROUNDS; round++) {
+        pr(round === 0 ? 'running' : 'repairing')
+        try {
+          rmSync(testOut, { force: true })
+          await runExport(scriptPath, testOut)
+          ok = true
+          break
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err)
+          if (round === REPAIR_ROUNDS) break
+          await runAgentTurn(
+            `build-model.js 的宿主自测失败。请根据错误修复脚本后结束回合，不要尝试运行命令。错误原文:\n\n${lastError.slice(0, 1500)}`,
+          )
+        }
+      }
+      if (!ok) throw new Error(`代码模型自测失败(已重试 ${REPAIR_ROUNDS} 轮): ${lastError.slice(0, 300)}`)
     } finally {
-      await client.stop().catch(() => {})
+      rmSync(testOut, { force: true })
+      await client.dispose().catch(() => {})
     }
 
     pr('exporting')

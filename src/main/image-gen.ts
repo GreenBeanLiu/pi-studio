@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { appendAppLog } from './app-log'
 import { getCloudConnection } from './cloud-connection'
 import { resolveCloudImageResult } from './image-gen-result'
+import { abortSignalWithTimeout } from './abort-signal'
 import { remoteControl } from './remote-control'
 import type { ImageModel } from '../shared/ipc/contract'
 
@@ -44,11 +45,7 @@ function parseImageDataUrl(value: string): { data: ArrayBuffer; contentType: str
   }
 }
 
-async function cloudFetch(
-  path: string,
-  init: RequestInit = {},
-  timeoutMs = 8000,
-): Promise<Response> {
+async function cloudFetch(path: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
   const cloud = getCloudConnection()
   if (!cloud.available) throw new Error(cloud.error ?? '云端图像服务未配置')
   const headers = new Headers(init.headers)
@@ -61,17 +58,22 @@ async function cloudFetch(
   })
 }
 
-async function cloudUploadReference(dataUrl: string): Promise<string> {
+async function cloudUploadReference(dataUrl: string, signal?: AbortSignal): Promise<string> {
   const parsed = parseImageDataUrl(dataUrl)
   if (!parsed) throw new Error('上传参考图格式无效')
-  const resp = await cloudFetch('/imagegen/reference', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      image_base64: Buffer.from(parsed.data).toString('base64'),
-      content_type: parsed.contentType,
-    }),
-  }, 60_000)
+  const resp = await cloudFetch(
+    '/imagegen/reference',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: Buffer.from(parsed.data).toString('base64'),
+        content_type: parsed.contentType,
+      }),
+      signal: abortSignalWithTimeout(signal, 60_000),
+    },
+    60_000,
+  )
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
     throw new Error(`参考图上传失败(${resp.status}): ${text.slice(0, 200)}`)
@@ -100,25 +102,31 @@ async function cloudGenerate(
   options?: ImageGenOptions,
   downloadResult = true,
   model?: ImageModel,
+  signal?: AbortSignal,
 ): Promise<ImageGenResult> {
   const cloud = getCloudConnection()
   if (!cloud.available) {
     return { error: cloud.error ?? '云端图像服务未配置' }
   }
 
-  const resp = await cloudFetch('/imagegen', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      batchId,
-      ...(model ? { model } : {}),
-      ...(size ? { size } : {}),
-      ...(options ?? {}),
-      ...(referenceUrls?.length ? { referenceUrls } : {}),
-      ...(maskUrl ? { maskUrl } : {}),
-    }),
-  }, CLOUD_TIMEOUT_MS)
+  const resp = await cloudFetch(
+    '/imagegen',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        batchId,
+        ...(model ? { model } : {}),
+        ...(size ? { size } : {}),
+        ...(options ?? {}),
+        ...(referenceUrls?.length ? { referenceUrls } : {}),
+        ...(maskUrl ? { maskUrl } : {}),
+      }),
+      signal: abortSignalWithTimeout(signal, CLOUD_TIMEOUT_MS),
+    },
+    CLOUD_TIMEOUT_MS,
+  )
   if (!resp.ok || !resp.body) {
     const text = await resp.text().catch(() => '')
     return { error: `云端中继 ${resp.status}: ${text.slice(0, 200)}` }
@@ -143,7 +151,9 @@ async function cloudGenerate(
 
       if (event === 'error') return { error: data.message || '云端生成失败' }
       if (event === 'result') {
-        const urls = Array.isArray(data.urls) ? data.urls.filter((item: unknown): item is string => typeof item === 'string') : []
+        const urls = Array.isArray(data.urls)
+          ? data.urls.filter((item: unknown): item is string => typeof item === 'string')
+          : []
         const url = urls[0]
         if (!url) return { error: '云端任务完成但没有返回图片 URL' }
         const resolved = await resolveCloudImageResult(url, downloadResult)
@@ -162,12 +172,32 @@ async function cloudGenerate(
 }
 
 /** 云端 gpt-image-2 支持的尺寸(值透传给 TrailAI/Hatchet 任务)。 */
-export type ImageGenSize = '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
+export type ImageGenSize =
+  | '256x256'
+  | '512x512'
+  | '1024x1024'
+  | '1024x1536'
+  | '1536x1024'
+  | '1024x1792'
+  | '1792x1024'
+  | 'auto'
 export type GeminiImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
 export type GeminiImageResolution = '1K' | '2K' | '4K'
 export type GrokImageAspectRatio =
-  | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
-  | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
+  | '1:1'
+  | '16:9'
+  | '9:16'
+  | '4:3'
+  | '3:4'
+  | '3:2'
+  | '2:3'
+  | '2:1'
+  | '1:2'
+  | '19.5:9'
+  | '9:19.5'
+  | '20:9'
+  | '9:20'
+  | 'auto'
 export type GrokImageResolution = '1K' | '2K'
 
 export type ImageGenOptions = {
@@ -185,39 +215,42 @@ export type ImageGenOptions = {
 }
 
 /** 生一张图。渲染进程的图像页和例行任务的 imagegen 节点共用这一个入口。 */
-export async function generateImage(payload: {
-  prompt: string
-  engine: 'openai' | 'gemini' | 'grok'
-  batchId?: string
-  model?: ImageModel
-  referenceUrls?: string[]
-  maskDataUrl?: string
-  size?: ImageGenSize
-  aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
-  imageSize?: GeminiImageResolution | GrokImageResolution
-  n?: number
-  quality?: ImageGenOptions['quality']
-  background?: ImageGenOptions['background']
-  outputFormat?: ImageGenOptions['outputFormat']
-  outputCompression?: ImageGenOptions['outputCompression']
-  moderation?: ImageGenOptions['moderation']
-  responseFormat?: ImageGenOptions['responseFormat']
-  providerStyle?: ImageGenOptions['providerStyle']
-  user?: string
-  /** Workflows already consume the durable public URL and do not need a blocking base64 copy. */
-  downloadResult?: boolean
-}): Promise<ImageGenResult> {
+export async function generateImage(
+  payload: {
+    prompt: string
+    engine: 'openai' | 'gemini' | 'grok'
+    batchId?: string
+    model?: ImageModel
+    referenceUrls?: string[]
+    maskDataUrl?: string
+    size?: ImageGenSize
+    aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+    imageSize?: GeminiImageResolution | GrokImageResolution
+    n?: number
+    quality?: ImageGenOptions['quality']
+    background?: ImageGenOptions['background']
+    outputFormat?: ImageGenOptions['outputFormat']
+    outputCompression?: ImageGenOptions['outputCompression']
+    moderation?: ImageGenOptions['moderation']
+    responseFormat?: ImageGenOptions['responseFormat']
+    providerStyle?: ImageGenOptions['providerStyle']
+    user?: string
+    /** Workflows already consume the durable public URL and do not need a blocking base64 copy. */
+    downloadResult?: boolean
+  },
+  signal?: AbortSignal,
+): Promise<ImageGenResult> {
   try {
     const batchId = payload.batchId || crypto.randomUUID()
     const references = await Promise.all(
       (payload.referenceUrls ?? []).map((reference) =>
-        reference.startsWith('data:') ? cloudUploadReference(reference) : reference,
+        reference.startsWith('data:') ? cloudUploadReference(reference, signal) : reference,
       ),
     )
     if (payload.maskDataUrl && !references.length) {
       return { error: '蒙版编辑需要先选择一张底图' }
     }
-    const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl) : undefined
+    const maskUrl = payload.maskDataUrl ? await cloudUploadReference(payload.maskDataUrl, signal) : undefined
     return cloudGenerate(
       payload.prompt,
       batchId,
@@ -239,6 +272,7 @@ export async function generateImage(payload: {
       },
       payload.downloadResult !== false,
       payload.model,
+      signal,
     )
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -303,38 +337,32 @@ export function registerImageGenHandlers(): void {
     },
   )
 
-  ipcMain.handle(
-    'imageGen:history',
-    async (_e, limit?: number): Promise<ImageGenHistoryItem[] | { error: string }> => {
-      const n = Math.min(Math.max(limit ?? 60, 1), 500)
-      const cloud = getCloudConnection()
-      if (!cloud.available) {
-        return { error: cloud.error ?? '云端图像服务未配置' }
-      }
-      try {
-        const r = await cloudFetch(`/imagegen/history?limit=${n}&grouped=true`)
-        if (!r.ok) return { error: `历史接口 ${r.status}` }
-        return (await r.json()) as ImageGenHistoryItem[]
-      } catch {
-        return { error: '连不上云端历史服务' }
-      }
-    },
-  )
+  ipcMain.handle('imageGen:history', async (_e, limit?: number): Promise<ImageGenHistoryItem[] | { error: string }> => {
+    const n = Math.min(Math.max(limit ?? 60, 1), 500)
+    const cloud = getCloudConnection()
+    if (!cloud.available) {
+      return { error: cloud.error ?? '云端图像服务未配置' }
+    }
+    try {
+      const r = await cloudFetch(`/imagegen/history?limit=${n}&grouped=true`)
+      if (!r.ok) return { error: `历史接口 ${r.status}` }
+      return (await r.json()) as ImageGenHistoryItem[]
+    } catch {
+      return { error: '连不上云端历史服务' }
+    }
+  })
 
-  ipcMain.handle(
-    'imageGen:historyDelete',
-    async (_e, id: string): Promise<{ ok: boolean }> => {
-      if (!getCloudConnection().available) return { ok: false }
-      try {
-        const r = await cloudFetch(`/imagegen/history/${encodeURIComponent(id)}`, {
-          method: 'DELETE',
-        })
-        return { ok: r.ok }
-      } catch {
-        return { ok: false }
-      }
-    },
-  )
+  ipcMain.handle('imageGen:historyDelete', async (_e, id: string): Promise<{ ok: boolean }> => {
+    if (!getCloudConnection().available) return { ok: false }
+    try {
+      const r = await cloudFetch(`/imagegen/history/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      return { ok: r.ok }
+    } catch {
+      return { ok: false }
+    }
+  })
 
   // 手机端。和 IPC 走同一批函数,只有两处不同:
   //  1) downloadResult:false —— 手机拿 URL 就够,让桌面白下一份几 MB 的 base64 纯属浪费;

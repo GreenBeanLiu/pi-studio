@@ -79,7 +79,10 @@ function stepRunPayload(
     summary: step.summary,
     image_url: step.imageUrl ?? null,
     artifact_path: step.artifactPath ?? null,
-    error: step.status === 'error' || step.status === 'timeout' ? step.summary : null,
+    error:
+      step.status === 'error' || step.status === 'timeout' || step.status === 'cancelled'
+        ? step.summary
+        : null,
     duration_ms: step.durationMs,
   }
 }

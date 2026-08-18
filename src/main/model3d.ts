@@ -2,6 +2,7 @@ import { ipcMain, app, BrowserWindow } from 'electron'
 import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { getCloudConnection } from './cloud-connection'
+import { abortSignalWithTimeout } from './abort-signal'
 import { appendAppLog, normalizeError } from './app-log'
 import { reviewModelRender, type VisionReview } from './vision-review'
 
@@ -187,12 +188,15 @@ async function urlToDataUrl(url: string): Promise<string> {
  * 纯云端图生/文生 3D 调用(给工作流节点用):不碰历史/进度/下载,只返回 R2 上的模型 URL。
  * 有 imageUrl 走图生 3D,否则用 prompt 走文生 3D。
  */
-export async function cloud3dGenerate(params: {
-  imageUrl?: string
-  prompt?: string
-  provider?: Model3DProvider
-  options?: Model3DOptions
-}): Promise<{ modelUrl: string; thumbnailUrl: string | null }> {
+export async function cloud3dGenerate(
+  params: {
+    imageUrl?: string
+    prompt?: string
+    provider?: Model3DProvider
+    options?: Model3DOptions
+  },
+  signal?: AbortSignal,
+): Promise<{ modelUrl: string; thumbnailUrl: string | null }> {
   const resp = await cloudFetch(
     '/model3d',
     {
@@ -204,6 +208,7 @@ export async function cloud3dGenerate(params: {
         provider: params.provider ?? 'tripo',
         options: params.options ?? {},
       }),
+      signal: abortSignalWithTimeout(signal, CLOUD_TIMEOUT_MS),
     },
     CLOUD_TIMEOUT_MS,
   )
@@ -353,7 +358,11 @@ async function generate(payload: GeneratePayload): Promise<Model3DResult> {
     if (thumbPath)
       void scoreFidelity(
         item,
-        { mode: payload.mode, prompt: payload.prompt, referenceDataUrl: reviewReferenceDataUrl },
+        {
+          mode: payload.mode,
+          prompt: payload.prompt,
+          referenceDataUrl: reviewReferenceDataUrl,
+        },
         thumbPath,
       )
     return item
@@ -394,7 +403,10 @@ async function saveThumbnail(id: string, dataUrl: string): Promise<Model3DResult
   if (!m) return { error: '截图数据无法解析' }
   const thumbPath = join(modelsDir(), `${id}.png`)
   writeFileSync(thumbPath, Buffer.from(m[1], 'base64'))
-  const updated: Model3DHistoryItem = { ...item, thumbnailUrl: localFileUrl(thumbPath) }
+  const updated: Model3DHistoryItem = {
+    ...item,
+    thumbnailUrl: localFileUrl(thumbPath),
+  }
   saveHistory(loadHistory().map((it) => (it.id === id ? updated : it)))
   if (!item.fidelity && item.prompt) {
     void scoreFidelity(updated, { mode: 'text', prompt: item.prompt }, thumbPath)
@@ -403,18 +415,18 @@ async function saveThumbnail(id: string, dataUrl: string): Promise<Model3DResult
 }
 
 /** 视觉闭环用:存这一轮渲染截图为缩略图 + 同步 AI 评审 + 返回分数(渲染进程据此决定是否继续改码)。 */
-async function reviewRound(
-  id: string,
-  dataUrl: string,
-  prompt: string,
-): Promise<VisionReview | { error: string }> {
+async function reviewRound(id: string, dataUrl: string, prompt: string): Promise<VisionReview | { error: string }> {
   const m = /^data:image\/png;base64,(.+)$/s.exec(dataUrl)
   if (!m) return { error: '截图数据无法解析' }
   const thumbPath = join(modelsDir(), `${id}.png`)
   writeFileSync(thumbPath, Buffer.from(m[1], 'base64'))
   saveHistory(loadHistory().map((it) => (it.id === id ? { ...it, thumbnailUrl: localFileUrl(thumbPath) } : it)))
   try {
-    const fidelity = await reviewModelRender({ mode: 'text', prompt, renderDataUrl: dataUrl })
+    const fidelity = await reviewModelRender({
+      mode: 'text',
+      prompt,
+      renderDataUrl: dataUrl,
+    })
     saveHistory(loadHistory().map((it) => (it.id === id ? { ...it, fidelity } : it)))
     broadcast('model3d:scored', { id, fidelity })
     return fidelity

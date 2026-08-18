@@ -4,6 +4,7 @@ import { spawnSync } from 'child_process'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { readFileSync } from 'node:fs'
+import { isContextOverflow } from '@earendil-works/pi-ai/compat'
 import {
   embeddedNodeEnv,
   loadRpcClient,
@@ -50,8 +51,11 @@ describe('one agent process per chat', () => {
     expect(sessionKey('c:/USERS/me/x/../sessions/S.JSONL')).toBe(
       sessionKey('C:\\Users\\me\\sessions\\s.jsonl'),
     )
-    // POSIX 路径照旧
-    expect(sessionKey('/Users/me/sessions/s.jsonl')).toBe('/Users/me/sessions/s.jsonl')
+    // POSIX 路径照旧 —— 只在 POSIX 宿主上成立:Windows 的 resolve() 会给它补上
+    // 当前盘符(CI 就是 windows-latest),那是宿主的路径规则,不是这个函数的问题。
+    if (process.platform !== 'win32') {
+      expect(sessionKey('/Users/me/sessions/s.jsonl')).toBe('/Users/me/sessions/s.jsonl')
+    }
     expect(sessionKey(null)).toBeNull()
   })
 
@@ -67,6 +71,33 @@ describe('one agent process per chat', () => {
   })
 })
 
+describe('context overflow recovery', () => {
+  it('retries a length-truncated response that only had room for one output token', () => {
+    expect(
+      isContextOverflow(
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: '**' }],
+          api: 'openai-completions',
+          provider: 'three-a-grok',
+          model: 'grok-4.5',
+          usage: {
+            input: 437,
+            output: 1,
+            cacheRead: 130_816,
+            cacheWrite: 0,
+            totalTokens: 131_254,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'length',
+          timestamp: Date.now(),
+        },
+        128_000,
+      ),
+    ).toBe(true)
+  })
+})
+
 describe('embeddedNodeEnv', () => {
   it('marks the application executable as a Node-compatible runtime', () => {
     expect(embeddedNodeEnv({ OPENAI_API_KEY: 'test' })).toEqual({
@@ -79,7 +110,9 @@ describe('embeddedNodeEnv', () => {
     expect(embeddedNodeEnv({ ELECTRON_RUN_AS_NODE: '0' }).ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
-  it('starts RpcClient with the current process runtime instead of node from PATH', async () => {
+  // Spawns a real RpcClient subprocess, which is slow enough under a loaded suite
+  // to exceed the default per-test deadline.
+  it('starts RpcClient with the current process runtime instead of node from PATH', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pi-studio-rpc-runtime-'))
     const fixture = join(dir, 'rpc-fixture.mjs')
     writeFileSync(
@@ -144,5 +177,27 @@ process.stdin.on('data', (chunk) => {
     })
     expect(result.status).toBe(0)
     expect(result.stdout).toMatch(/^v\d+\./)
+  })
+})
+
+// 后台 agent 和子代理都登记成 job:owner、血缘、终态和"资源真的放掉了"的证据都在
+// registry 上,而不是散在 AgentEntry 数组和界面的前后台概念里。
+describe('agent processes are owned by jobs', () => {
+  const source = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
+
+  it('releases a process through its job instead of an unbounded dispose', () => {
+    // 旧写法 `entry.client.dispose().catch(() => {})` 会把停不下来的进程当成已回收:
+    // 收尾要走 job.finish(),停不住就强杀,强杀也失败就留成 orphaned 带证据。
+    expect(source).not.toContain('entry.client.dispose()')
+    expect(source).toContain('await entry.job.finish(reason)')
+  })
+
+  it('counts liveness from the registry so an orphan is not reported as reclaimed', () => {
+    expect(source).toContain('return this.jobs.live().length')
+  })
+
+  it('gives every subagent run a parent job', () => {
+    expect(source).toContain("kind: 'subagent'")
+    expect(source).toContain('parentId: entry.job.id')
   })
 })

@@ -109,9 +109,20 @@ export function saveWorkspaceMemory(workspacePath: string, content: string): Wor
   return { path: file, exists: true, content }
 }
 
-export function syncWorkspaceMemoryExtension(): void {
-  const dir = join(agentConfigDir(), 'extensions')
+function materializeWorkspaceMemoryExtension(dir: string): string {
   const file = join(dir, 'pi-studio-workspace-memory.ts')
   mkdirSync(dir, { recursive: true })
   writeFileSync(file, EXTENSION_SOURCE, 'utf-8')
+  return file
+}
+
+export function syncWorkspaceMemoryExtension(): string {
+  return materializeWorkspaceMemoryExtension(join(agentConfigDir(), 'extensions'))
+}
+
+/** Materialize an explicitly loaded copy outside Pi's auto-discovery directory. */
+export function prepareReviewedWorkspaceMemoryExtension(): string {
+  return materializeWorkspaceMemoryExtension(
+    join(agentConfigDir(), 'pi-studio-reviewed-extensions'),
+  )
 }

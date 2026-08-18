@@ -119,10 +119,6 @@ export function loadSettings(): SettingsData {
         : null,
     tavilyApiKey: decryptField(raw, 'tavilyApiKey', 'tavilyApiKeyEncrypted'),
     heliconeApiKey: decryptField(raw, 'heliconeApiKey', 'heliconeApiKeyEncrypted'),
-    securityGuardEnabled:
-      typeof raw.securityGuardEnabled === 'boolean'
-        ? raw.securityGuardEnabled
-        : DEFAULTS.securityGuardEnabled,
     sandboxEnabled:
       typeof raw.sandboxEnabled === 'boolean' ? raw.sandboxEnabled : DEFAULTS.sandboxEnabled,
     subagentsEnabled:
@@ -162,7 +158,7 @@ export function saveSettings(settings: SettingsForm): void {
   raw.model = settings.model
   raw.baseUrl = settings.baseUrl
   raw.favoriteModels = settings.favoriteModels
-  raw.securityGuardEnabled = settings.securityGuardEnabled
+  delete raw.securityGuardEnabled
   raw.sandboxEnabled = settings.sandboxEnabled
   raw.subagentsEnabled = settings.subagentsEnabled
   raw.remoteEnabled = settings.remoteEnabled

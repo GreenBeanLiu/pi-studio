@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSandboxDockerArgs,
+  sandboxAgentPath,
   sandboxRpcShimSource,
   sandboxSessionPathToContainer,
   sandboxSessionPathToHost,
@@ -79,5 +80,15 @@ describe('sandbox session path mapping', () => {
     expect(sandboxSessionPathToContainer('C:\\other\\session.jsonl', hostAgentDir)).toBe(
       'C:\\other\\session.jsonl',
     )
+  })
+
+  it('maps explicit app extension paths into the Docker agent mount', () => {
+    expect(
+      sandboxAgentPath(
+        `${hostAgentDir}\\pi-studio-reviewed-extensions\\web-search.ts`,
+        'docker',
+        hostAgentDir,
+      ),
+    ).toBe('/agent/pi-studio-reviewed-extensions/web-search.ts')
   })
 })

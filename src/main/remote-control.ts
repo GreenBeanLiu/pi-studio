@@ -11,9 +11,18 @@ import type {
   ImageGenHistoryItem,
   RemotePairingCode,
   RoutineReviewRequest,
+  RoutineRun,
+  SessionProjectionChanges,
+  SessionProjectionSnapshot,
+  StudioAgentEvent,
 } from '../shared/ipc/contract'
 import type { RoutineSchedule, RoutineStepProgress } from './routines'
 import type { Workspace } from '../shared/contracts'
+
+type ProjectionProvider = {
+  snapshot: () => SessionProjectionSnapshot
+  changes: (sessionId: string | null, afterSeq: number) => SessionProjectionChanges
+}
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -133,7 +142,8 @@ export type RemoteRoutineRunSummary = {
   routineName: string
   startedAt: number
   endedAt: number
-  status: 'ok' | 'error' | 'timeout'
+  /** 跟 RoutineRun 共用一套终态,免得工作流新增状态时手机这边悄悄漏掉一个。 */
+  status: RoutineRun['status']
   triggerSource?: 'manual' | 'schedule'
   summary: string
   error?: string
@@ -225,6 +235,7 @@ class RemoteControlManager {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private lastInboundAt = 0
   private statusListener: ((snap: RemoteControlSnapshot) => void) | null = null
+  private projectionProvider: ProjectionProvider | null = null
   private workspaceHost: RemoteWorkspaceHost | null = null
   private reviewHost: RemoteReviewHost | null = null
   private routineHost: RemoteRoutineHost | null = null
@@ -233,6 +244,10 @@ class RemoteControlManager {
 
   setStatusListener(cb: (snap: RemoteControlSnapshot) => void): void {
     this.statusListener = cb
+  }
+
+  setProjectionProvider(provider: ProjectionProvider | null): void {
+    this.projectionProvider = provider
   }
 
   setWorkspaceHost(host: RemoteWorkspaceHost): void {
@@ -403,7 +418,7 @@ class RemoteControlManager {
   }
 
   /** 把主工作区的 agent 事件转发给手机(由 ipc.ts 的 onEvent 回调调用)。 */
-  forwardEvent(event: unknown): void {
+  forwardEvent(event: StudioAgentEvent): void {
     if (this.status !== 'connected') return
     this.send({ type: 'event', event })
   }
@@ -451,6 +466,8 @@ class RemoteControlManager {
     if (type === 'controller_online') {
       this.controllers += 1
       this.emit()
+      const snapshot = this.projectionProvider?.snapshot()
+      if (snapshot) this.send({ type: 'sessionProjection', snapshot })
       return
     }
     if (type === 'controller_offline') {
@@ -504,6 +521,23 @@ class RemoteControlManager {
         case 'getMessages':
           this.reply(msg.id, await piClientManager.getMessages())
           break
+        case 'getSessionProjection':
+          if (!this.projectionProvider) throw new Error('session projection is unavailable')
+          this.reply(msg.id, this.projectionProvider.snapshot())
+          break
+        case 'getSessionChanges': {
+          if (!this.projectionProvider) throw new Error('session projection is unavailable')
+          if (msg.sessionId !== null && typeof msg.sessionId !== 'string') {
+            throw new Error('sessionId must be a string or null')
+          }
+          const sessionId = msg.sessionId
+          const afterSeq = Number(msg.afterSeq)
+          if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) {
+            throw new Error('afterSeq must be a non-negative safe integer')
+          }
+          this.reply(msg.id, this.projectionProvider.changes(sessionId, afterSeq))
+          break
+        }
         case 'getAvailableModels':
           {
             const models = await piClientManager.getAvailableModels()

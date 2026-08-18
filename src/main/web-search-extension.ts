@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { agentConfigDir } from './settings'
 
@@ -47,14 +47,25 @@ export default function webSearch(pi: ExtensionAPI) {
 }
 `
 
-/** Write or remove the extension depending on whether a Tavily key is configured. */
-export function syncWebSearchExtension(enabled: boolean): void {
-  const dir = join(agentConfigDir(), 'extensions')
-  const file = join(dir, 'web-search.ts')
+function writeExtension(file: string, enabled: boolean): string | null {
   if (!enabled) {
     if (existsSync(file)) rmSync(file)
-    return
+    return null
   }
-  mkdirSync(dir, { recursive: true })
+  mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, EXTENSION_SOURCE, 'utf-8')
+  return file
+}
+
+/** Write or remove the extension depending on whether a Tavily key is configured. */
+export function syncWebSearchExtension(enabled: boolean): string | null {
+  return writeExtension(join(agentConfigDir(), 'extensions', 'web-search.ts'), enabled)
+}
+
+/** Materialize an explicitly loaded copy outside Pi's auto-discovery directory. */
+export function prepareReviewedWebSearchExtension(enabled: boolean): string | null {
+  return writeExtension(
+    join(agentConfigDir(), 'pi-studio-reviewed-extensions', 'web-search.ts'),
+    enabled,
+  )
 }

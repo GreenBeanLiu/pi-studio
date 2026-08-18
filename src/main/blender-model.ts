@@ -2,13 +2,7 @@ import { app, ipcMain } from 'electron'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { connect } from 'net'
-import {
-  loadRpcClient,
-  resolvePiCliPath,
-  embeddedNodeEnv,
-  resolveEmbeddedNodePath,
-} from './pi-client'
-import { prepareAgentRuntime } from './agent-runtime-config'
+import { runProfileCompiler } from './run-profile'
 import {
   modelsDir,
   loadHistory,
@@ -19,7 +13,7 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
-import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
+import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
 import {
   inspectBlenderInstall,
   installAddonAndLaunchBlender,
@@ -225,12 +219,6 @@ async function generateBlenderModel(payload: {
 }): Promise<Model3DResult> {
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return { error: '请输入模型描述' }
-  let runtime
-  try {
-    runtime = await prepareAgentRuntime()
-  } catch (err) {
-    return { error: (err as Error).message ?? 'Blender 建模需要配置模型线路' }
-  }
   if (!(await blenderAvailable())) {
     const setup = await setupBlender()
     if (!setup.connected) return { error: setup.error ?? '无法自动启动 Blender' }
@@ -258,37 +246,19 @@ async function generateBlenderModel(payload: {
     else writeFileSync(scriptPath, SKELETON, 'utf-8')
     pr('building')
 
-    const RpcClient = await loadRpcClient()
-    const client = new RpcClient({
-      cwd: dir,
-      env: embeddedNodeEnv(runtime.env),
-      runtimePath: resolveEmbeddedNodePath(),
-      provider: runtime.provider,
-      model: runtime.model,
-      cliPath: resolvePiCliPath(),
-    })
-    await client.start()
-    await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
+    const profile = await runProfileCompiler.compile('blender-model', dir)
+    const client = await startPiRuntime(profile)
 
-    const runAgentTurn = (text: string): Promise<void> =>
-      new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          off()
-          reject(new Error(`Blender 建模超时(${AGENT_TIMEOUT_MS / 60000} 分钟)`))
-        }, AGENT_TIMEOUT_MS)
-        const off = client.onEvent((e: { type?: string }) => {
-          if (e?.type === 'agent_end') {
-            clearTimeout(timer)
-            off()
-            resolve()
-          }
-        })
-        client.prompt(text).catch((err: unknown) => {
-          clearTimeout(timer)
-          off()
-          reject(err instanceof Error ? err : new Error(String(err)))
-        })
-      })
+    const runAgentTurn = async (text: string): Promise<void> => {
+      try {
+        await runPromptToSettled(client, text, AGENT_TIMEOUT_MS)
+      } catch (err) {
+        if (err instanceof PiRunTimeoutError) {
+          throw new Error(`Blender 建模超时(${AGENT_TIMEOUT_MS / 60000} 分钟)`, { cause: err })
+        }
+        throw err
+      }
+    }
 
     try {
       await runAgentTurn(sourceScript ? refinePrompt(prompt) : agentPrompt(prompt))
@@ -312,7 +282,7 @@ async function generateBlenderModel(payload: {
       }
       if (!ok) throw new Error(`Blender 执行失败(已重试 ${REPAIR_ROUNDS} 轮): ${lastError.slice(0, 300)}`)
     } finally {
-      await client.stop().catch(() => {})
+      await client.dispose().catch(() => {})
     }
 
     pr('exporting')

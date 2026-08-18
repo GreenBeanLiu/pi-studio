@@ -1,6 +1,6 @@
 {
   "name": "pi-studio",
-  "version": "0.11.7",
+  "version": "0.11.8",
   "description": "Desktop client for the Pi coding agent",
   "main": "out/main/index.js",
   "scripts": {
@@ -12,6 +12,7 @@
     "lint": "eslint --ext .ts,.tsx src tests",
     "check": "pnpm run check:text && pnpm run typecheck && pnpm run test && pnpm run lint",
     "verify": "pnpm run check && pnpm run build",
+    "eval": "node scripts/run-eval.mjs",
     "preview": "electron-vite preview",
     "package": "pnpm run verify && electron-builder --win --publish always",
     "package:mac": "pnpm run verify && electron-builder --mac dmg zip --arm64 --publish never",

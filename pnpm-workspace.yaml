@@ -16,4 +16,5 @@ minimumReleaseAgeExclude:
   - '@earendil-works/pi-tui@0.80.7'
   - '@aws-sdk/token-providers@3.1087.0'
 patchedDependencies:
+  '@earendil-works/pi-ai@0.80.7': patches/@earendil-works__pi-ai@0.80.7.patch
   '@earendil-works/pi-coding-agent@0.80.7': patches/@earendil-works__pi-coding-agent@0.80.7.patch

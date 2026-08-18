@@ -154,7 +154,6 @@ describe('parseSettingsSave', () => {
     favoriteModels: '',
     tavilyApiKey: '',
     heliconeApiKey: '',
-    securityGuardEnabled: true,
     sandboxEnabled: false,
     subagentsEnabled: true,
     remoteEnabled: true,
@@ -184,5 +183,10 @@ describe('parseSettingsSave', () => {
   it('drops unknown fields instead of persisting them', () => {
     const parsed = parseSettingsSave({ ...base, injected: 'x' })
     expect('injected' in parsed).toBe(false)
+  })
+
+  it('drops the retired security guard setting from legacy clients', () => {
+    const parsed = parseSettingsSave({ ...base, securityGuardEnabled: true })
+    expect('securityGuardEnabled' in parsed).toBe(false)
   })
 })

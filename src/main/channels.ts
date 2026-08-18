@@ -4,6 +4,7 @@ import { readFile } from 'fs/promises'
 import { extname, isAbsolute, join } from 'path'
 import { createHmac, randomUUID } from 'crypto'
 import { loadSettings } from './settings'
+import { abortSignalWithTimeout } from './abort-signal'
 import { appendAppLog, normalizeError } from './app-log'
 import { imageInsertionPositions } from './feishu-doc-layout'
 import { extractWechatDigest, extractWechatTitle, markdownToWechatHtml } from './wechat-article'
@@ -16,7 +17,13 @@ import { extractWechatDigest, extractWechatTitle, markdownToWechatHtml } from '.
 
 export type Channel = { id: string; name: string } & (
   | { type: 'feishu-webhook'; url: string; secret?: string }
-  | { type: 'feishu-app'; appId: string; appSecret: string; chatId?: string; folderToken?: string }
+  | {
+      type: 'feishu-app'
+      appId: string
+      appSecret: string
+      chatId?: string
+      folderToken?: string
+    }
   | { type: 'wechat-official'; appId: string; appSecret: string }
   | { type: 'webhook'; url: string }
   | { type: 'local' }
@@ -91,12 +98,13 @@ function migrateFromSettings(): Channel[] {
 
 // ── 发送 ─────────────────────────────────────────────────────────
 
-export async function sendToChannel(channel: Channel, payload: NotifyPayload): Promise<void> {
+export async function sendToChannel(channel: Channel, payload: NotifyPayload, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   switch (channel.type) {
     case 'feishu-webhook':
-      return postFeishuWebhook(channel.url, channel.secret ?? '', buildFeishuCard(payload))
+      return postFeishuWebhook(channel.url, channel.secret ?? '', buildFeishuCard(payload), signal)
     case 'feishu-app':
-      return sendFeishuViaApp(channel, buildFeishuCard(payload))
+      return sendFeishuViaApp(channel, buildFeishuCard(payload), signal)
     case 'wechat-official':
       throw new Error('微信公众号渠道只能用于「微信公众号草稿」节点,不能作为通知渠道')
     case 'webhook': {
@@ -111,14 +119,17 @@ export async function sendToChannel(channel: Channel, payload: NotifyPayload): P
           imageUrls: payload.imageUrls ?? [],
           ts: Date.now(),
         }),
-        signal: AbortSignal.timeout(15_000),
+        signal: abortSignalWithTimeout(signal, 15_000),
       })
       if (!res.ok) throw new Error(`Webhook ${res.status}`)
       return
     }
     case 'local': {
       if (Notification.isSupported()) {
-        new Notification({ title: payload.title, body: payload.markdown.slice(0, 150) }).show()
+        new Notification({
+          title: payload.title,
+          body: payload.markdown.slice(0, 150),
+        }).show()
       }
       return
     }
@@ -157,15 +168,30 @@ function buildFeishuCard(payload: NotifyPayload): FeishuCard {
       title: { tag: 'plain_text', content: payload.title },
     },
     elements: [
-      { tag: 'div', text: { tag: 'lark_md', content: content || '（无正文内容）' } },
+      {
+        tag: 'div',
+        text: { tag: 'lark_md', content: content || '（无正文内容）' },
+      },
       ...(payload.imageUrls?.[0]
-        ? [{ tag: 'img', img_url: payload.imageUrls[0], alt: { tag: 'plain_text', content: '配图' }, preview: true }]
+        ? [
+            {
+              tag: 'img',
+              img_url: payload.imageUrls[0],
+              alt: { tag: 'plain_text', content: '配图' },
+              preview: true,
+            },
+          ]
         : []),
       { tag: 'hr' },
       ...(imageLines ? [{ tag: 'div', text: { tag: 'lark_md', content: imageLines } }] : []),
       {
         tag: 'note',
-        elements: [{ tag: 'plain_text', content: `pi-studio · ${new Date().toLocaleString()}` }],
+        elements: [
+          {
+            tag: 'plain_text',
+            content: `pi-studio · ${new Date().toLocaleString()}`,
+          },
+        ],
       },
     ],
   }
@@ -175,7 +201,7 @@ function buildFeishuCard(payload: NotifyPayload): FeishuCard {
  * 群自定义机器人 webhook。加签是飞书的怪规矩:
  * HMAC-SHA256 的 *key* 是 `${timestamp}\n${secret}`,消息体为空串,结果 base64。
  */
-async function postFeishuWebhook(url: string, secret: string, card: FeishuCard): Promise<void> {
+async function postFeishuWebhook(url: string, secret: string, card: FeishuCard, signal?: AbortSignal): Promise<void> {
   const body: Record<string, unknown> = { msg_type: 'interactive', card }
   if (secret.trim()) {
     const timestamp = String(Math.floor(Date.now() / 1000))
@@ -186,22 +212,33 @@ async function postFeishuWebhook(url: string, secret: string, card: FeishuCard):
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
+    signal: abortSignalWithTimeout(signal, 15_000),
   })
-  const data = (await res.json().catch(() => null)) as { code?: number; StatusCode?: number; msg?: string } | null
+  const data = (await res.json().catch(() => null)) as {
+    code?: number
+    StatusCode?: number
+    msg?: string
+  } | null
   const okCode = data ? (data.code ?? data.StatusCode) === 0 : res.ok
   if (!res.ok || !okCode) throw new Error(`Feishu webhook ${res.status}: ${data?.msg ?? '(no message)'}`)
 }
 
 // ── 飞书应用模式:tenant_access_token → im/v1/messages ────────────
 
-let feishuTokenCache: { appId: string; token: string; expiresAt: number } | null = null
+let feishuTokenCache: {
+  appId: string
+  token: string
+  expiresAt: number
+} | null = null
 
 async function feishuJson(
   url: string,
   init: RequestInit,
 ): Promise<Record<string, unknown> & { code?: number; msg?: string }> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) })
+  const res = await fetch(url, {
+    ...init,
+    signal: abortSignalWithTimeout(init.signal ?? undefined, 15_000),
+  })
   const data = (await res.json().catch(() => null)) as
     | (Record<string, unknown> & { code?: number; msg?: string })
     | null
@@ -217,7 +254,7 @@ async function feishuJson(
   return data
 }
 
-async function getFeishuTenantToken(appId: string, appSecret: string): Promise<string> {
+async function getFeishuTenantToken(appId: string, appSecret: string, signal?: AbortSignal): Promise<string> {
   if (feishuTokenCache && feishuTokenCache.appId === appId && Date.now() < feishuTokenCache.expiresAt) {
     return feishuTokenCache.token
   }
@@ -225,17 +262,23 @@ async function getFeishuTenantToken(appId: string, appSecret: string): Promise<s
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    signal,
   })
   const token = data.tenant_access_token as string
   const expire = typeof data.expire === 'number' ? data.expire : 7200
-  feishuTokenCache = { appId, token, expiresAt: Date.now() + (expire - 300) * 1000 }
+  feishuTokenCache = {
+    appId,
+    token,
+    expiresAt: Date.now() + (expire - 300) * 1000,
+  }
   return token
 }
 
-async function resolveFeishuChatId(token: string, preferred?: string): Promise<string> {
+async function resolveFeishuChatId(token: string, preferred?: string, signal?: AbortSignal): Promise<string> {
   if (preferred?.trim()) return preferred.trim()
   const data = await feishuJson('https://open.feishu.cn/open-apis/im/v1/chats?page_size=20', {
     headers: { Authorization: `Bearer ${token}` },
+    signal,
   })
   const items = (data.data as { items?: Array<{ chat_id?: string }> } | undefined)?.items ?? []
   const chatId = items[0]?.chat_id
@@ -246,17 +289,22 @@ async function resolveFeishuChatId(token: string, preferred?: string): Promise<s
 async function sendFeishuViaApp(
   channel: Extract<Channel, { type: 'feishu-app' }>,
   card: FeishuCard,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const token = await getFeishuTenantToken(channel.appId, channel.appSecret)
-  const receiveId = await resolveFeishuChatId(token, channel.chatId)
+  const token = await getFeishuTenantToken(channel.appId, channel.appSecret, signal)
+  const receiveId = await resolveFeishuChatId(token, channel.chatId, signal)
   await feishuJson('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
       receive_id: receiveId,
       msg_type: 'interactive',
       content: JSON.stringify(card),
     }),
+    signal,
   })
 }
 
@@ -269,10 +317,18 @@ function markdownTextElements(content: string): Array<Record<string, unknown>> {
   let cursor = 0
   let match: RegExpExecArray | null
   while ((match = pattern.exec(content))) {
-    if (match.index > cursor) elements.push({ text_run: { content: content.slice(cursor, match.index) } })
+    if (match.index > cursor)
+      elements.push({
+        text_run: { content: content.slice(cursor, match.index) },
+      })
     const label = match[1] ?? match[3]
     const url = (match[2] ?? match[3]).replace(/[，。；、）)]+$/g, '')
-    elements.push({ text_run: { content: label, text_element_style: { link: { url: encodeURIComponent(url) } } } })
+    elements.push({
+      text_run: {
+        content: label,
+        text_element_style: { link: { url: encodeURIComponent(url) } },
+      },
+    })
     cursor = match.index + match[0].length
   }
   if (cursor < content.length) elements.push({ text_run: { content: content.slice(cursor) } })
@@ -299,7 +355,14 @@ function markdownToDocxBlocks(markdown: string): Array<Record<string, unknown>> 
   return blocks.length ? blocks : [{ block_type: 2, text: runs('(空)') }]
 }
 
-async function uploadFeishuDocImage(token: string, documentId: string, blockId: string, imageUrl: string, index: number): Promise<void> {
+async function uploadFeishuDocImage(
+  token: string,
+  documentId: string,
+  blockId: string,
+  imageUrl: string,
+  index: number,
+  signal?: AbortSignal,
+): Promise<void> {
   let buffer: Buffer
   let contentType = 'image/png'
   if (imageUrl.startsWith('data:')) {
@@ -308,7 +371,9 @@ async function uploadFeishuDocImage(token: string, documentId: string, blockId: 
     contentType = match[1]
     buffer = Buffer.from(match[2], 'base64')
   } else {
-    const response = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) })
+    const response = await fetch(imageUrl, {
+      signal: abortSignalWithTimeout(signal, 20_000),
+    })
     if (!response.ok) throw new Error(`下载配图失败: HTTP ${response.status}`)
     contentType = response.headers.get('content-type')?.split(';')[0] || contentType
     buffer = Buffer.from(await response.arrayBuffer())
@@ -321,21 +386,33 @@ async function uploadFeishuDocImage(token: string, documentId: string, blockId: 
   form.append('parent_type', 'docx_image')
   form.append('parent_node', blockId)
   form.append('size', String(buffer.length))
-  form.append('file', new Blob([new Uint8Array(buffer)], { type: contentType }), `pi-studio-cover-${index + 1}.${extension}`)
+  form.append(
+    'file',
+    new Blob([new Uint8Array(buffer)], { type: contentType }),
+    `pi-studio-cover-${index + 1}.${extension}`,
+  )
   const upload = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form,
-    signal: AbortSignal.timeout(30_000),
+    signal: abortSignalWithTimeout(signal, 30_000),
   })
-  const data = (await upload.json().catch(() => null)) as { code?: number; msg?: string; data?: { file_token?: string } } | null
+  const data = (await upload.json().catch(() => null)) as {
+    code?: number
+    msg?: string
+    data?: { file_token?: string }
+  } | null
   if (!data || data.code !== 0 || !data.data?.file_token) {
     throw new Error(`上传飞书文档配图失败: ${data?.code ?? upload.status} ${data?.msg ?? ''}`.trim())
   }
   await feishuJson(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${blockId}`, {
     method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({ replace_image: { token: data.data.file_token } }),
+    signal,
   })
 }
 
@@ -348,18 +425,22 @@ export async function createFeishuDoc(
   title: string,
   markdown: string,
   imageUrls: string[] = [],
+  signal?: AbortSignal,
 ): Promise<{ url: string; documentId: string }> {
-  const token = await getFeishuTenantToken(channel.appId, channel.appSecret)
+  const token = await getFeishuTenantToken(channel.appId, channel.appSecret, signal)
   const created = await feishuJson('https://open.feishu.cn/open-apis/docx/v1/documents', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
       title: (title || '未命名文档').slice(0, 800),
       ...(channel.folderToken?.trim() ? { folder_token: channel.folderToken.trim() } : {}),
     }),
+    signal,
   })
-  const documentId = (created.data as { document?: { document_id?: string } } | undefined)?.document
-    ?.document_id
+  const documentId = (created.data as { document?: { document_id?: string } } | undefined)?.document?.document_id
   if (!documentId) throw new Error('建飞书文档失败:未返回 document_id(检查应用是否开通 docx:document 权限)')
 
   const blocks = markdownToDocxBlocks(markdown)
@@ -373,8 +454,12 @@ export async function createFeishuDoc(
         `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
         {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ children: batch, index: documentIndex }),
+          signal,
         },
       )
       documentIndex += batch.length
@@ -387,13 +472,21 @@ export async function createFeishuDoc(
       `https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ children: [{ block_type: 27, image: {} }], index: documentIndex }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          children: [{ block_type: 27, image: {} }],
+          index: documentIndex,
+        }),
+        signal,
       },
     )
-    const imageBlockId = (createdImage.data as { children?: Array<{ block_id?: string }> } | undefined)?.children?.[0]?.block_id
+    const imageBlockId = (createdImage.data as { children?: Array<{ block_id?: string }> } | undefined)?.children?.[0]
+      ?.block_id
     if (!imageBlockId) throw new Error('创建飞书文档图片块失败:未返回 block_id')
-    await uploadFeishuDocImage(token, documentId, imageBlockId, imageUrls[i], i)
+    await uploadFeishuDocImage(token, documentId, imageBlockId, imageUrls[i], i, signal)
     documentIndex += 1
     textCursor = target
   }
@@ -405,26 +498,33 @@ export async function createFeishuDoc(
 
 type WechatOfficialChannel = Extract<Channel, { type: 'wechat-official' }>
 
-async function getWechatAccessToken(channel: WechatOfficialChannel): Promise<string> {
+async function getWechatAccessToken(channel: WechatOfficialChannel, signal?: AbortSignal): Promise<string> {
   const response = await fetch(
     `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(channel.appId)}&secret=${encodeURIComponent(channel.appSecret)}`,
-    { signal: AbortSignal.timeout(15_000) },
+    { signal: abortSignalWithTimeout(signal, 15_000) },
   )
-  const data = (await response.json().catch(() => null)) as { access_token?: string; errcode?: number; errmsg?: string } | null
-  if (!response.ok || !data?.access_token) throw new Error(`微信 API ${data?.errcode ?? response.status}: ${data?.errmsg ?? '获取 access_token 失败'}`)
+  const data = (await response.json().catch(() => null)) as {
+    access_token?: string
+    errcode?: number
+    errmsg?: string
+  } | null
+  if (!response.ok || !data?.access_token)
+    throw new Error(`微信 API ${data?.errcode ?? response.status}: ${data?.errmsg ?? '获取 access_token 失败'}`)
   return data.access_token
 }
 
-async function imageBuffer(imageUrl: string): Promise<{ buffer: Buffer; contentType: string }> {
+async function imageBuffer(imageUrl: string, signal?: AbortSignal): Promise<{ buffer: Buffer; contentType: string }> {
   if (isAbsolute(imageUrl)) {
     const contentType =
-      ({
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-      } as Record<string, string>)[extname(imageUrl).toLowerCase()] ?? 'application/octet-stream'
+      (
+        {
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+        } as Record<string, string>
+      )[extname(imageUrl).toLowerCase()] ?? 'application/octet-stream'
     return { buffer: await readFile(imageUrl), contentType }
   }
   if (imageUrl.startsWith('data:')) {
@@ -432,7 +532,9 @@ async function imageBuffer(imageUrl: string): Promise<{ buffer: Buffer; contentT
     if (!match) throw new Error('微信配图 data URL 无法解析')
     return { buffer: Buffer.from(match[2], 'base64'), contentType: match[1] }
   }
-  const response = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) })
+  const response = await fetch(imageUrl, {
+    signal: abortSignalWithTimeout(signal, 20_000),
+  })
   if (!response.ok) throw new Error(`下载微信配图失败: HTTP ${response.status}`)
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
@@ -440,36 +542,57 @@ async function imageBuffer(imageUrl: string): Promise<{ buffer: Buffer; contentT
   }
 }
 
-async function uploadWechatInlineImage(token: string, imageUrl: string, index: number): Promise<string> {
-  const { buffer, contentType } = await imageBuffer(imageUrl)
+async function uploadWechatInlineImage(
+  token: string,
+  imageUrl: string,
+  index: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  const { buffer, contentType } = await imageBuffer(imageUrl, signal)
   if (!buffer.length || buffer.length > 10 * 1024 * 1024) throw new Error('微信正文配图为空或超过 10MB 限制')
   const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
   const filename = `pi-studio-inline-${index + 1}.${extension}`
   const form = new FormData()
   form.append('media', new Blob([new Uint8Array(buffer)], { type: contentType }), filename)
-  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token=${encodeURIComponent(token)}`, {
-    method: 'POST',
-    body: form,
-    signal: AbortSignal.timeout(30_000),
-  })
-  const data = (await response.json().catch(() => null)) as { url?: string; errcode?: number; errmsg?: string } | null
-  if (!response.ok || !data?.url) throw new Error(`微信正文图片上传失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
+  const response = await fetch(
+    `https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token=${encodeURIComponent(token)}`,
+    {
+      method: 'POST',
+      body: form,
+      signal: abortSignalWithTimeout(signal, 30_000),
+    },
+  )
+  const data = (await response.json().catch(() => null)) as {
+    url?: string
+    errcode?: number
+    errmsg?: string
+  } | null
+  if (!response.ok || !data?.url)
+    throw new Error(`微信正文图片上传失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
   return data.url
 }
 
-async function uploadWechatCover(token: string, imageUrl: string): Promise<string> {
-  const { buffer, contentType } = await imageBuffer(imageUrl)
+async function uploadWechatCover(token: string, imageUrl: string, signal?: AbortSignal): Promise<string> {
+  const { buffer, contentType } = await imageBuffer(imageUrl, signal)
   if (!buffer.length || buffer.length > 10 * 1024 * 1024) throw new Error('微信封面图为空或超过 10MB 限制')
   const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
   const form = new FormData()
   form.append('media', new Blob([new Uint8Array(buffer)], { type: contentType }), `pi-studio-cover.${extension}`)
-  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${encodeURIComponent(token)}&type=image`, {
-    method: 'POST',
-    body: form,
-    signal: AbortSignal.timeout(30_000),
-  })
-  const data = (await response.json().catch(() => null)) as { media_id?: string; errcode?: number; errmsg?: string } | null
-  if (!response.ok || !data?.media_id) throw new Error(`微信封面上传失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
+  const response = await fetch(
+    `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${encodeURIComponent(token)}&type=image`,
+    {
+      method: 'POST',
+      body: form,
+      signal: abortSignalWithTimeout(signal, 30_000),
+    },
+  )
+  const data = (await response.json().catch(() => null)) as {
+    media_id?: string
+    errcode?: number
+    errmsg?: string
+  } | null
+  if (!response.ok || !data?.media_id)
+    throw new Error(`微信封面上传失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
   return data.media_id
 }
 
@@ -482,33 +605,44 @@ export async function createWechatDraft(
   title: string,
   markdown: string,
   images: { cover: string; inline: string[] },
+  signal?: AbortSignal,
 ): Promise<{ mediaId: string; title: string }> {
-  const token = await getWechatAccessToken(channel)
-  const coverMediaId = await uploadWechatCover(token, images.cover)
+  const token = await getWechatAccessToken(channel, signal)
+  const coverMediaId = await uploadWechatCover(token, images.cover, signal)
   const inlineUrls: string[] = []
   for (let i = 0; i < images.inline.length; i += 1) {
-    inlineUrls.push(await uploadWechatInlineImage(token, images.inline[i], i))
+    inlineUrls.push(await uploadWechatInlineImage(token, images.inline[i], i, signal))
   }
   const articleTitle = extractWechatTitle(markdown, title)
-  const response = await fetch(`https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${encodeURIComponent(token)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      articles: [{
-        title: articleTitle,
-        author: 'pi-studio',
-        digest: extractWechatDigest(markdown),
-        content: markdownToWechatHtml(markdown, inlineUrls),
-        content_source_url: '',
-        thumb_media_id: coverMediaId,
-        need_open_comment: 1,
-        only_fans_can_comment: 0,
-      }],
-    }),
-    signal: AbortSignal.timeout(30_000),
-  })
-  const data = (await response.json().catch(() => null)) as { media_id?: string; errcode?: number; errmsg?: string } | null
-  if (!response.ok || !data?.media_id) throw new Error(`微信草稿创建失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
+  const response = await fetch(
+    `https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${encodeURIComponent(token)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        articles: [
+          {
+            title: articleTitle,
+            author: 'pi-studio',
+            digest: extractWechatDigest(markdown),
+            content: markdownToWechatHtml(markdown, inlineUrls),
+            content_source_url: '',
+            thumb_media_id: coverMediaId,
+            need_open_comment: 1,
+            only_fans_can_comment: 0,
+          },
+        ],
+      }),
+      signal: abortSignalWithTimeout(signal, 30_000),
+    },
+  )
+  const data = (await response.json().catch(() => null)) as {
+    media_id?: string
+    errcode?: number
+    errmsg?: string
+  } | null
+  if (!response.ok || !data?.media_id)
+    throw new Error(`微信草稿创建失败: ${data?.errcode ?? response.status} ${data?.errmsg ?? ''}`.trim())
   return { mediaId: data.media_id, title: articleTitle }
 }
 

@@ -3,18 +3,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
-import { prepareAgentRuntime } from './agent-runtime-config'
-import {
-  embeddedNodeEnv,
-  loadRpcClient,
-  resolveEmbeddedNodePath,
-  resolvePiCliPath,
-} from './pi-client'
-import { prepareSandboxLaunch } from './sandbox'
+import { PiRunTimeoutError, runPromptToSettled, startPiRuntimeCancellable, type PiAgentRunHandle } from './pi-runtime'
+import { runProfileCompiler } from './run-profile'
+import { describeDeniedApprovals } from './approval-gateway'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
-import { syncWebSearchExtension } from './web-search-extension'
-import { syncSecurityGuardExtension } from './security-guard-extension'
-import { syncWorkspaceMemoryExtension } from './workspace-memory'
+import { prepareReviewedWebSearchExtension } from './web-search-extension'
+import { prepareReviewedWorkspaceMemoryExtension } from './workspace-memory'
 import { generateImage } from './image-gen'
 import { cloud3dGenerate } from './model3d'
 import { formatAppIconWarning, generateAppIconBundle } from './app-icon-bundle'
@@ -25,26 +19,21 @@ import { appendAppLog, normalizeError } from './app-log'
 import { remoteControl } from './remote-control'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
-import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import type { RoutineStepType as SharedRoutineStepType } from '../shared/ipc/contract'
 import { readRoutineMaterialFolder } from './routine-material-folder'
-import {
-  inferRoutineImageRole,
-  selectWechatImageAssets,
-  type RoutineImageAsset,
-} from './routine-assets'
-import {
-  configureRoutineCloudOutbox,
-  queueRoutineCloudSync,
-  routineSyncOrigin,
-} from './routine-cloud-sync'
+import { inferRoutineImageRole, selectWechatImageAssets, type RoutineImageAsset } from './routine-assets'
+import { configureRoutineCloudOutbox, queueRoutineCloudSync, routineSyncOrigin } from './routine-cloud-sync'
 import { RoutineDatabase, RoutineSqliteUnavailableError } from './routine-database'
+import type { WorkflowRunEventType } from './routine-database'
 import { JsonWorkflowDeleteOutbox } from './workflow-delete-outbox'
+import { WorkflowNodeRegistry } from './workflow-node-registry'
 import {
   RoutineScheduler,
   dueSlotKey,
+  type RoutineExecutionContext,
   type SchedulableSchedule,
 } from './routine-scheduler'
+import type { WorkflowNodeContext } from './workflow-node-registry'
 
 /**
  * 例行任务(Routines):定时执行一条由类型化节点组成的流水线。
@@ -118,7 +107,7 @@ export type Routine = {
 export type RoutineStepResult = {
   id: string
   name: string
-  status: 'ok' | 'error' | 'timeout' | 'skipped'
+  status: 'ok' | 'error' | 'timeout' | 'cancelled' | 'skipped'
   /** 该步骤的文本产物(截断) */
   summary: string
   /** imagegen 节点的公网图片链接 */
@@ -146,7 +135,7 @@ export type RoutineRun = {
   routineName: string
   startedAt: number
   endedAt: number
-  status: 'ok' | 'error' | 'timeout'
+  status: 'ok' | 'error' | 'timeout' | 'cancelled' | 'interrupted'
   triggerSource?: 'manual' | 'schedule'
   /** 各步骤产物拼接(截断) */
   summary: string
@@ -160,7 +149,7 @@ export type RoutineStepProgress = {
   stepId: string
   stepIndex: number
   totalSteps: number
-  status: 'running' | 'ok' | 'error' | 'timeout'
+  status: 'running' | 'ok' | 'error' | 'timeout' | 'cancelled'
 }
 
 type Store = { routines: Routine[]; runs: RoutineRun[] }
@@ -190,6 +179,29 @@ type PendingReview = {
 }
 
 const pendingReviews = new Map<string, PendingReview>()
+const forcedClosedRunIds = new Set<string>()
+const activeRunForceCleanups = new Map<string, () => Promise<void>>()
+
+class WorkflowCancelledError extends Error {
+  constructor() {
+    super('工作流已取消')
+    this.name = 'WorkflowCancelledError'
+  }
+}
+
+class WorkflowExecutionFailedError extends Error {
+  constructor(
+    readonly status: 'error' | 'timeout',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'WorkflowExecutionFailedError'
+  }
+}
+
+function throwIfWorkflowCancelled(signal: AbortSignal): void {
+  if (signal.aborted) throw new WorkflowCancelledError()
+}
 // 保留当前运行中工作流的最新节点状态。页面切换会卸载 RoutinesPage，
 // 回来时通过 routines:state 恢复这份快照，而不是等下一次事件广播。
 const liveStepProgress = new Map<string, Map<string, RoutineStepProgress>>()
@@ -210,7 +222,7 @@ function respondToReview(
 function cancelPendingReviews(routineId: string, reason: string): void {
   for (const [reviewId, pending] of pendingReviews) {
     if (pending.routineId !== routineId) continue
-    broadcast('routines:reviewCancelled', { reviewId, reason })
+    broadcast('routines:reviewCancelled', { reviewId, routineId, reason })
     pending.reject(new Error(reason))
     pendingReviews.delete(reviewId)
   }
@@ -220,10 +232,7 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
   const platforms = Array.isArray(step.platforms)
     ? step.platforms.filter(
         (platform): platform is AppIconPlatform =>
-          platform === 'android' ||
-          platform === 'ios' ||
-          platform === 'macos' ||
-          platform === 'windows',
+          platform === 'android' || platform === 'ios' || platform === 'macos' || platform === 'windows',
       )
     : undefined
   return {
@@ -267,10 +276,7 @@ function loadStore(): Store {
   return { routines: [], runs: [] }
 }
 
-function saveStore(
-  store: Store,
-  deleted?: { origin: string; workflowId: string },
-): void {
+function saveStore(store: Store, deleted?: { origin: string; workflowId: string }): void {
   if (routineDatabase) {
     routineDatabase.save(store, deleted)
   } else {
@@ -315,6 +321,90 @@ type StepProduct = {
   imageDataUrl?: string
   artifactPath?: string
   images?: RoutineImageAsset[]
+}
+
+type RoutineNodeMap = {
+  [K in RoutineStepType]: {
+    input: RoutineStep & { type: K }
+    output: StepProduct
+  }
+}
+
+export function routineStepSchema<K extends RoutineStepType>(type: K): { parse: (value: unknown) => RoutineStep & { type: K } } {
+  return {
+    parse: (value) => {
+      if (!value || typeof value !== 'object') {
+        throw new Error(`工作流节点输入与定义不匹配: ${type}`)
+      }
+      const step = value as Partial<RoutineStep>
+      const optionalStrings: Array<keyof RoutineStep> = [
+        'prompt',
+        'channelId',
+        'message',
+        'path',
+        'imageRef',
+        'appName',
+        'backgroundColor',
+        'personRef',
+        'garmentRef',
+      ]
+      const typedOptionalsValid = optionalStrings.every(
+        (key) => step[key] === undefined || typeof step[key] === 'string',
+      )
+      const platformsValid =
+        step.platforms === undefined ||
+        (Array.isArray(step.platforms) &&
+          step.platforms.every((platform) => ['android', 'ios', 'macos', 'windows'].includes(platform)))
+      if (
+        step.type !== type ||
+        typeof step.id !== 'string' ||
+        !step.id ||
+        typeof step.name !== 'string' ||
+        !typedOptionalsValid ||
+        !platformsValid ||
+        (step.engine !== undefined && !['openai', 'comfy'].includes(step.engine)) ||
+        (step.provider !== undefined && !['tripo', 'hi3d'].includes(step.provider)) ||
+        (step.format !== undefined && !['html', 'markdown'].includes(step.format)) ||
+        !isRoutineStepComplete(step as RoutineStep)
+      ) {
+        throw new Error(`工作流节点输入无效: ${type}`)
+      }
+      return step as RoutineStep & { type: K }
+    },
+  }
+}
+
+export const stepProductSchema = {
+  parse: (value: unknown): StepProduct => {
+    if (!value || typeof value !== 'object') {
+      throw new Error('工作流节点没有返回有效的 StepProduct')
+    }
+    const product = value as Partial<StepProduct>
+    const optionalStringsValid = [product.imageUrl, product.imageDataUrl, product.artifactPath].every(
+      (field) => field === undefined || typeof field === 'string',
+    )
+    const imagesValid =
+      product.images === undefined ||
+      (Array.isArray(product.images) &&
+        product.images.every(
+          (image) =>
+            !!image &&
+            typeof image.id === 'string' &&
+            image.kind === 'image' &&
+            ['folder', 'generated'].includes(image.source) &&
+            typeof image.name === 'string' &&
+            ['cover', 'inline', 'reference'].includes(image.role) &&
+            typeof image.uri === 'string',
+        ))
+    if (typeof product.output !== 'string' || !optionalStringsValid || !imagesValid) {
+      throw new Error('工作流节点没有返回有效的 StepProduct')
+    }
+    return product as StepProduct
+  },
+}
+
+function routineNodeSchemas<K extends RoutineStepType>(type: K) {
+  return { inputSchema: routineStepSchema(type), outputSchema: stepProductSchema }
 }
 
 type RunContext = {
@@ -364,13 +454,15 @@ function interpolate(template: string, ctx: RunContext): string {
   })
 }
 
-const hasPreviousProductReference = (text: string): boolean =>
-  /\{\{\s*(?:prev\.|steps\.)/.test(text)
+const hasPreviousProductReference = (text: string): boolean => /\{\{\s*(?:prev\.|steps\.)/.test(text)
 
 // ── 执行器 ───────────────────────────────────────────────────────
 
 function latestAssistantText(
-  messages: Array<{ role?: string; content?: Array<{ type?: string; text?: string }> | string }>,
+  messages: Array<{
+    role?: string
+    content?: Array<{ type?: string; text?: string }> | string
+  }>,
 ): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
@@ -399,38 +491,29 @@ function broadcast(channel: string, payload: unknown): void {
 
 /** agent 节点专属:RpcClient 只在第一次遇到 agent 节点时才拉起(纯生图/通知流程不需要 API Key) */
 type AgentSession = {
-  client: {
-    prompt: (text: string) => Promise<void>
-    getMessages: () => Promise<unknown>
-    onEvent: (cb: (e: { type?: string }) => void) => () => void
-    stop: () => Promise<void>
-  } | null
+  client: PiAgentRunHandle | null
+  startupCleanup: (() => Promise<void>) | null
 }
 
-async function ensureAgentClient(routine: Routine, session: AgentSession): Promise<NonNullable<AgentSession['client']>> {
+async function ensureAgentClient(
+  routine: Routine,
+  session: AgentSession,
+  signal: AbortSignal,
+): Promise<NonNullable<AgentSession['client']>> {
   if (session.client) return session.client
   const settings = loadSettings()
-  const runtime = await prepareAgentRuntime()
-  syncWebSearchExtension(!!settings.tavilyApiKey)
-  // 安全策略 UI 已移除(隔离交给沙箱):固定卸载 securityGuard 扩展,老装机残留的也清掉
-  syncSecurityGuardExtension(false)
-  syncWorkspaceMemoryExtension()
-  const RpcClient = await loadRpcClient()
-  const env = runtime.env
-  const launch = settings.sandboxEnabled
-    ? await prepareSandboxLaunch(routine.workspacePath, env)
-    : { cliPath: resolvePiCliPath(), env }
-  const client = new RpcClient({
-    cwd: routine.workspacePath,
-    env: embeddedNodeEnv(launch.env),
-    runtimePath: resolveEmbeddedNodePath(),
-    provider: runtime.provider,
-    model: runtime.model,
-    cliPath: launch.cliPath,
+  const extensions = [
+    prepareReviewedWorkspaceMemoryExtension(),
+    prepareReviewedWebSearchExtension(!!settings.tavilyApiKey),
+  ].filter((extension): extension is string => extension !== null)
+  const profile = await runProfileCompiler.compile('routine', routine.workspacePath, { extensions })
+  const client = await startPiRuntimeCancellable(profile, signal, {
+    onOwned: (cleanup) => {
+      session.startupCleanup = cleanup
+    },
   })
-  await client.start()
-  await client.setThinkingLevel(DEFAULT_THINKING_LEVEL)
   session.client = client
+  session.startupCleanup = null
   return client
 }
 
@@ -440,49 +523,67 @@ async function runAgentStep(
   ctx: RunContext,
   session: AgentSession,
   markTimeout: () => void,
+  signal: AbortSignal,
 ): Promise<StepProduct> {
-  const client = await ensureAgentClient(routine, session)
+  const client = await ensureAgentClient(routine, session, signal)
+  throwIfWorkflowCancelled(signal)
+  // The client outlives one step, so only this step's denials belong in its output.
+  const deniedBefore = client.deniedApprovals().length
+  const cancelAgent = (): void => {
+    void client.cancel('workflow cancelled').catch(() => {})
+  }
+  signal.addEventListener('abort', cancelAgent, { once: true })
   let prompt = interpolate(step.prompt ?? '', ctx)
   // 兼容老流程:prompt 里没写变量时,自动把上一步输出接在后面
   if (!hasPreviousProductReference(step.prompt ?? '') && ctx.prev) {
     prompt = `${prompt}\n\nPrevious step result:\n${ctx.prev.output.slice(0, MAX_STEP_OUTPUT_CHARS)}`
   }
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+  try {
+    await runPromptToSettled(client, prompt, RUN_TIMEOUT_MS)
+  } catch (err) {
+    if (err instanceof PiRunTimeoutError) {
       markTimeout()
-      reject(new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`))
-    }, RUN_TIMEOUT_MS)
-    const off = client.onEvent((e: { type?: string }) => {
-      if (e?.type === 'agent_end') {
-        clearTimeout(timer)
-        off()
-        resolve()
-      }
-    })
-    client.prompt(prompt).catch((err: unknown) => {
-      clearTimeout(timer)
-      off()
-      reject(err instanceof Error ? err : new Error(String(err)))
-    })
-  })
+      throw new Error(`执行超时(${RUN_TIMEOUT_MS / 60000} 分钟)`, {
+        cause: err,
+      })
+    }
+    if (signal.aborted) throw new WorkflowCancelledError()
+    throw err
+  } finally {
+    signal.removeEventListener('abort', cancelAgent)
+  }
+  throwIfWorkflowCancelled(signal)
   const messages = (await client.getMessages()) as Array<{
     role?: string
     content?: Array<{ type?: string; text?: string }> | string
   }>
+  const denials = client.deniedApprovals().slice(deniedBefore)
+  if (denials.length > 0) {
+    appendAppLog('warn', 'routine.approval', 'Denied approvals in an unattended routine step', {
+      routineId: routine.id,
+      step: step.name,
+      denials,
+    })
+  }
+  const denied = describeDeniedApprovals(denials)
+  const text = latestAssistantText(messages) || '(no text output)'
   return {
-    output: (latestAssistantText(messages) || '(no text output)').slice(0, MAX_STEP_OUTPUT_CHARS),
+    output: (denied ? `${text}\n\n${denied}` : text).slice(0, MAX_STEP_OUTPUT_CHARS),
   }
 }
 
-async function runImagegenStep(step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+async function runImagegenStep(step: RoutineStep, ctx: RunContext, signal: AbortSignal): Promise<StepProduct> {
   const prompt = interpolate(step.prompt ?? '', ctx)
   if (!prompt.trim()) throw new Error('生图节点的提示词为空')
-  const result = await generateImage({
-    prompt,
-    // 老 routine 数据可能还存着 'comfy':本地引擎已移除,统一回退云端
-    engine: step.engine === 'comfy' || !step.engine ? 'openai' : step.engine,
-    downloadResult: false,
-  })
+  const result = await generateImage(
+    {
+      prompt,
+      // 老 routine 数据可能还存着 'comfy':本地引擎已移除,统一回退云端
+      engine: step.engine === 'comfy' || !step.engine ? 'openai' : step.engine,
+      downloadResult: false,
+    },
+    signal,
+  )
   if ('error' in result) throw new Error(result.error)
   const uri = result.publicUrl ?? result.dataUrl
   return {
@@ -510,6 +611,7 @@ async function runAppIconStep(
   routine: Routine,
   step: RoutineStep,
   ctx: RunContext,
+  signal: AbortSignal,
 ): Promise<StepProduct> {
   const source = interpolate((step.imageRef ?? '{{prev.imageUrl}}').trim(), ctx).trim()
   if (!source || source.includes('{{')) throw new Error('应用图标节点需要上游生图链接或工作区内的母图路径')
@@ -517,17 +619,20 @@ async function runAppIconStep(
     step.path?.trim() || '.pi-studio/app-icons/{{routine.name}}-{{trigger.stamp}}',
     ctx,
   )
-  const result = await generateAppIconBundle({
-    source,
-    workspacePath: routine.workspacePath,
-    outputPath,
-    appName: interpolate(step.appName?.trim() || '', ctx),
-    backgroundColor: interpolate(step.backgroundColor?.trim() || '', ctx),
-    platforms: step.platforms?.length
-      ? step.platforms
-      : ['android', 'ios', 'macos', 'windows'],
-    keepHistory: step.keepHistory,
-  })
+  const result = await generateAppIconBundle(
+    {
+      source,
+      workspacePath: routine.workspacePath,
+      outputPath,
+      appName: interpolate(step.appName?.trim() || '', ctx),
+      backgroundColor: interpolate(step.backgroundColor?.trim() || '', ctx),
+      platforms: step.platforms?.length
+        ? step.platforms
+        : ['android', 'ios', 'macos', 'windows'],
+      keepHistory: step.keepHistory,
+    },
+    signal,
+  )
   const cleaned = result.removedHistory.length
     ? `\n\n按保留上限清理了 ${result.removedHistory.length} 次历史生成: ${result.removedHistory.join('、')}`
     : ''
@@ -537,13 +642,13 @@ async function runAppIconStep(
   }
 }
 
-function runFolderInputStep(
-  routine: Routine,
-  step: RoutineStep,
-  ctx: RunContext,
-): StepProduct {
+function runFolderInputStep(routine: Routine, step: RoutineStep, ctx: RunContext): StepProduct {
   const folderPath = interpolate(step.path?.trim() ?? '', ctx)
-  if (!folderPath) return { output: '未配置本地素材文件夹，本次仅使用后续检索和生成内容。', images: [] }
+  if (!folderPath)
+    return {
+      output: '未配置本地素材文件夹，本次仅使用后续检索和生成内容。',
+      images: [],
+    }
   const materials = readRoutineMaterialFolder(routine.workspacePath, folderPath)
   const warnings = materials.warnings.length
     ? `\n\n## 读取提示\n${materials.warnings.map((warning) => `- ${warning}`).join('\n')}`
@@ -554,34 +659,46 @@ function runFolderInputStep(
   }
 }
 
-async function runExportStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+async function runExportStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  signal: AbortSignal,
+): Promise<StepProduct> {
   const content = ctx.prev?.output ?? ''
   if (!content.trim()) throw new Error('导出节点没有可写入的上一步内容')
   const format = step.format ?? 'markdown'
-  const requestedPath = interpolate(
-    step.path?.trim() || `.pi-studio/articles/${Date.now()}-article`,
-    ctx,
-  )
+  const requestedPath = interpolate(step.path?.trim() || `.pi-studio/articles/${Date.now()}-article`, ctx)
+  throwIfWorkflowCancelled(signal)
   const artifact = writeRoutineArtifact(routine.workspacePath, requestedPath, format, content)
   return { output: artifact.path, artifactPath: artifact.path }
 }
 
 /** 图/文 → 3D 节点:有上游图(imageRef 默认 {{prev.imageUrl}})就图生 3D,否则用 prompt 文生 3D;glb 存进工作区。 */
-async function runModel3dStep(step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+async function runModel3dStep(step: RoutineStep, ctx: RunContext, signal: AbortSignal): Promise<StepProduct> {
   const prompt = interpolate(step.prompt ?? '', ctx).trim()
   const imageRef = interpolate((step.imageRef ?? '{{prev.imageUrl}}').trim(), ctx).trim()
   const imageUrl = /^https?:\/\//i.test(imageRef) ? imageRef : undefined
   if (!imageUrl && !prompt) throw new Error('3D 节点需要上游图片(imageRef)或文字提示词')
-  const { modelUrl, thumbnailUrl } = await cloud3dGenerate({
-    ...(imageUrl ? { imageUrl } : { prompt }),
-    provider: step.provider ?? 'tripo',
-    options: { texture: true },
-  })
+  const { modelUrl, thumbnailUrl } = await cloud3dGenerate(
+    {
+      ...(imageUrl ? { imageUrl } : { prompt }),
+      provider: step.provider ?? 'tripo',
+      options: { texture: true },
+    },
+    signal,
+  )
   const dir = join(ctx.routine.workspacePath, '.pi-studio', 'models')
   mkdirSync(dir, { recursive: true })
-  const safe = step.name.trim().replace(/[^\w一-龥-]+/g, '_').slice(0, 40) || 'model'
+  const safe =
+    step.name
+      .trim()
+      .replace(/[^\w一-龥-]+/g, '_')
+      .slice(0, 40) || 'model'
   const glbPath = join(dir, `${Date.now()}-${safe}.glb`)
-  const res = await fetch(modelUrl, { signal: AbortSignal.timeout(180_000) })
+  const res = await fetch(modelUrl, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
+  })
   if (!res.ok) throw new Error(`下载模型失败 HTTP ${res.status}`)
   writeFileSync(glbPath, Buffer.from(await res.arrayBuffer()))
   return {
@@ -598,10 +715,13 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   '.webp': 'image/webp',
 }
 
-async function routineImageDataUrl(workspacePath: string, reference: string): Promise<string> {
+async function routineImageDataUrl(workspacePath: string, reference: string, signal: AbortSignal): Promise<string> {
   if (/^data:image\//i.test(reference)) return reference
   if (/^https?:\/\//i.test(reference)) {
-    const response = await fetch(reference, { redirect: 'error', signal: AbortSignal.timeout(60_000) })
+    const response = await fetch(reference, {
+      redirect: 'error',
+      signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+    })
     if (!response.ok) throw new Error(`下载工作流图片失败 HTTP ${response.status}`)
     const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? ''
     if (!contentType.startsWith('image/')) throw new Error('工作流图片 URL 没有返回图片')
@@ -623,22 +743,30 @@ async function routineImageDataUrl(workspacePath: string, reference: string): Pr
   return `data:${mime};base64,${bytes.toString('base64')}`
 }
 
-async function runDressupStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+async function runDressupStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  signal: AbortSignal,
+): Promise<StepProduct> {
   const personRef = interpolate(step.personRef ?? '', ctx).trim()
   const garmentRef = interpolate(step.garmentRef ?? '', ctx).trim()
   if (!personRef || !garmentRef || personRef.includes('{{') || garmentRef.includes('{{')) {
     throw new Error('换装视频节点需要人物图和服装图')
   }
   const [personDataUrl, garmentDataUrl] = await Promise.all([
-    routineImageDataUrl(routine.workspacePath, personRef),
-    routineImageDataUrl(routine.workspacePath, garmentRef),
+    routineImageDataUrl(routine.workspacePath, personRef, signal),
+    routineImageDataUrl(routine.workspacePath, garmentRef, signal),
   ])
-  const result = await runDressupWorkflow({
-    personDataUrl,
-    garmentDataUrl,
-    firstFrameDataUrl: personDataUrl,
-    prompt: interpolate(step.prompt ?? '', ctx).trim() || undefined,
-  })
+  const result = await runDressupWorkflow(
+    {
+      personDataUrl,
+      garmentDataUrl,
+      firstFrameDataUrl: personDataUrl,
+      prompt: interpolate(step.prompt ?? '', ctx).trim() || undefined,
+    },
+    signal,
+  )
   if ('error' in result) throw new Error(result.error)
   return {
     output: result.cloudVideoUrl ?? result.filePath ?? result.videoUrl,
@@ -646,7 +774,13 @@ async function runDressupStep(routine: Routine, step: RoutineStep, ctx: RunConte
   }
 }
 
-async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContext): Promise<StepProduct> {
+async function runReviewStep(
+  routine: Routine,
+  step: RoutineStep,
+  ctx: RunContext,
+  signal: AbortSignal,
+): Promise<StepProduct> {
+  throwIfWorkflowCancelled(signal)
   const reviewId = randomUUID()
   const previous = ctx.prev
   const request: RoutineReviewRequest = {
@@ -657,16 +791,18 @@ async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContex
     stepName: step.name,
     message: interpolate(step.message?.trim() || '请检查上一步生成的公众号草稿，确认后继续。', ctx),
     ...(previous?.artifactPath ? { artifactPath: previous.artifactPath } : {}),
-    ...(previous?.imageUrl || previous?.imageDataUrl
-      ? { imageUrl: previous.imageUrl ?? previous.imageDataUrl }
-      : {}),
+    ...(previous?.imageUrl || previous?.imageDataUrl ? { imageUrl: previous.imageUrl ?? previous.imageDataUrl } : {}),
     preview: (previous?.output ?? '').slice(0, 8000),
   }
 
   return new Promise<StepProduct>((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingReviews.delete(reviewId)
-      broadcast('routines:reviewCancelled', { reviewId, reason: '人工审核超时，工作流已停止' })
+      broadcast('routines:reviewCancelled', {
+        reviewId,
+        routineId: routine.id,
+        reason: '人工审核超时，工作流已停止',
+      })
       reject(new Error('人工审核超时，工作流已停止'))
     }, REVIEW_TIMEOUT_MS)
     pendingReviews.set(reviewId, {
@@ -684,6 +820,10 @@ async function runReviewStep(routine: Routine, step: RoutineStep, ctx: RunContex
         reject(error)
       },
     })
+    if (signal.aborted) {
+      cancelPendingReviews(routine.id, '工作流已取消')
+      return
+    }
     broadcast('routines:reviewRequested', request)
   })
 }
@@ -693,17 +833,23 @@ async function runNotifyStep(
   step: RoutineStep,
   ctx: RunContext,
   channels: Channel[],
+  signal: AbortSignal,
 ): Promise<StepProduct> {
   const channel = channels.find((c) => c.id === step.channelId)
-  if (!channel || channel.type === 'wechat-official') throw new Error('通知节点需要可发送的通知渠道,微信公众号渠道请使用草稿节点')
+  if (!channel || channel.type === 'wechat-official')
+    throw new Error('通知节点需要可发送的通知渠道,微信公众号渠道请使用草稿节点')
   const markdown = interpolate(step.message?.trim() || '{{prev.output}}', ctx)
   const imageUrls = [...ctx.products.values()].map((p) => p.imageUrl).filter((u): u is string => !!u)
-  await sendToChannel(channel, {
-    title: `${routine.name} · ${step.name}`,
-    status: 'info',
-    markdown,
-    ...(imageUrls.length ? { imageUrls } : {}),
-  })
+  await sendToChannel(
+    channel,
+    {
+      title: `${routine.name} · ${step.name}`,
+      status: 'info',
+      markdown,
+      ...(imageUrls.length ? { imageUrls } : {}),
+    },
+    signal,
+  )
   return { output: `已发送到「${channel.name}」` }
 }
 
@@ -712,6 +858,7 @@ async function runFeishuDocStep(
   step: RoutineStep,
   ctx: RunContext,
   channels: Channel[],
+  signal: AbortSignal,
 ): Promise<StepProduct> {
   const channel =
     (step.channelId ? channels.find((c) => c.id === step.channelId) : undefined) ??
@@ -729,7 +876,7 @@ async function runFeishuDocStep(
     .filter((product): product is StepProduct => !!product)
     .map((product) => product.imageUrl ?? product.imageDataUrl)
     .filter((url): url is string => !!url)
-  const { url } = await createFeishuDoc(channel, title, content, imageUrls)
+  const { url } = await createFeishuDoc(channel, title, content, imageUrls, signal)
   return { output: `[打开飞书文档](${url})`, artifactPath: url }
 }
 
@@ -738,6 +885,7 @@ async function runWechatDraftStep(
   step: RoutineStep,
   ctx: RunContext,
   channels: Channel[],
+  signal: AbortSignal,
 ): Promise<StepProduct> {
   const channel =
     (step.channelId ? channels.find((candidate) => candidate.id === step.channelId) : undefined) ??
@@ -753,19 +901,115 @@ async function runWechatDraftStep(
     .flatMap((product) => product.images ?? [])
   const selected = selectWechatImageAssets(assets)
   if (!selected.cover) throw new Error('微信公众号草稿至少需要一张素材图片或生成图片作为封面')
-  const draft = await createWechatDraft(channel, title, content, {
-    cover: selected.cover.uri,
-    inline: selected.inline.map((asset) => asset.uri),
-  })
-  return { output: `微信公众号草稿已创建: ${draft.title}（media_id: ${draft.mediaId}）`, artifactPath: draft.mediaId }
+  const draft = await createWechatDraft(
+    channel,
+    title,
+    content,
+    {
+      cover: selected.cover.uri,
+      inline: selected.inline.map((asset) => asset.uri),
+    },
+    signal,
+  )
+  return {
+    output: `微信公众号草稿已创建: ${draft.title}（media_id: ${draft.mediaId}）`,
+    artifactPath: draft.mediaId,
+  }
+}
+
+type RoutineNodeDependencies = {
+  routine: Routine
+  runContext: RunContext
+  channels: Channel[]
+  session: AgentSession
+  markTimeout: () => void
+}
+
+function createRoutineNodeRegistry(
+  dependencies: RoutineNodeDependencies,
+): WorkflowNodeRegistry<RoutineNodeMap, WorkflowNodeContext> {
+  const { routine, runContext, channels, session, markTimeout } = dependencies
+  return new WorkflowNodeRegistry<RoutineNodeMap, WorkflowNodeContext>()
+    .register({
+      type: 'folder-input',
+      ...routineNodeSchemas('folder-input'),
+      presentation: { label: '素材文件夹', kind: 'source' },
+      execute: (step) => runFolderInputStep(routine, step, runContext),
+    })
+    .register({
+      type: 'imagegen',
+      ...routineNodeSchemas('imagegen'),
+      presentation: { label: '生成图片', kind: 'transform' },
+      execute: (step, context) => runImagegenStep(step, runContext, context.signal),
+    })
+    .register({
+      type: 'app-icon',
+      ...routineNodeSchemas('app-icon'),
+      presentation: { label: '应用图标', kind: 'sink' },
+      execute: (step, context) => runAppIconStep(routine, step, runContext, context.signal),
+    })
+    .register({
+      type: 'model3d',
+      ...routineNodeSchemas('model3d'),
+      presentation: { label: '生成 3D', kind: 'transform' },
+      execute: (step, context) => runModel3dStep(step, runContext, context.signal),
+    })
+    .register({
+      type: 'dressup',
+      ...routineNodeSchemas('dressup'),
+      presentation: { label: '换装视频', kind: 'transform' },
+      execute: (step, context) => runDressupStep(routine, step, runContext, context.signal),
+    })
+    .register({
+      type: 'notify',
+      ...routineNodeSchemas('notify'),
+      presentation: { label: '发送通知', kind: 'side-effect' },
+      execute: (step, context) => runNotifyStep(routine, step, runContext, channels, context.signal),
+    })
+    .register({
+      type: 'review',
+      ...routineNodeSchemas('review'),
+      presentation: { label: '人工审核', kind: 'wait' },
+      execute: async (step, context) => {
+        context.waiting('human-review')
+        const product = await runReviewStep(routine, step, runContext, context.signal)
+        context.resumed('human-review')
+        return product
+      },
+    })
+    .register({
+      type: 'export',
+      ...routineNodeSchemas('export'),
+      presentation: { label: '导出文件', kind: 'sink' },
+      execute: (step, context) => runExportStep(routine, step, runContext, context.signal),
+    })
+    .register({
+      type: 'feishu-doc',
+      ...routineNodeSchemas('feishu-doc'),
+      presentation: { label: '飞书文档', kind: 'side-effect' },
+      execute: (step, context) => runFeishuDocStep(routine, step, runContext, channels, context.signal),
+    })
+    .register({
+      type: 'wechat-draft',
+      ...routineNodeSchemas('wechat-draft'),
+      presentation: { label: '微信草稿', kind: 'side-effect' },
+      execute: (step, context) => runWechatDraftStep(routine, step, runContext, channels, context.signal),
+    })
+    .register({
+      type: 'agent',
+      ...routineNodeSchemas('agent'),
+      presentation: { label: 'Agent', kind: 'transform' },
+      execute: (step, context) => runAgentStep(routine, step, runContext, session, markTimeout, context.signal),
+    })
 }
 
 async function executeRoutine(
   store: Store,
   routine: Routine,
   triggerSource: 'manual' | 'schedule',
+  execution: RoutineExecutionContext,
 ): Promise<void> {
-  const startedAt = Date.now()
+  const { signal, runId, startedAt } = execution
   let status: RoutineRun['status'] = 'ok'
   let timedOut = false
   let errorMsg: string | undefined
@@ -791,12 +1035,17 @@ async function executeRoutine(
     broadcast('routines:stepProgress', progress)
   }
 
-  const session: AgentSession = { client: null }
+  const session: AgentSession = { client: null, startupCleanup: null }
+  activeRunForceCleanups.set(runId, async () => {
+    cancelPendingReviews(routine.id, '工作流取消宽限期已到，运行已强制关闭')
+    if (session.client) await session.client.forceDispose()
+    else await session.startupCleanup?.()
+  })
   const channels = loadChannels()
   // 每步推送目标:开了 pushEachStep 就用兜底通知那个渠道(或第一个非本地渠道)
   const pushChannel = routine.pushEachStep
     ? (channels.find((c) => c.id === routine.notifyChannelId && c.type !== 'wechat-official') ??
-        channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official'))
+      channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official'))
     : undefined
   const triggeredAt = new Date()
   const ctx: RunContext = {
@@ -805,6 +1054,36 @@ async function executeRoutine(
     triggerStamp: pathStamp(triggeredAt),
     products: new Map(),
   }
+  const journal = (type: WorkflowRunEventType, stepId: string | null, payload: Record<string, unknown>): void => {
+    routineDatabase?.appendWorkflowRunEvent({
+      runId,
+      workflowId: routine.id,
+      type,
+      stepId,
+      payload,
+    })
+  }
+  journal('run.started', null, {
+    routineName: routine.name,
+    triggerSource,
+    workspacePath: routine.workspacePath,
+    stepCount: routine.steps.length,
+  })
+
+  const nodes = createRoutineNodeRegistry({
+    routine,
+    runContext: ctx,
+    channels,
+    session,
+    markTimeout: () => {
+      timedOut = true
+    },
+  })
+  const cancelRun = (): void => {
+    cancelPendingReviews(routine.id, '工作流已取消')
+    void session.client?.cancel('workflow cancelled').catch(() => {})
+  }
+  signal.addEventListener('abort', cancelRun, { once: true })
 
   try {
     if (!existsSync(routine.workspacePath)) {
@@ -812,33 +1091,30 @@ async function executeRoutine(
     }
     try {
       for (const [index, step] of routine.steps.entries()) {
+        throwIfWorkflowCancelled(signal)
         const stepStartedAt = Date.now()
         stepProgress(index, 'running')
+        journal('step.started', step.id, {
+          position: index,
+          name: step.name,
+          type: step.type,
+          inputRefs: {
+            previousStep: ctx.prev ? (routine.steps[index - 1]?.id ?? null) : null,
+          },
+        })
         try {
-          const product: StepProduct =
-            step.type === 'folder-input'
-              ? runFolderInputStep(routine, step, ctx)
-              : step.type === 'imagegen'
-              ? await runImagegenStep(step, ctx)
-              : step.type === 'app-icon'
-              ? await runAppIconStep(routine, step, ctx)
-              : step.type === 'model3d'
-              ? await runModel3dStep(step, ctx)
-              : step.type === 'dressup'
-              ? await runDressupStep(routine, step, ctx)
-              : step.type === 'notify'
-                ? await runNotifyStep(routine, step, ctx, channels)
-                : step.type === 'review'
-                  ? await runReviewStep(routine, step, ctx)
-                : step.type === 'export'
-                  ? await runExportStep(routine, step, ctx)
-                  : step.type === 'feishu-doc'
-                    ? await runFeishuDocStep(routine, step, ctx, channels)
-                    : step.type === 'wechat-draft'
-                      ? await runWechatDraftStep(routine, step, ctx, channels)
-                    : await runAgentStep(routine, step, ctx, session, () => {
-                        timedOut = true
-                      })
+          const product = await nodes.execute(step.type, step as RoutineNodeMap[RoutineStepType]['input'], {
+            signal,
+            waiting: (reason) => {
+              execution.waiting()
+              journal('run.waiting', step.id, { reason })
+            },
+            resumed: (reason) => {
+              execution.resumed()
+              journal('run.running', step.id, { resumedBy: reason })
+            },
+          })
+          throwIfWorkflowCancelled(signal)
           ctx.products.set(step.name, product)
           ctx.prev = product
           stepResults[index] = {
@@ -851,14 +1127,25 @@ async function executeRoutine(
             durationMs: Date.now() - stepStartedAt,
           }
           stepProgress(index, 'ok')
+          journal('step.completed', step.id, {
+            position: index,
+            durationMs: Date.now() - stepStartedAt,
+            outputSummary: product.output.slice(0, 4000),
+            artifactPath: product.artifactPath ?? null,
+            imageUrl: product.imageUrl ?? null,
+          })
           // 每步推送:跑完就把这步产出推到飞书(替代 App 内小预览)
           if (pushChannel && step.type !== 'notify') {
-            void sendToChannel(pushChannel, {
-              title: `${routine.name} · ${index + 1}. ${step.name}`,
-              status: 'info',
-              markdown: product.output.slice(0, 3000),
-              ...(product.imageUrl ? { imageUrls: [product.imageUrl] } : {}),
-            }).catch((err) =>
+            void sendToChannel(
+              pushChannel,
+              {
+                title: `${routine.name} · ${index + 1}. ${step.name}`,
+                status: 'info',
+                markdown: product.output.slice(0, 3000),
+                ...(product.imageUrl ? { imageUrls: [product.imageUrl] } : {}),
+              },
+              signal,
+            ).catch((err) =>
               appendAppLog('warn', 'routines.pushStep', 'Per-step push failed', {
                 routine: routine.name,
                 step: step.name,
@@ -867,8 +1154,10 @@ async function executeRoutine(
             )
           }
         } catch (err) {
+          if (forcedClosedRunIds.has(runId)) throw err
           if (err instanceof Error && err.message === '人工审核超时，工作流已停止') timedOut = true
-          const failStatus = timedOut ? ('timeout' as const) : ('error' as const)
+          const cancelled = signal.aborted || err instanceof WorkflowCancelledError
+          const failStatus = cancelled ? ('cancelled' as const) : timedOut ? ('timeout' as const) : ('error' as const)
           stepResults[index] = {
             id: step.id,
             name: step.name,
@@ -877,19 +1166,33 @@ async function executeRoutine(
             durationMs: Date.now() - stepStartedAt,
           }
           stepProgress(index, failStatus)
+          journal('step.failed', step.id, {
+            position: index,
+            status: failStatus,
+            durationMs: Date.now() - stepStartedAt,
+            error: err instanceof Error ? err.message : String(err),
+          })
           throw err
         }
       }
     } finally {
-      await session.client?.stop().catch(() => {})
+      signal.removeEventListener('abort', cancelRun)
+      await session.client?.dispose().catch(() => {})
     }
   } catch (err) {
-    status = timedOut ? 'timeout' : 'error'
+    status = signal.aborted || err instanceof WorkflowCancelledError ? 'cancelled' : timedOut ? 'timeout' : 'error'
     errorMsg = err instanceof Error ? err.message : String(err)
     appendAppLog('error', 'routines.run', 'Routine run failed', {
       routine: routine.name,
       error: normalizeError(err),
     })
+  }
+
+  // A cancellation grace timeout already wrote the one authoritative terminal projection.
+  // The fenced cleanup may arrive much later and must not emit a second terminal or touch live UI state.
+  if (forcedClosedRunIds.delete(runId)) {
+    activeRunForceCleanups.delete(runId)
+    return
   }
 
   const summary =
@@ -900,7 +1203,7 @@ async function executeRoutine(
       .slice(0, 4000) || '(no output)'
 
   const run: RoutineRun = {
-    id: randomUUID(),
+    id: runId,
     routineId: routine.id,
     routineName: routine.name,
     startedAt,
@@ -911,9 +1214,26 @@ async function executeRoutine(
     steps: stepResults,
     error: errorMsg,
   }
+  journal(
+    status === 'ok'
+      ? 'run.completed'
+      : status === 'timeout'
+        ? 'run.timed_out'
+        : status === 'cancelled'
+          ? 'run.cancelled'
+          : 'run.failed',
+    null,
+    {
+      status,
+      durationMs: run.endedAt - run.startedAt,
+      summary,
+      error: errorMsg ?? null,
+    },
+  )
   liveStepProgress.delete(routine.id)
   store.runs = [run, ...store.runs].slice(0, MAX_RUNS_KEPT)
   saveStore(store)
+  routineDatabase?.pruneWorkflowRunEvents(MAX_RUNS_KEPT)
 
   // 兜底汇总通知(notify 节点之外的保险):本地弹窗 + 默认渠道一张卡片
   const shouldNotify = routine.notify === 'always' || (routine.notify === 'error' && status !== 'ok')
@@ -928,7 +1248,8 @@ async function executeRoutine(
       channels.find((c) => c.id === routine.notifyChannelId && c.type !== 'wechat-official') ??
       channels.find((c) => c.type !== 'local' && c.type !== 'wechat-official')
     if (target) {
-      const statusText = status === 'ok' ? '完成' : status === 'timeout' ? '超时' : '失败'
+      const statusText =
+        status === 'ok' ? '完成' : status === 'timeout' ? '超时' : status === 'cancelled' ? '已取消' : '失败'
       const durationS = Math.max(1, Math.round((run.endedAt - run.startedAt) / 1000))
       const stepsMd = stepResults
         .map((s, i) => {
@@ -940,7 +1261,7 @@ async function executeRoutine(
       const imageUrls = stepResults.map((s) => s.imageUrl).filter((u): u is string => !!u)
       sendToChannel(target, {
         title: `${status === 'ok' ? '✅' : '❌'} 例行任务${statusText}:${routine.name}`,
-        status,
+        status: status === 'cancelled' ? 'error' : status,
         markdown: `**工作区** ${routine.workspacePath} · **耗时** ${durationS}s${errorMsg ? `\n**错误** ${errorMsg.slice(0, 500)}` : ''}\n---\n${stepsMd}`,
         ...(imageUrls.length ? { imageUrls } : {}),
       }).catch((err) => {
@@ -959,6 +1280,10 @@ async function executeRoutine(
       win.flashFrame(true)
       win.once('focus', () => win.flashFrame(false))
     }
+  }
+  activeRunForceCleanups.delete(runId)
+  if (status === 'error' || status === 'timeout') {
+    throw new WorkflowExecutionFailedError(status, errorMsg ?? `工作流${status === 'timeout' ? '超时' : '失败'}`)
   }
 }
 
@@ -991,11 +1316,7 @@ export function registerRoutines(): void {
   } catch (error) {
     routineDatabase?.close()
     routineDatabase = null
-    if (
-      !(error instanceof RoutineSqliteUnavailableError) ||
-      databaseAlreadyExists ||
-      existsSync(databasePath())
-    ) {
+    if (!(error instanceof RoutineSqliteUnavailableError) || databaseAlreadyExists || existsSync(databasePath())) {
       throw error
     }
     configureRoutineCloudOutbox(jsonDeleteOutbox)
@@ -1007,20 +1328,71 @@ export function registerRoutines(): void {
     )
   }
   const store = loadStore()
+  const interrupted = routineDatabase?.interruptOpenWorkflowRuns() ?? []
+  const recovered = routineDatabase?.recoverMissingWorkflowRuns(store.runs) ?? []
+  if (recovered.length > 0 && routineDatabase) {
+    store.runs = [...recovered, ...store.runs]
+      .sort((left, right) => right.startedAt - left.startedAt)
+      .slice(0, MAX_RUNS_KEPT)
+    routineDatabase.save(store)
+    routineDatabase.pruneWorkflowRunEvents(MAX_RUNS_KEPT)
+    appendAppLog('warn', 'routines.recovery', 'Recovered workflow runs from the durable journal', {
+      runIds: recovered.map((run) => run.id),
+      interruptedRunIds: interrupted.map((event) => event.runId),
+    })
+  }
   queueRoutineCloudSync(store)
+  const runTriggerSources = new Map<string, 'manual' | 'schedule'>()
   const scheduler = new RoutineScheduler<Routine>({
     maxConcurrent: MAX_CONCURRENT,
     clock: () => new Date(),
-    execute: (routine) => {
+    execute: (routine, execution) => {
       const triggerSource = triggerSources.get(routine.id) ?? 'schedule'
       triggerSources.delete(routine.id)
-      return executeRoutine(store, routine, triggerSource)
+      runTriggerSources.set(execution.runId, triggerSource)
+      return executeRoutine(store, routine, triggerSource, execution).finally(() => {
+        activeRunForceCleanups.delete(execution.runId)
+      })
+    },
+    forceCleanup: async (_routine, runId) => {
+      // Fence the run before killing resources: process exit can settle execute() in the next microtask.
+      forcedClosedRunIds.add(runId)
+      await activeRunForceCleanups.get(runId)?.()
+      activeRunForceCleanups.delete(runId)
     },
     onExecutionError: (error, routine) => {
       appendAppLog('error', 'routines.scheduler', 'Routine execution escaped the scheduler', {
         routine: routine.name,
         error: normalizeError(error),
       })
+    },
+    onCancellationTimeout: (routine, runId, startedAt) => {
+      cancelPendingReviews(routine.id, '工作流取消宽限期已到，运行已强制关闭')
+      const terminal = routineDatabase?.cancelOpenWorkflowRun(runId, routine.id)
+      const recovered = terminal
+        ? routineDatabase?.recoverMissingWorkflowRuns(store.runs).find((run) => run.id === runId)
+        : undefined
+      const run: RoutineRun = recovered ?? {
+        id: runId,
+        routineId: routine.id,
+        routineName: routine.name,
+        startedAt,
+        endedAt: Date.now(),
+        status: 'cancelled',
+        triggerSource: runTriggerSources.get(runId) ?? 'schedule',
+        summary: '工作流未在取消宽限期内退出，已强制关闭。',
+        error: 'workflow cancellation grace period expired',
+      }
+      liveStepProgress.delete(routine.id)
+      store.runs = [run, ...store.runs.filter((candidate) => candidate.id !== run.id)].slice(0, MAX_RUNS_KEPT)
+      saveStore(store)
+      routineDatabase?.pruneWorkflowRunEvents(MAX_RUNS_KEPT)
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('routines:runFinished', run)
+      }
+    },
+    onExecutionSettled: (_routine, runId) => {
+      runTriggerSources.delete(runId)
     },
   })
 
@@ -1031,44 +1403,41 @@ export function registerRoutines(): void {
     if (scheduled.length > 0) saveStore(store)
   }, 30_000)
 
-  ipcMain.handle('routines:list', () => ({ routines: store.routines, runs: store.runs }))
+  ipcMain.handle('routines:list', () => ({
+    routines: store.routines,
+    runs: store.runs,
+  }))
 
-  ipcMain.handle(
-    'routines:save',
-    (_e, payload: unknown) => {
-      // 只放行已知字段:原来直接 Object.assign(existing, routine),
-      // renderer 传什么并什么,未知字段会被持久化并同步上云
-      const routine = parseRoutineSave(payload)
-      const steps = (routine.steps as Partial<RoutineStep>[]).map(normalizeStep).filter(stepIsComplete)
-      if (steps.length === 0) throw new Error('Workflow needs at least one complete step')
-      const existing = routine.id ? store.routines.find((r) => r.id === routine.id) : undefined
-      if (existing) {
-        Object.assign(existing, { ...routine, steps })
-      } else {
-        const fresh = {
-          enabled: true,
-          createdAt: Date.now(),
-          ...routine,
-          steps,
-          id: randomUUID(),
-        } as Routine
-        // 新任务从下一个周期开始:把"当前已过的槽"标记为已消费,
-        // 否则 23:00 建一个"每天 09:00"的任务会立刻触发一次
-        fresh.lastSlotKey = dueSlotKey(fresh, new Date()) ?? undefined
-        if (fresh.schedule.type === 'interval') fresh.lastRunAt = Date.now()
-        store.routines.push(fresh)
-      }
-      saveStore(store)
-      return store.routines
-    },
-  )
+  ipcMain.handle('routines:save', (_e, payload: unknown) => {
+    // 只放行已知字段:原来直接 Object.assign(existing, routine),
+    // renderer 传什么并什么,未知字段会被持久化并同步上云
+    const routine = parseRoutineSave(payload)
+    const steps = (routine.steps as Partial<RoutineStep>[]).map(normalizeStep).filter(stepIsComplete)
+    if (steps.length === 0) throw new Error('Workflow needs at least one complete step')
+    const existing = routine.id ? store.routines.find((r) => r.id === routine.id) : undefined
+    if (existing) {
+      Object.assign(existing, { ...routine, steps })
+    } else {
+      const fresh = {
+        enabled: true,
+        createdAt: Date.now(),
+        ...routine,
+        steps,
+        id: randomUUID(),
+      } as Routine
+      // 新任务从下一个周期开始:把"当前已过的槽"标记为已消费,
+      // 否则 23:00 建一个"每天 09:00"的任务会立刻触发一次
+      fresh.lastSlotKey = dueSlotKey(fresh, new Date()) ?? undefined
+      if (fresh.schedule.type === 'interval') fresh.lastRunAt = Date.now()
+      store.routines.push(fresh)
+    }
+    saveStore(store)
+    return store.routines
+  })
 
   ipcMain.handle('routines:delete', (_e, id: string) => {
     const nextRoutines = store.routines.filter((routine) => routine.id !== id)
-    saveStore(
-      { ...store, routines: nextRoutines },
-      { origin: routineSyncOrigin(), workflowId: id },
-    )
+    saveStore({ ...store, routines: nextRoutines }, { origin: routineSyncOrigin(), workflowId: id })
     store.routines = nextRoutines
     scheduler.cancel(id)
     cancelPendingReviews(id, '工作流已删除，审核请求已取消')
@@ -1113,9 +1482,16 @@ export function registerRoutines(): void {
 
   ipcMain.handle('routines:runNow', (_e, id: string) => runRoutineNow(id))
 
+  ipcMain.handle('routines:cancel', (_e, id: string) => {
+    const cancelled = scheduler.cancel(id)
+    if (cancelled) cancelPendingReviews(id, '工作流已取消')
+    return cancelled ? { ok: true as const } : { error: '任务未在执行或排队' }
+  })
+
   ipcMain.handle('routines:state', () => ({
     ...scheduler.getState(),
     progress: [...liveStepProgress.values()].flatMap((steps) => [...steps.values()]),
+    pendingReviews: [...pendingReviews.values()].map((pending) => pending.request),
   }))
 
   ipcMain.handle(

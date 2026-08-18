@@ -36,7 +36,9 @@ describe('app icon output naming', () => {
 
   it('keeps the stamp usable as a path segment on Windows too', () => {
     const start = routines.indexOf('function pathStamp')
-    const stamp = routines.slice(start, routines.indexOf('\n}\n', start))
+    // Windows 检出会把行尾变成 CRLF,写死 '\n}\n' 找不到函数结尾就会一路切到文件末。
+    const end = routines.slice(start).search(/\r?\n\}\r?\n/)
+    const stamp = routines.slice(start, start + end)
     // 本地化时间串带冒号和斜杠,进不了 Windows 路径;只允许数字和一个连字符
     expect(stamp).toContain('getFullYear()')
     expect(stamp).not.toContain('toLocaleString')

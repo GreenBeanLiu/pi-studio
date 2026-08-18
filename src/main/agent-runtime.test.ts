@@ -11,6 +11,7 @@ const started = {
   status: 'started',
   cwd: 'D:/ws',
   restoredSession: false,
+  sessionId: 'session-a',
   sessionFile: 'D:/sessions/a.jsonl',
   sandbox: 'wsl',
 } as const
@@ -26,10 +27,10 @@ describe('agent runtime state machine', () => {
       sandbox: 'wsl',
       sessionFile: 'D:/sessions/a.jsonl',
     })
-    t.agentEvent({ type: 'agent_start' })
+    t.agentEvent('session-a', { type: 'agent_start' })
     expect(t.snapshot().phase).toBe('running')
     expect(t.snapshot().activeRun).not.toBeNull()
-    t.agentEvent({ type: 'agent_settled' })
+    t.agentEvent('session-a', { type: 'agent_settled' })
     expect(t.snapshot()).toMatchObject({ phase: 'idle', activeRun: null })
   })
 
@@ -37,7 +38,7 @@ describe('agent runtime state machine', () => {
     const { t, seen } = tracked()
     t.starting('D:/ws')
     t.status(started)
-    t.agentEvent({ type: 'agent_start' })
+    t.agentEvent('session-a', { type: 'agent_start' })
     expect(seen.map((s) => s.revision)).toEqual([1, 2, 3])
   })
 
@@ -45,17 +46,17 @@ describe('agent runtime state machine', () => {
     const { t } = tracked()
     t.starting('D:/ws')
     t.status(started)
-    t.agentEvent({ type: 'agent_start' })
+    t.agentEvent('session-a', { type: 'agent_start' })
     // non-blocking request must not flip the phase
-    t.agentEvent({ type: 'extension_ui_request', method: 'setStatus' })
+    t.agentEvent('session-a', { type: 'extension_ui_request', method: 'setStatus' })
     expect(t.snapshot().phase).toBe('running')
-    t.agentEvent({ type: 'extension_ui_request', method: 'confirm' })
+    t.agentEvent('session-a', { type: 'extension_ui_request', method: 'confirm' })
     expect(t.snapshot().phase).toBe('awaiting_approval')
-    t.uiResponded()
+    t.uiResponded('session-a')
     expect(t.snapshot().phase).toBe('running')
     // settled while awaiting approval still lands on idle
-    t.agentEvent({ type: 'extension_ui_request', method: 'confirm' })
-    t.agentEvent({ type: 'agent_settled' })
+    t.agentEvent('session-a', { type: 'extension_ui_request', method: 'confirm' })
+    t.agentEvent('session-a', { type: 'agent_settled' })
     expect(t.snapshot().phase).toBe('idle')
   })
 
@@ -107,11 +108,62 @@ describe('agent runtime state machine', () => {
     const { t } = tracked()
     t.starting('D:/ws')
     t.status(started)
-    t.agentEvent({ type: 'agent_start' })
+    t.agentEvent('session-a', { type: 'agent_start' })
     const a = t.snapshot()
     a.phase = 'closed'
     if (a.activeRun) a.activeRun.startedAt = 0
     expect(t.snapshot().phase).toBe('running')
     expect(t.snapshot().activeRun?.startedAt).not.toBe(0)
+  })
+
+  it('projects the selected session runtime and ignores events from another session', () => {
+    const { t } = tracked()
+    t.starting('D:/ws')
+    t.status(started)
+    t.agentEvent('session-a', { type: 'agent_start' })
+
+    t.activate('session-b', 'D:/sessions/b.jsonl', 'idle', null)
+    t.agentEvent('session-a', { type: 'agent_settled' })
+
+    expect(t.snapshot()).toMatchObject({
+      sessionId: 'session-b',
+      sessionFile: 'D:/sessions/b.jsonl',
+      phase: 'idle',
+      activeRun: null,
+    })
+
+    t.activate('session-a', 'D:/sessions/a.jsonl', 'running', 123)
+    expect(t.snapshot()).toMatchObject({
+      sessionId: 'session-a',
+      phase: 'running',
+      activeRun: { startedAt: 123 },
+    })
+  })
+
+  it('does not overwrite a restored live approval when startup status arrives', () => {
+    const { t } = tracked()
+    t.starting('D:/ws')
+    t.activate('session-a', 'D:/sessions/a.jsonl', 'awaiting_approval', 123)
+
+    t.status(started)
+
+    expect(t.snapshot()).toMatchObject({
+      sessionId: 'session-a',
+      phase: 'awaiting_approval',
+      activeRun: { startedAt: 123 },
+    })
+  })
+
+  it('stays awaiting approval until every blocking UI request is answered', () => {
+    const { t } = tracked()
+    t.starting('D:/ws')
+    t.status(started)
+    t.agentEvent('session-a', { type: 'agent_start' })
+    t.agentEvent('session-a', { type: 'extension_ui_request', method: 'editor' })
+
+    t.uiResponded('session-a', 1)
+    expect(t.snapshot().phase).toBe('awaiting_approval')
+    t.uiResponded('session-a', 0)
+    expect(t.snapshot().phase).toBe('running')
   })
 })

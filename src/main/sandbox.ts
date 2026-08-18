@@ -5,7 +5,11 @@ import { join, dirname, posix, win32 } from 'path'
 import { resolvePiCliPath } from './pi-client'
 import { agentConfigDir } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
-import { detectWslSandboxDistro, prepareWslSandboxLaunch } from './sandbox-wsl'
+import {
+  detectWslSandboxDistro,
+  prepareWslSandboxLaunch,
+  windowsToWslPath,
+} from './sandbox-wsl'
 
 /**
  * 沙箱模式:在 Docker 容器里隔离运行 pi(见 docs/sandbox-mode-plan.md)。
@@ -57,6 +61,17 @@ export function sandboxSessionPathToContainer(
   if (targetKey !== rootKey && !targetKey.startsWith(`${rootKey}${path.sep}`)) return sessionPath
   const relativePath = path.relative(hostRoot, target).split(path.sep).join('/')
   return relativePath ? `${SANDBOX_AGENT_DIR}/${relativePath}` : SANDBOX_AGENT_DIR
+}
+
+/** Convert an app-owned agent-config path into the selected sandbox namespace. */
+export function sandboxAgentPath(
+  hostPath: string,
+  mode: 'wsl' | 'docker',
+  hostAgentDir?: string,
+): string {
+  return mode === 'wsl'
+    ? windowsToWslPath(hostPath)
+    : sandboxSessionPathToContainer(hostPath, hostAgentDir ?? agentConfigDir())
 }
 
 /** 跑一个命令,拿 stdout(不抛异常);超时/不存在都算失败。 */
