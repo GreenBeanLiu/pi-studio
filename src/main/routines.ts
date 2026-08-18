@@ -566,7 +566,17 @@ async function runAgentStep(
     })
   }
   const denied = describeDeniedApprovals(denials)
-  const text = latestAssistantText(messages) || '(no text output)'
+  const text = latestAssistantText(messages)
+  // 没有文本产出时不能塞个占位符糊弄过去。它会被当成这一步的正文往下走:审核节点
+  // 拿它当 preview(于是弹出一屏没法审的东西),{{steps.X.output}} 也会把它原样插进
+  // 后面的提示词 —— 表情包那条就是这样把「(no text output)」当策划案喂给生图的。
+  // 审批被拒是例外:那段说明本身就是这一步的产出,留着。
+  if (!text) {
+    if (!denied) {
+      throw new Error(`「${step.name}」没有产出任何文本,后面的步骤拿不到可用的输入`)
+    }
+    return { output: denied.slice(0, MAX_STEP_OUTPUT_CHARS) }
+  }
   return {
     output: (denied ? `${text}\n\n${denied}` : text).slice(0, MAX_STEP_OUTPUT_CHARS),
   }
