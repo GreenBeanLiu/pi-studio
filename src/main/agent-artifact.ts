@@ -51,8 +51,17 @@ function jsonOf(value: unknown): string {
 function shortSummary(raw: string): string {
   const compact = raw.replace(/\r\n?/g, '\n')
   return compact.length > SUMMARY_LIMIT
-    ? `${compact.slice(0, SUMMARY_LIMIT)}\n… (完整输出见 artifact)`
+    ? `${compact.slice(0, SUMMARY_LIMIT)}\n…`
     : compact
+}
+
+function artifactReference(
+  preview: string,
+  id: string,
+  bytes: number,
+  sha256: string,
+): string {
+  return `${preview}\n\n[pi-studio artifact]\nid: ${id}\nbytes: ${bytes}\nsha256: ${sha256}\nUse read_agent_artifact with this id to retrieve more output in bounded chunks.`
 }
 
 function safeKey(value: string): string {
@@ -95,14 +104,15 @@ export class AgentArtifactStore {
     const bytes = Buffer.byteLength(raw, 'utf8')
     const sha256 = createHash('sha256').update(raw).digest('hex')
     const createdAt = new Date().toISOString()
+    const id = randomUUID()
     const artifact: ToolOutputArtifact = {
       version: ARTIFACT_VERSION,
-      id: randomUUID(),
+      id,
       toolName,
       bytes,
       sha256,
       createdAt,
-      summary: shortSummary(textOf(value) || raw),
+      summary: artifactReference(shortSummary(textOf(value) || raw), id, bytes, sha256),
     }
     const dir = this.directory(workspace)
     mkdirSync(dir, { recursive: true })
@@ -114,16 +124,7 @@ export class AgentArtifactStore {
   }
 
   read(workspace: string, id: string): { artifact: ToolOutputArtifact; raw: string } {
-    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('Invalid artifact id')
-    const file = join(this.directory(workspace), `${basename(id)}.json`)
-    if (!existsSync(file)) throw new Error('Artifact not found')
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { artifact?: ToolOutputArtifact; raw?: unknown }
-    if (!parsed.artifact || typeof parsed.raw !== 'string' || parsed.artifact.id !== id) {
-      throw new Error('Artifact metadata is invalid')
-    }
-    const digest = createHash('sha256').update(parsed.raw).digest('hex')
-    if (digest !== parsed.artifact.sha256) throw new Error('Artifact integrity check failed')
-    return { artifact: parsed.artifact, raw: parsed.raw }
+    return readAgentArtifactFile(this.root, safeKey(workspace), id)
   }
 
   /** Replace only oversized completed tool results. Small results retain Pi's original shape. */
@@ -174,6 +175,26 @@ export class AgentArtifactStore {
 
 export function artifactWorkspaceKey(workspace: string): string {
   return safeKey(workspace)
+}
+
+export function readAgentArtifactFile(
+  root: string,
+  workspaceKey: string,
+  id: string,
+): { artifact: ToolOutputArtifact; raw: string } {
+  if (!/^[0-9a-f]{32}$/i.test(workspaceKey)) throw new Error('Invalid artifact workspace key')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw new Error('Invalid artifact id')
+  }
+  const file = join(root, workspaceKey, `${basename(id)}.json`)
+  if (!existsSync(file)) throw new Error('Artifact not found')
+  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { artifact?: ToolOutputArtifact; raw?: unknown }
+  if (!parsed.artifact || typeof parsed.raw !== 'string' || parsed.artifact.id !== id) {
+    throw new Error('Artifact metadata is invalid')
+  }
+  const digest = createHash('sha256').update(parsed.raw).digest('hex')
+  if (digest !== parsed.artifact.sha256) throw new Error('Artifact integrity check failed')
+  return { artifact: parsed.artifact, raw: parsed.raw }
 }
 
 /** Normalize a runtime event without mutating the Pi event object. */
