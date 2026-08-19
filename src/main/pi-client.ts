@@ -1,9 +1,10 @@
-import { resolve, win32 } from 'path'
+import { join, resolve, win32 } from 'path'
+import { randomUUID } from 'crypto'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
-import { saveSelectedModelRoute } from './settings'
-import { sandboxSessionPathToContainer, sandboxSessionPathToHost } from './sandbox'
+import { agentConfigDir, saveSelectedModelRoute } from './settings'
+import { sandboxAgentPath, sandboxSessionPathToContainer, sandboxSessionPathToHost } from './sandbox'
 import type { CompiledRunProfile } from './run-profile'
 import type {
   ExecutionSecuritySnapshot,
@@ -24,6 +25,8 @@ import {
   type AgentJob,
   type AgentJobSnapshot,
 } from './agent-job-registry'
+import { AgentLoopGuard, type LoopDetection } from './agent-loop-guard'
+import { AgentStatusTracker } from './agent-status'
 
 export { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath, resolvePiCliPath } from './pi-process'
 
@@ -126,6 +129,9 @@ type AgentEntry = {
   outstandingUi: Map<string, BlockingExtensionUiMethod>
   /** 子代理跑在 pi 进程内部,宿主只能按工具调用观察它们的血缘与终态。 */
   subagentJobs: Map<string, AgentJob>
+  statusFile: string
+  status: AgentStatusTracker
+  loopGuard: AgentLoopGuard
 }
 
 type LaunchContext = CompiledRunProfile & { sandboxSessionPaths: boolean }
@@ -210,7 +216,17 @@ class PiClientManager {
     const launch = this.launch
     if (!launch) throw new Error(NO_WORKSPACE_ERROR)
 
-    const client = await startPiRuntime(launch)
+    const statusFile = join(agentConfigDir(), 'runtime-status', `${randomUUID()}.json`)
+    const runtimeLaunch = {
+      ...launch,
+      env: {
+        ...launch.env,
+        PI_STUDIO_STATUS_FILE: launch.sandboxSessionPaths
+          ? sandboxAgentPath(statusFile, launch.sandboxMode!)
+          : statusFile,
+      },
+    }
+    const client = await startPiRuntime(runtimeLaunch)
     const job = this.jobs.register({
       kind: 'chat',
       owner: { sessionFile: restoreSessionFile },
@@ -230,7 +246,11 @@ class PiClientManager {
       pendingUi: [],
       outstandingUi: new Map(),
       subagentJobs: new Map(),
+      statusFile,
+      status: new AgentStatusTracker(statusFile, launch.cwd),
+      loopGuard: new AgentLoopGuard(),
     }
+    entry.status.write()
     this.attachAgentProcessLoggers(entry)
     entry.unsubscribe = client.onEvent((event) => this.handleEvent(entry, event as PiRuntimeEvent))
     this.entries.push(entry)
@@ -268,6 +288,8 @@ class PiClientManager {
 
   private handleEvent(entry: AgentEntry, event: PiRuntimeEvent): void {
     entry.job.observeRun(nextRunActive(entry.job.isRunActive(), event.type))
+    entry.status.observe(event)
+    const loop = entry.loopGuard.observe(event)
     if (event.type === 'agent_settled') entry.outstandingUi.clear()
     if (
       event.type === 'extension_ui_request' &&
@@ -278,8 +300,9 @@ class PiClientManager {
     this.trackSubagentLineage(entry, event)
     if (entry === this.active) {
       this.onEvent?.(event, this.context(entry))
-      return
     }
+    if (loop) this.handleLoopDetection(entry, loop)
+    if (entry === this.active) return
     // 后台会话:审批之类的请求先攒着,切回前台再补发;其余只上报运行状态给侧栏
     if ((event as { type?: string }).type === 'extension_ui_request') entry.pendingUi.push(event)
     this.onActivity?.({ sessionFile: entry.sessionFile, running: entry.job.isRunActive() })
@@ -289,6 +312,24 @@ class PiClientManager {
    * 子代理在 pi 子进程里跑,宿主拿不到它的进程,但"谁派生了谁"是重启后仍要解释的事实。
    * 按工具调用登记成没有资源的逻辑 job,血缘和终态就都能观察到,而不是只剩一张卡片。
    */
+  private handleLoopDetection(entry: AgentEntry, detection: LoopDetection): void {
+    const message = `检测到 Agent 可能陷入循环：${detection.message}。已停止本轮运行，请检查失败原因后继续。`
+    entry.status.loopDetected(message)
+    appendAppLog('warn', 'agent.loop-guard', message, {
+      cwd: this.workspacePath,
+      sessionFile: entry.sessionFile,
+      kind: detection.kind,
+      signature: detection.signature,
+      count: detection.count,
+    })
+    if (entry === this.active) {
+      this.onEvent?.({ type: 'run_failed', scope: 'prompt', message }, this.context(entry))
+    }
+    void entry.client.cancel('loop guard detected repeated tool activity').catch((error) => {
+      appendAppLog('warn', 'agent.loop-guard', 'Failed to abort repeated agent run', normalizeError(error))
+    })
+  }
+
   private trackSubagentLineage(entry: AgentEntry, event: PiRuntimeEvent): void {
     if (event.type === 'tool_execution_start' && event.toolName === 'subagent') {
       entry.subagentJobs.set(
@@ -345,6 +386,7 @@ class PiClientManager {
     this.entries = this.entries.filter((candidate) => candidate !== entry)
     if (this.active === entry) this.active = null
     for (const [, job] of entry.subagentJobs) void job.finish(reason)
+    entry.status.dispose()
     entry.subagentJobs.clear()
     // finish() 只在资源真的放掉之后才回 done:优雅停不住就强杀,强杀也失败就留成
     // orphaned 并带上证据,而不是当作已回收。
@@ -524,6 +566,7 @@ class PiClientManager {
   private forgetEntry(entry: AgentEntry): void {
     entry.unsubscribe?.()
     entry.unsubscribe = null
+    entry.status.dispose()
     this.entries = this.entries.filter((candidate) => candidate !== entry)
     if (this.active === entry) this.active = null
     // 进程已经没了,子代理的逻辑 job 不能继续挂在 running 上。
@@ -532,15 +575,21 @@ class PiClientManager {
   }
 
   prompt(message: string, images?: ImageContent[]): Promise<void> {
-    return this.require().send(message, images)
+    const entry = this.requireEntry()
+    entry.status.prompt(message)
+    return entry.client.send(message, images)
   }
 
   steer(message: string, images?: ImageContent[]): Promise<void> {
-    return this.require().steer(message, images)
+    const entry = this.requireEntry()
+    entry.status.prompt(message)
+    return entry.client.steer(message, images)
   }
 
   followUp(message: string, images?: ImageContent[]): Promise<void> {
-    return this.require().followUp(message, images)
+    const entry = this.requireEntry()
+    entry.status.prompt(message)
+    return entry.client.followUp(message, images)
   }
 
   abort(): Promise<void> {
@@ -558,6 +607,7 @@ class PiClientManager {
     const entry = this.requireEntry()
     entry.client.respondExtensionUi(response)
     entry.outstandingUi.delete(response.id)
+    entry.status.approvalResolved()
     return { remainingBlockingRequests: entry.outstandingUi.size }
   }
 

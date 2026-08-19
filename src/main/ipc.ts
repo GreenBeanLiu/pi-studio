@@ -9,6 +9,7 @@ import {
   type SessionExportFormat,
 } from './pi-sessions'
 import { syncWebSearchExtension } from './web-search-extension'
+import { syncAgentStatusExtension } from './agent-status-extension-sync'
 import {
   loadSettings,
   saveSettings,
@@ -412,6 +413,7 @@ export function registerIpcHandlers(): void {
     syncWebSearchExtension(!!settings.tavilyApiKey)
     removeLegacySecurityGuardExtension()
     syncWorkspaceMemoryExtension()
+    syncAgentStatusExtension()
     let subagentsAvailable = false
     try {
       syncSubagentWorkflow(settings.subagentsEnabled)
