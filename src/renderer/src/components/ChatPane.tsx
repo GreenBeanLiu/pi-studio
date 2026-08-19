@@ -518,6 +518,15 @@ const useStyles = createStyles(({ token, css }) => ({
     white-space: nowrap;
   `,
 
+  agentStatusTask: css`
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: ${token.colorText};
+  `,
+
   agentStatusAlert: css`
     color: ${token.colorError};
     font-weight: 600;
@@ -1220,6 +1229,13 @@ function formatClock(value: string): string {
 function formatDuration(startedAt: string, endedAt?: string): string {
   const end = endedAt ? new Date(endedAt).getTime() : Date.now()
   const total = Math.max(0, Math.round((end - new Date(startedAt).getTime()) / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
+}
+
+function formatAgentElapsed(startedAt: number, now: number): string {
+  const total = Math.max(0, Math.round((now - startedAt) / 1000))
   const minutes = Math.floor(total / 60)
   const seconds = total % 60
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
@@ -2073,6 +2089,17 @@ export default function ChatPane({
       el.scrollTop = el.scrollHeight
     }
   }, [messages, autoFollow])
+
+  const [statusNow, setStatusNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!agentStatus || (agentStatus.phase !== 'running' && agentStatus.phase !== 'awaiting_approval') || !agentStatus.startedAt) {
+      return
+    }
+    setStatusNow(Date.now())
+    const timer = setInterval(() => setStatusNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [agentStatus?.phase, agentStatus?.startedAt])
 
   // Elapsed-time ticker for the run status strip
   useEffect(() => {
@@ -3252,6 +3279,16 @@ export default function ChatPane({
         <div className={styles.inputAreaInner}>
           {agentStatus && (
             <div className={styles.agentStatusPanel}>
+              {agentStatus.prompt && (
+                <div className={styles.agentStatusTask} title={agentStatus.prompt}>
+                  {agentStatus.prompt}
+                </div>
+              )}
+              {agentStatus.startedAt && (
+                <span className={styles.agentStatusItem}>
+                  用时 {formatAgentElapsed(agentStatus.startedAt, statusNow)}
+                </span>
+              )}
               <span className={styles.agentStatusItem}>
                 {agentStatus.phase === 'awaiting_approval'
                   ? '等待审批'
@@ -3269,6 +3306,11 @@ export default function ChatPane({
               </span>
               {agentStatus.failures > 0 && (
                 <span className={styles.agentStatusItem}>失败 {agentStatus.failures}</span>
+              )}
+              {agentStatus.repeatedFailures > 0 && (
+                <span className={cx(styles.agentStatusItem, styles.agentStatusAlert)}>
+                  重复失败 {agentStatus.repeatedFailures}
+                </span>
               )}
               {agentStatus.activeApprovals > 0 && (
                 <span className={styles.agentStatusItem}>审批 {agentStatus.activeApprovals}</span>

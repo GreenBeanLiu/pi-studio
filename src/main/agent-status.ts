@@ -119,11 +119,17 @@ export class AgentStatusTracker {
         const todo = todoCounts(event.args)
         if (todo) this.snap.todo = todo
       }
-    } else if (event.type === 'tool_execution_end' && event.isError) {
-      this.snap.failures += 1
-      const signature = `${event.toolName ?? 'tool'}:${textOf(event.result).trim().slice(0, 500)}`
-      if (signature === this.lastFailureSignature) this.snap.repeatedFailures += 1
-      else this.lastFailureSignature = signature
+    } else if (event.type === 'tool_execution_end') {
+      if (event.isError) {
+        this.snap.failures += 1
+        const signature = `${event.toolName ?? 'tool'}:${textOf(event.result).trim().slice(0, 500)}`
+        if (signature === this.lastFailureSignature) this.snap.repeatedFailures += 1
+        else this.lastFailureSignature = signature
+      } else {
+        // Repeated failures are consecutive by definition. A successful tool
+        // result breaks the sequence even if the same error appears later.
+        this.lastFailureSignature = null
+      }
     }
     this.write()
   }

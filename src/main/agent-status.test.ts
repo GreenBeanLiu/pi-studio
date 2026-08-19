@@ -48,15 +48,17 @@ describe('agent status tracker', () => {
     tracker.dispose()
   })
 
-  it('counts consecutive identical failures', () => {
+  it('counts only consecutive identical failures', () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-failures-'))
     const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')
     tracker.observe({ type: 'agent_start' })
     for (let i = 0; i < 2; i += 1) {
       tracker.observe({ type: 'tool_execution_end', toolName: 'bash', isError: true, result: { error: 'failed' } })
     }
-    const snapshot = JSON.parse(readFileSync(join(root, 'status.json'), 'utf8'))
-    expect(snapshot).toMatchObject({ failures: 2, repeatedFailures: 1 })
+    expect(tracker.snapshot()).toMatchObject({ failures: 2, repeatedFailures: 1 })
+    tracker.observe({ type: 'tool_execution_end', toolName: 'read', isError: false, result: { content: 'ok' } })
+    tracker.observe({ type: 'tool_execution_end', toolName: 'bash', isError: true, result: { error: 'failed' } })
+    expect(tracker.snapshot()).toMatchObject({ failures: 3, repeatedFailures: 1 })
     tracker.dispose()
   })
 })
