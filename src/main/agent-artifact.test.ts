@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -81,6 +81,51 @@ describe('AgentArtifactStore', () => {
     )
   })
 
+  it('prunes oldest artifacts by count while preserving a protected artifact', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
+    roots.push(root)
+    const store = new AgentArtifactStore(root, {
+      maxFiles: 2,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxAgeMs: Number.MAX_SAFE_INTEGER,
+      pruneIntervalMs: 60_000,
+    })
+    const ids = ['first', 'second', 'third'].map((call) =>
+      store.write('workspace', call, 'bash', `${call}-${'x'.repeat(100)}`).id,
+    )
+    const dir = join(root, artifactWorkspaceKey('workspace'))
+    ids.forEach((id, index) => {
+      const timestamp = new Date(Date.now() - (ids.length - index) * 1_000)
+      utimesSync(join(dir, `${id}.json`), timestamp, timestamp)
+    })
+    store.prune('workspace', new Set([ids[2]]))
+    const remaining = readdirSync(dir).map((file) => file.replace(/\.json$/, ''))
+    expect(remaining).toHaveLength(2)
+    expect(remaining).not.toContain(ids[0])
+    expect(remaining).toContain(ids[2])
+  })
+
+  it('prunes expired artifacts and reports reclaimed bytes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
+    roots.push(root)
+    const store = new AgentArtifactStore(root, {
+      maxFiles: 10,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxAgeMs: 1_000,
+      pruneIntervalMs: 60_000,
+    })
+    const old = store.write('workspace', 'old', 'read', 'old evidence')
+    const oldFile = join(root, artifactWorkspaceKey('workspace'), `${old.id}.json`)
+    const expired = new Date(Date.now() - 2_000)
+    utimesSync(oldFile, expired, expired)
+    const current = store.write('workspace', 'current', 'read', 'current evidence')
+    const result = store.prune('workspace', new Set([current.id]))
+    expect(result.removedFiles).toBe(1)
+    expect(result.removedBytes).toBeGreaterThan(0)
+    expect(() => store.read('workspace', old.id)).toThrow('Artifact not found')
+    expect(store.read('workspace', current.id).raw).toBe('current evidence')
+  })
+
   it('rejects artifact content that no longer matches its digest', () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
     roots.push(root)
@@ -97,6 +142,18 @@ describe('AgentArtifactStore', () => {
     stored.raw = `${stored.raw}tampered`
     writeFileSync(file, JSON.stringify(stored), 'utf8')
     expect(() => store.read('workspace', id)).toThrow('Artifact integrity check failed')
+  })
+
+  it('rejects artifact metadata with an incorrect byte count', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
+    roots.push(root)
+    const store = new AgentArtifactStore(root)
+    const artifact = store.write('workspace', 'call', 'read', 'evidence')
+    const file = join(root, artifactWorkspaceKey('workspace'), `${artifact.id}.json`)
+    const stored = JSON.parse(readFileSync(file, 'utf8')) as { artifact: { bytes: number } }
+    stored.artifact.bytes += 1
+    writeFileSync(file, JSON.stringify(stored), 'utf8')
+    expect(() => store.read('workspace', artifact.id)).toThrow('Artifact metadata is invalid')
   })
 
   it('isolates artifacts by workspace and session and rejects invalid ids', () => {

@@ -814,7 +814,9 @@ export type StudioAgentEvent = {
 export type ToolOutputArtifact = {
   version: 1
   id: string
+  toolCallId?: string
   toolName: string
+  source?: 'runtime-tool-result' | 'session-projection'
   bytes: number
   sha256: string
   createdAt: string

@@ -20,11 +20,17 @@ function readAgentArtifact(id: string): { artifact: Record<string, unknown>; raw
   if (!/^[0-9a-f]{32}$/i.test(workspaceKey)) throw new Error('Invalid artifact workspace key')
   const file = path.join(root, workspaceKey, id + '.json')
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { artifact?: Record<string, unknown>; raw?: unknown }
-  if (!parsed.artifact || typeof parsed.raw !== 'string' || parsed.artifact.id !== id) {
+  if (!parsed.artifact || typeof parsed.raw !== 'string' || parsed.artifact.id !== id ||
+    parsed.artifact.version !== 1 || typeof parsed.artifact.toolName !== 'string' ||
+    typeof parsed.artifact.createdAt !== 'string' || !Number.isFinite(Date.parse(parsed.artifact.createdAt)) ||
+    typeof parsed.artifact.bytes !== 'number' || !Number.isSafeInteger(parsed.artifact.bytes) || parsed.artifact.bytes < 0 ||
+    typeof parsed.artifact.summary !== 'string' || typeof parsed.artifact.sha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/i.test(parsed.artifact.sha256)) {
     throw new Error('Artifact metadata is invalid')
   }
   const sha256 = crypto.createHash('sha256').update(parsed.raw).digest('hex')
   if (sha256 !== parsed.artifact.sha256) throw new Error('Artifact integrity check failed')
+  if (Buffer.byteLength(parsed.raw, 'utf8') !== parsed.artifact.bytes) throw new Error('Artifact metadata is invalid')
   return { artifact: parsed.artifact, raw: parsed.raw }
 }
 
@@ -46,9 +52,8 @@ function artifactJson(value: unknown): string {
 }
 
 function stableArtifactId(toolCallId: string, toolName: string, sha256: string): string {
-  const identity = toolCallId === 'unknown' ? toolCallId + '\\u0000' + sha256 : toolCallId
   const bytes = crypto.createHash('sha256')
-    .update(identity).update('\\u0000').update(toolName).digest()
+    .update(toolCallId).update('\\u0000').update(toolName).update('\\u0000').update(sha256).digest()
   bytes[6] = (bytes[6] & 15) | 80
   bytes[8] = (bytes[8] & 63) | 128
   const hex = bytes.toString('hex')

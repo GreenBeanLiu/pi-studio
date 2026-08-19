@@ -1,19 +1,39 @@
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { basename, join } from 'path'
 
 export const TOOL_ARTIFACT_THRESHOLD = 32 * 1024
 const SUMMARY_LIMIT = 2_000
 const ARTIFACT_VERSION = 1
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export const DEFAULT_ARTIFACT_RETENTION = {
+  maxFiles: 500,
+  maxBytes: 512 * 1024 * 1024,
+  maxAgeMs: 30 * 24 * 60 * 60 * 1_000,
+  pruneIntervalMs: 60_000,
+} as const
+
+export type ArtifactRetentionPolicy = {
+  maxFiles: number
+  maxBytes: number
+  maxAgeMs: number
+  pruneIntervalMs: number
+}
+
+export type ArtifactPruneResult = {
+  removedFiles: number
+  removedBytes: number
+}
 
 export type ArtifactSource = 'runtime-tool-result' | 'session-projection'
 
 export type ToolOutputArtifact = {
   version: 1
   id: string
-  toolCallId: string
+  toolCallId?: string
   toolName: string
-  source: ArtifactSource
+  source?: ArtifactSource
   bytes: number
   sha256: string
   createdAt: string
@@ -72,13 +92,14 @@ function safeKey(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32)
 }
 
-/** Create a UUID-shaped call identity so repeated projection loads reuse one file. */
+/** Create a UUID-shaped content identity so repeated projection loads reuse one file. */
 export function stableArtifactId(toolCallId: string, toolName: string, sha256: string): string {
-  const identity = toolCallId === 'unknown' ? `${toolCallId}\u0000${sha256}` : toolCallId
   const bytes = createHash('sha256')
-    .update(identity)
+    .update(toolCallId)
     .update('\u0000')
     .update(toolName)
+    .update('\u0000')
+    .update(sha256)
     .digest()
   bytes[6] = (bytes[6] & 0x0f) | 0x50
   bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -86,10 +107,24 @@ export function stableArtifactId(toolCallId: string, toolName: string, sha256: s
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
 }
 
+function artifactMetadataOf(value: unknown): ToolOutputArtifact | null {
+  if (!value || typeof value !== 'object') return null
+  const artifact = value as Partial<ToolOutputArtifact>
+  return artifact.version === 1 &&
+    typeof artifact.id === 'string' && UUID_PATTERN.test(artifact.id) &&
+    typeof artifact.toolName === 'string' && artifact.toolName.length > 0 &&
+    typeof artifact.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(artifact.sha256) &&
+    typeof artifact.bytes === 'number' && Number.isSafeInteger(artifact.bytes) && artifact.bytes >= 0 &&
+    typeof artifact.createdAt === 'string' && Number.isFinite(Date.parse(artifact.createdAt)) &&
+    typeof artifact.summary === 'string'
+    ? (value as ToolOutputArtifact)
+    : null
+}
+
 function envelopeOf(value: unknown): ArtifactEnvelope | null {
   if (!value || typeof value !== 'object') return null
   const candidate = value as Partial<ArtifactEnvelope>
-  return candidate.__piStudioArtifact === true && candidate.artifact?.version === 1
+  return candidate.__piStudioArtifact === true && artifactMetadataOf(candidate.artifact)
     ? (value as ArtifactEnvelope)
     : null
 }
@@ -101,7 +136,7 @@ function artifactInResult(value: unknown): ToolOutputArtifact | null {
   if (direct) return direct
   if (item.details && typeof item.details === 'object') {
     const nested = (item.details as { artifact?: unknown }).artifact
-    return envelopeOf(nested)?.artifact ?? null
+    return envelopeOf(nested)?.artifact ?? artifactMetadataOf(nested)
   }
   return null
 }
@@ -115,13 +150,63 @@ function artifactInResult(value: unknown): ToolOutputArtifact | null {
  * loader alike.
  */
 export class AgentArtifactStore {
-  constructor(private readonly root: string) {}
+  private readonly retention: ArtifactRetentionPolicy
+  private readonly lastPrunedAt = new Map<string, number>()
+
+  constructor(
+    private readonly root: string,
+    retention: Partial<ArtifactRetentionPolicy> = {},
+  ) {
+    this.retention = { ...DEFAULT_ARTIFACT_RETENTION, ...retention }
+  }
 
   private directory(workspace: string): string {
-    // Artifact files are scoped to a workspace. The random id plus integrity
-    // check prevents cross-session guessing, while this also lets the Pi
+    // Artifact files are scoped to a workspace. The stable opaque id plus
+    // integrity check prevents cross-workspace access, while this also lets the Pi
     // subprocess write through the same directory when it runs in a sandbox.
     return join(this.root, safeKey(workspace))
+  }
+
+  prune(workspace: string, protectedIds: ReadonlySet<string> = new Set()): ArtifactPruneResult {
+    const dir = this.directory(workspace)
+    if (!existsSync(dir)) return { removedFiles: 0, removedBytes: 0 }
+    const now = Date.now()
+    const files = readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && UUID_PATTERN.test(entry.name.replace(/\.json$/i, '')) && /\.json$/i.test(entry.name))
+      .map((entry) => {
+        const path = join(dir, entry.name)
+        const stat = statSync(path)
+        return { id: entry.name.slice(0, -5), path, bytes: stat.size, modifiedAt: stat.mtimeMs }
+      })
+      .sort((left, right) => left.modifiedAt - right.modifiedAt)
+    let totalFiles = files.length
+    let totalBytes = files.reduce((sum, file) => sum + file.bytes, 0)
+    let removedFiles = 0
+    let removedBytes = 0
+    for (const file of files) {
+      if (protectedIds.has(file.id)) continue
+      const expired = now - file.modifiedAt > this.retention.maxAgeMs
+      const overLimit = totalFiles > this.retention.maxFiles || totalBytes > this.retention.maxBytes
+      if (!expired && !overLimit) continue
+      rmSync(file.path, { force: true })
+      totalFiles -= 1
+      totalBytes -= file.bytes
+      removedFiles += 1
+      removedBytes += file.bytes
+    }
+    return { removedFiles, removedBytes }
+  }
+
+  private pruneBestEffort(workspace: string, protectedId?: string): void {
+    const now = Date.now()
+    const last = this.lastPrunedAt.get(workspace) ?? 0
+    if (now - last < this.retention.pruneIntervalMs) return
+    this.lastPrunedAt.set(workspace, now)
+    try {
+      this.prune(workspace, protectedId ? new Set([protectedId]) : undefined)
+    } catch {
+      // Retention is observability housekeeping and must not block the agent.
+    }
   }
 
   write(
@@ -139,7 +224,10 @@ export class AgentArtifactStore {
     mkdirSync(dir, { recursive: true })
     try {
       const existing = readAgentArtifactFile(this.root, safeKey(workspace), id)
-      if (existing.artifact.sha256 === sha256) return existing.artifact
+      if (existing.artifact.sha256 === sha256) {
+        this.pruneBestEffort(workspace, existing.artifact.id)
+        return existing.artifact
+      }
     } catch {
       // Missing or corrupt entries are safely replaced below.
     }
@@ -155,6 +243,7 @@ export class AgentArtifactStore {
       summary: artifactReference(shortSummary(textOf(value) || raw), id, bytes, sha256),
     }
     writeFileSync(join(dir, `${artifact.id}.json`), JSON.stringify({ artifact, raw }), 'utf8')
+    this.pruneBestEffort(workspace, artifact.id)
     // The metadata is intentionally returned, not the host path. Host paths
     // must never enter model context or be exposed to a sandboxed agent.
     return artifact
@@ -172,7 +261,11 @@ export class AgentArtifactStore {
     result: unknown,
     source: ArtifactSource = 'runtime-tool-result',
   ): unknown {
-    if (artifactInResult(result)) return result
+    const existingArtifact = artifactInResult(result)
+    if (existingArtifact) {
+      this.pruneBestEffort(workspace, existingArtifact.id)
+      return result
+    }
     const bytes = Buffer.byteLength(jsonOf(result), 'utf8')
     if (bytes <= TOOL_ARTIFACT_THRESHOLD) return result
     const artifact = this.write(workspace, toolCallId, toolName, result, source)
@@ -221,18 +314,22 @@ export function readAgentArtifactFile(
   id: string,
 ): { artifact: ToolOutputArtifact; raw: string } {
   if (!/^[0-9a-f]{32}$/i.test(workspaceKey)) throw new Error('Invalid artifact workspace key')
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+  if (!UUID_PATTERN.test(id)) {
     throw new Error('Invalid artifact id')
   }
   const file = join(root, workspaceKey, `${basename(id)}.json`)
   if (!existsSync(file)) throw new Error('Artifact not found')
   const parsed = JSON.parse(readFileSync(file, 'utf8')) as { artifact?: ToolOutputArtifact; raw?: unknown }
-  if (!parsed.artifact || typeof parsed.raw !== 'string' || parsed.artifact.id !== id) {
+  const artifact = artifactMetadataOf(parsed.artifact)
+  if (!artifact || typeof parsed.raw !== 'string' || artifact.id !== id) {
     throw new Error('Artifact metadata is invalid')
   }
   const digest = createHash('sha256').update(parsed.raw).digest('hex')
-  if (digest !== parsed.artifact.sha256) throw new Error('Artifact integrity check failed')
-  return { artifact: parsed.artifact, raw: parsed.raw }
+  if (digest !== artifact.sha256) throw new Error('Artifact integrity check failed')
+  if (Buffer.byteLength(parsed.raw, 'utf8') !== artifact.bytes) {
+    throw new Error('Artifact metadata is invalid')
+  }
+  return { artifact, raw: parsed.raw }
 }
 
 /** Normalize a runtime event without mutating the Pi event object. */
