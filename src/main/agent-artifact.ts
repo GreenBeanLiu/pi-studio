@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto'
+import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { basename, join } from 'path'
 
@@ -6,10 +6,14 @@ export const TOOL_ARTIFACT_THRESHOLD = 32 * 1024
 const SUMMARY_LIMIT = 2_000
 const ARTIFACT_VERSION = 1
 
+export type ArtifactSource = 'runtime-tool-result' | 'session-projection'
+
 export type ToolOutputArtifact = {
   version: 1
   id: string
+  toolCallId: string
   toolName: string
+  source: ArtifactSource
   bytes: number
   sha256: string
   createdAt: string
@@ -68,12 +72,38 @@ function safeKey(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32)
 }
 
+/** Create a UUID-shaped call identity so repeated projection loads reuse one file. */
+export function stableArtifactId(toolCallId: string, toolName: string, sha256: string): string {
+  const identity = toolCallId === 'unknown' ? `${toolCallId}\u0000${sha256}` : toolCallId
+  const bytes = createHash('sha256')
+    .update(identity)
+    .update('\u0000')
+    .update(toolName)
+    .digest()
+  bytes[6] = (bytes[6] & 0x0f) | 0x50
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+}
+
 function envelopeOf(value: unknown): ArtifactEnvelope | null {
   if (!value || typeof value !== 'object') return null
   const candidate = value as Partial<ArtifactEnvelope>
   return candidate.__piStudioArtifact === true && candidate.artifact?.version === 1
     ? (value as ArtifactEnvelope)
     : null
+}
+
+function artifactInResult(value: unknown): ToolOutputArtifact | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as ToolResultLike & { artifact?: unknown }
+  const direct = envelopeOf(item.artifact)?.artifact
+  if (direct) return direct
+  if (item.details && typeof item.details === 'object') {
+    const nested = (item.details as { artifact?: unknown }).artifact
+    return envelopeOf(nested)?.artifact ?? null
+  }
+  return null
 }
 
 /**
@@ -99,27 +129,34 @@ export class AgentArtifactStore {
     toolCallId: string,
     toolName: string,
     value: unknown,
+    source: ArtifactSource = 'runtime-tool-result',
   ): ToolOutputArtifact {
     const raw = jsonOf(value)
     const bytes = Buffer.byteLength(raw, 'utf8')
     const sha256 = createHash('sha256').update(raw).digest('hex')
-    const createdAt = new Date().toISOString()
-    const id = randomUUID()
+    const id = stableArtifactId(toolCallId, toolName, sha256)
+    const dir = this.directory(workspace)
+    mkdirSync(dir, { recursive: true })
+    try {
+      const existing = readAgentArtifactFile(this.root, safeKey(workspace), id)
+      if (existing.artifact.sha256 === sha256) return existing.artifact
+    } catch {
+      // Missing or corrupt entries are safely replaced below.
+    }
     const artifact: ToolOutputArtifact = {
       version: ARTIFACT_VERSION,
       id,
+      toolCallId,
       toolName,
+      source,
       bytes,
       sha256,
-      createdAt,
+      createdAt: new Date().toISOString(),
       summary: artifactReference(shortSummary(textOf(value) || raw), id, bytes, sha256),
     }
-    const dir = this.directory(workspace)
-    mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, `${artifact.id}.json`), JSON.stringify({ artifact, raw }), 'utf8')
     // The metadata is intentionally returned, not the host path. Host paths
     // must never enter model context or be exposed to a sandboxed agent.
-    void toolCallId
     return artifact
   }
 
@@ -133,12 +170,12 @@ export class AgentArtifactStore {
     toolCallId: string,
     toolName: string,
     result: unknown,
+    source: ArtifactSource = 'runtime-tool-result',
   ): unknown {
-    const existing = envelopeOf(result)
-    if (existing) return result
+    if (artifactInResult(result)) return result
     const bytes = Buffer.byteLength(jsonOf(result), 'utf8')
     if (bytes <= TOOL_ARTIFACT_THRESHOLD) return result
-    const artifact = this.write(workspace, toolCallId, toolName, result)
+    const artifact = this.write(workspace, toolCallId, toolName, result, source)
     const original = result && typeof result === 'object' ? (result as ToolResultLike) : null
     return {
       ...(original ?? {}),
@@ -168,6 +205,7 @@ export class AgentArtifactStore {
         String(item.toolCallId ?? 'unknown'),
         String(item.toolName ?? 'tool'),
         item,
+        'session-projection',
       )
     })
   }
@@ -212,6 +250,7 @@ export function materializeToolEvent(
         String(event.toolCallId ?? 'unknown'),
         String(event.toolName ?? 'tool'),
         event.result,
+        'runtime-tool-result',
       ),
     }
   } catch {

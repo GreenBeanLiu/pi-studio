@@ -6,6 +6,7 @@ import {
   AgentArtifactStore,
   TOOL_ARTIFACT_THRESHOLD,
   artifactWorkspaceKey,
+  stableArtifactId,
 } from './agent-artifact'
 
 const roots: string[] = []
@@ -30,7 +31,7 @@ describe('AgentArtifactStore', () => {
     const result = { content: [{ type: 'text', text: rawText }], details: { source: 'test' } }
     const compact = store.materializeResult('workspace', 'call', 'bash', result) as {
       content: Array<{ text: string }>
-      details: { artifact: { id: string; bytes: number } }
+      details: { artifact: { id: string; bytes: number; toolCallId: string; source: string } }
       artifact: { __piStudioArtifact: boolean }
     }
 
@@ -40,8 +41,44 @@ describe('AgentArtifactStore', () => {
     expect(compact.content[0].text).toContain('sha256: ')
     expect(compact.content[0].text).toContain('Use read_agent_artifact')
     expect(compact.artifact.__piStudioArtifact).toBe(true)
+    expect(compact.details.artifact.toolCallId).toBe('call')
+    expect(compact.details.artifact.source).toBe('runtime-tool-result')
     const restored = store.read('workspace', compact.details.artifact.id)
     expect(restored.raw).toContain(rawText)
+  })
+
+  it('does not wrap an artifact returned by the runtime hook a second time', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
+    roots.push(root)
+    const store = new AgentArtifactStore(root)
+    const value = 'x'.repeat(TOOL_ARTIFACT_THRESHOLD + 1)
+    const first = store.materializeResult('workspace', 'call', 'bash', value) as {
+      details: { artifact: { id: string } }
+      artifact: { __piStudioArtifact: true }
+    }
+    const runtimeResult = {
+      content: [{ type: 'text', text: first.details.artifact.id }],
+      details: { artifact: first.details.artifact },
+    }
+    expect(store.materializeResult('workspace', 'call', 'bash', runtimeResult)).toBe(runtimeResult)
+  })
+
+  it('reuses a stable artifact for repeated materialization', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
+    roots.push(root)
+    const store = new AgentArtifactStore(root)
+    const value = 'x'.repeat(TOOL_ARTIFACT_THRESHOLD + 1)
+    const first = store.materializeResult('workspace', 'call', 'bash', value) as {
+      details: { artifact: { id: string; createdAt: string } }
+    }
+    const second = store.materializeResult('workspace', 'call', 'bash', value) as {
+      details: { artifact: { id: string; createdAt: string } }
+    }
+    expect(second.details.artifact.id).toBe(first.details.artifact.id)
+    expect(second.details.artifact.createdAt).toBe(first.details.artifact.createdAt)
+    expect(stableArtifactId('call', 'bash', 'digest')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    )
   })
 
   it('rejects artifact content that no longer matches its digest', () => {

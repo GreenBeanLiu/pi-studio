@@ -45,6 +45,16 @@ function artifactJson(value: unknown): string {
   try { return JSON.stringify(value, null, 2) || String(value) } catch { return String(value) }
 }
 
+function stableArtifactId(toolCallId: string, toolName: string, sha256: string): string {
+  const identity = toolCallId === 'unknown' ? toolCallId + '\\u0000' + sha256 : toolCallId
+  const bytes = crypto.createHash('sha256')
+    .update(identity).update('\\u0000').update(toolName).digest()
+  bytes[6] = (bytes[6] & 15) | 80
+  bytes[8] = (bytes[8] & 63) | 128
+  const hex = bytes.toString('hex')
+  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20, 32)
+}
+
 function installToolArtifactHook(pi: ExtensionAPI): void {
   pi.on('tool_result', (event) => {
     if (event.toolName === 'read_agent_artifact') return undefined
@@ -56,10 +66,11 @@ function installToolArtifactHook(pi: ExtensionAPI): void {
     try {
       const bytes = Buffer.byteLength(raw, 'utf8')
       const sha256 = crypto.createHash('sha256').update(raw).digest('hex')
-      const id = crypto.randomUUID()
+      const toolCallId = event.toolCallId || 'unknown'
+      const id = stableArtifactId(toolCallId, event.toolName, sha256)
       const preview = (artifactText(event.content) || raw).slice(0, ARTIFACT_SUMMARY_LIMIT) + '\\n…'
       const summary = preview + '\\n\\n[pi-studio artifact]\\nid: ' + id + '\\nbytes: ' + bytes + '\\nsha256: ' + sha256 + '\\nUse read_agent_artifact with this id to retrieve more output in bounded chunks.'
-      const artifact = { version: 1, id, toolName: event.toolName, bytes, sha256, createdAt: new Date().toISOString(), summary }
+      const artifact = { version: 1, id, toolCallId, toolName: event.toolName, source: 'runtime-tool-result', bytes, sha256, createdAt: new Date().toISOString(), summary }
       const dir = path.join(root, workspaceKey)
       fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify({ artifact, raw }), 'utf8')
