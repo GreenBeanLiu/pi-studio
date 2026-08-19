@@ -63,6 +63,17 @@ export type RemoteControlSnapshot = {
 }
 
 /** 每隔这么久发一次 ping;超过 DEAD 还没收到任何消息就当这条链路已经死了。 */
+/**
+ * 中转端只用这两个关闭码,它们的共同点是「原样重连一定还是同样的结果」:
+ *  - 4401 装机 token 不被认可(配对失效/被吊销);
+ *  - 4409 同一装机的新 host 顶掉了旧的 —— 立刻抢回去就变成两台机器每 5 秒互踢。
+ * 过去 close 处理器把 code 整个丢掉,一律 5 秒重连,于是日志里刷出上千条
+ * "Remote control host connected",而心跳看门狗一次都不会触发(连接不是静默,是被
+ * 对端主动关的),排查时极难看出真正原因。
+ */
+const CLOSE_UNAUTHORIZED = 4401
+const CLOSE_SUPERSEDED = 4409
+
 const HEARTBEAT_INTERVAL_MS = 25_000
 const HEARTBEAT_DEAD_MS = 60_000
 
@@ -367,6 +378,13 @@ class RemoteControlManager {
     this.heartbeatTimer = null
   }
 
+  /** 返回不为空就表示这次关闭重连也没用,附带给用户看的原因。 */
+  private describeFatalClose(code?: number): string {
+    if (code === CLOSE_UNAUTHORIZED) return '配对已失效,请在手机上重新配对'
+    if (code === CLOSE_SUPERSEDED) return '另一台电脑已用同一装机接管了远程控制'
+    return ''
+  }
+
   private scheduleReconnect(): void {
     if (!this.enabled || this.reconnectTimer) return
     this.reconnectTimer = setTimeout(() => {
@@ -397,14 +415,23 @@ class RemoteControlManager {
         this.lastInboundAt = Date.now()
         void this.onControllerMessage(typeof e.data === 'string' ? e.data : String(e.data))
       })
-      ws.addEventListener('close', () => {
+      ws.addEventListener('close', (event) => {
         if (this.ws === ws) this.ws = null
         this.stopHeartbeat()
         this.controllers = 0
-        if (this.enabled) {
-          this.setStatus('connecting')
-          this.scheduleReconnect()
+        const code = (event as { code?: number }).code
+        const reason = (event as { reason?: string }).reason
+        appendAppLog('info', 'remote', 'Remote control host disconnected', { code, reason })
+        if (!this.enabled) return
+        const fatal = this.describeFatalClose(code)
+        if (fatal) {
+          // 重连解决不了,继续每 5 秒撞上去只会刷屏并把对面也拖下水
+          appendAppLog('warn', 'remote', 'Remote control stopped reconnecting', { code, reason: fatal })
+          this.setStatus('error', fatal)
+          return
         }
+        this.setStatus('connecting')
+        this.scheduleReconnect()
       })
       ws.addEventListener('error', () => {
         // close 事件会跟着触发重连;这里只记录

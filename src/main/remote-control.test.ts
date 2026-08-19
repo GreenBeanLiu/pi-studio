@@ -51,7 +51,7 @@ vi.mock('./model-catalog', () => ({
 
 import { HOST_EVENT_CHANNELS, SUPPORTED_COMMANDS, remoteControl } from './remote-control'
 
-type Listener = (event: { data?: string }) => void
+type Listener = (event: { data?: string; code?: number; reason?: string }) => void
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = []
@@ -77,9 +77,14 @@ class FakeWebSocket {
 
   closed = false
 
-  close(): void {
+  close(code?: number): void {
     this.closed = true
-    this.emit('close')
+    this.emitClose(code)
+  }
+
+  /** 中转端主动关闭时会带码(4401/4409),桌面端要据此决定还要不要重连。 */
+  emitClose(code?: number, reason = ''): void {
+    for (const listener of this.listeners.get('close') ?? []) listener({ code, reason })
   }
 
   emit(type: string, data?: string): void {
@@ -733,5 +738,59 @@ describe('remote-control command protocol', () => {
       }),
     )
     expect(mocks.setModel).not.toHaveBeenCalled()
+  })
+})
+
+// 2026-08-19: 桌面日志里刷出 1298 条 "Remote control host connected",密集时每 5 秒
+// 一条。close 处理器过去把 code 整个丢掉,4401(配对失效)和 4409(被新 host 顶掉)
+// 都当成普通掉线无脑重连 —— 前者永远撞不开,后者会和另一台机器每 5 秒互踢。
+// 心跳看门狗对此完全无感:连接不是静默,是被对端主动关的。
+describe('remote-control reconnect policy', () => {
+  it('stops reconnecting when the relay rejects the installation token', async () => {
+    vi.useFakeTimers()
+    try {
+      const ws = await connect()
+      const before = FakeWebSocket.instances.length
+
+      ws.emitClose(4401)
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(FakeWebSocket.instances.length).toBe(before)
+      expect(remoteControl.snapshot().status).toBe('error')
+      expect(remoteControl.snapshot().lastError).toContain('重新配对')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not steal the room back after another host supersedes it', async () => {
+    vi.useFakeTimers()
+    try {
+      const ws = await connect()
+      const before = FakeWebSocket.instances.length
+
+      ws.emitClose(4409)
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(FakeWebSocket.instances.length).toBe(before)
+      expect(remoteControl.snapshot().lastError).toContain('接管')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still reconnects after an ordinary drop that carries no code', async () => {
+    vi.useFakeTimers()
+    try {
+      const ws = await connect()
+      const before = FakeWebSocket.instances.length
+
+      ws.emitClose(undefined)
+      await vi.advanceTimersByTimeAsync(6_000)
+
+      expect(FakeWebSocket.instances.length).toBe(before + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
