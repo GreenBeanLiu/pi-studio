@@ -26,7 +26,7 @@ import {
   type AgentJobSnapshot,
 } from './agent-job-registry'
 import { AgentLoopGuard, type LoopDetection } from './agent-loop-guard'
-import { AgentStatusTracker } from './agent-status'
+import { AgentStatusTracker, type AgentStatusSnapshot } from './agent-status'
 import { artifactWorkspaceKey } from './agent-artifact'
 
 export { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath, resolvePiCliPath } from './pi-process'
@@ -488,6 +488,10 @@ class PiClientManager {
 
   getRuntimeCapabilities() {
     return this.active?.client.capabilities ?? null
+  }
+
+  getAgentStatusSnapshot(): AgentStatusSnapshot | null {
+    return this.active?.status.snapshot() ?? null
   }
 
   getActiveApprovalIds(): ReadonlySet<string> {

@@ -147,8 +147,10 @@ export type DesktopApi = {
     onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
     onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
     getRuntimeSnapshot: () => Promise<AgentRuntimeSnapshot>
+    getAgentStatusSnapshot: () => Promise<AgentRunStatusSnapshot | null>
     getCapabilities: () => Promise<PiRuntimeCapabilities | null>
     onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => () => void
+    onAgentStatusSnapshot: (cb: (snapshot: AgentRunStatusSnapshot | null) => void) => () => void
     getSessionProjection: () => Promise<SessionProjectionSnapshot>
     getSessionChanges: (sessionId: string | null, afterSeq: number) => Promise<SessionProjectionChanges>
     onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => () => void
@@ -876,6 +878,21 @@ export type SessionProjectionSnapshot = {
   tools: Record<string, ToolExecutionProjection>
   approvals: ApprovalProjection[]
   updatedAt: string | null
+}
+
+export type AgentRunStatusSnapshot = {
+  version: 1
+  cwd: string
+  phase: 'idle' | 'running' | 'awaiting_approval' | 'stopped'
+  prompt: string | null
+  todo: { pending: number; inProgress: number; completed: number }
+  tools: Record<string, number>
+  failures: number
+  repeatedFailures: number
+  activeApprovals: number
+  startedAt: number | null
+  updatedAt: string
+  loopDetected: string | null
 }
 
 export type AgentStatusEvent =

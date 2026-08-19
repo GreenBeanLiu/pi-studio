@@ -37,6 +37,17 @@ describe('agent status tracker', () => {
     tracker.dispose()
   })
 
+  it('returns a detached snapshot for IPC consumers', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-snapshot-'))
+    const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')
+    tracker.observe({ type: 'tool_execution_start', toolName: 'read' })
+    const snapshot = tracker.snapshot()
+    snapshot.tools.read = 99
+    snapshot.todo.completed = 99
+    expect(tracker.snapshot()).toMatchObject({ tools: { read: 1 }, todo: { completed: 0 } })
+    tracker.dispose()
+  })
+
   it('counts consecutive identical failures', () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-failures-'))
     const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')

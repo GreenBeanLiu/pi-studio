@@ -95,6 +95,13 @@ function broadcastSessionProjection(): void {
   }
 }
 
+function broadcastAgentStatusSnapshot(): void {
+  const snapshot = piClientManager.getAgentStatusSnapshot()
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('agent:statusSnapshot', snapshot)
+  }
+}
+
 async function refreshSessionProjection(): Promise<ReturnType<SessionProjectionTracker['snapshot']>> {
   const workspacePath = piClientManager.getWorkspacePath()
   if (!workspacePath) {
@@ -471,6 +478,7 @@ export function registerIpcHandlers(): void {
             broadcastSessionProjection()
           }
           agentRuntime.agentEvent(context.sessionId, normalizedAgentEvent)
+          broadcastAgentStatusSnapshot()
           // Forward before any await: otherwise a session switch can make this old,
           // unscoped Pi event mutate the newly selected renderer conversation.
           if (win && !win.isDestroyed()) win.webContents.send('pi:event', normalizedAgentEvent)
@@ -491,6 +499,7 @@ export function registerIpcHandlers(): void {
               statusEvent.sessionId ?? statusEvent.sessionFile ?? `${statusEvent.cwd}:session`,
             )
             broadcastSessionProjection()
+            broadcastAgentStatusSnapshot()
             sendAgentStatus(win, statusEvent)
             return
           }
@@ -513,6 +522,7 @@ export function registerIpcHandlers(): void {
             context.runStartedAt,
           )
           selectActiveSessionProjection()
+          broadcastAgentStatusSnapshot()
           refreshSessionProjectionInBackground()
         },
       )
@@ -729,18 +739,21 @@ export function registerIpcHandlers(): void {
       }
     }
     try {
-      return await piClientManager.prompt(message, images)
+      await piClientManager.prompt(message, images)
+      broadcastAgentStatusSnapshot()
     } catch (err) {
       if (baselineCaptured && cwd) await sealRunChanges(cwd, 'prompt rejected')
       throw err
     }
   })
-  ipcMain.handle('pi:steer', (_e, message: string, images?: ImageContent[]) =>
-    piClientManager.steer(message, images),
-  )
-  ipcMain.handle('pi:followUp', (_e, message: string, images?: ImageContent[]) =>
-    piClientManager.followUp(message, images),
-  )
+  ipcMain.handle('pi:steer', async (_e, message: string, images?: ImageContent[]) => {
+    await piClientManager.steer(message, images)
+    broadcastAgentStatusSnapshot()
+  })
+  ipcMain.handle('pi:followUp', async (_e, message: string, images?: ImageContent[]) => {
+    await piClientManager.followUp(message, images)
+    broadcastAgentStatusSnapshot()
+  })
   ipcMain.handle('pi:abort', async () => {
     await piClientManager.abort()
     const identity = piClientManager.getActiveSessionIdentity()
@@ -751,6 +764,7 @@ export function registerIpcHandlers(): void {
     )
     persistApprovalAudits(identity.sessionFile, cancelled, 'cancelled approval outcome')
     if (cancelled.length > 0) broadcastSessionProjection()
+    broadcastAgentStatusSnapshot()
   })
   ipcMain.handle('pi:bash', (_e, command: string) => piClientManager.bash(command))
   ipcMain.handle(
@@ -774,17 +788,20 @@ export function registerIpcHandlers(): void {
         }
       }
       agentRuntime.uiResponded(identity.sessionId, remainingBlockingRequests)
+      broadcastAgentStatusSnapshot()
     },
   )
   ipcMain.handle('pi:newSession', async () => {
     const result = await piClientManager.newSession()
     if (!result.cancelled) {
       selectActiveSessionProjection()
+      broadcastAgentStatusSnapshot()
       refreshSessionProjectionInBackground()
     }
     return result
   })
   ipcMain.handle('pi:getRuntimeSnapshot', () => agentRuntime.snapshot())
+  ipcMain.handle('pi:getAgentStatusSnapshot', () => piClientManager.getAgentStatusSnapshot())
   ipcMain.handle('pi:getCapabilities', () => piClientManager.getRuntimeCapabilities())
   ipcMain.handle('pi:getSessionProjection', async () => {
     try {

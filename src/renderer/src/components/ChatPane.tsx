@@ -39,6 +39,7 @@ import {
   type PiRuntimeEvent,
   type SessionExportFormat,
   type AgentStatusEvent,
+  type AgentRunStatusSnapshot,
   type ApprovalProjection,
   type PiRuntimeCapabilities,
   type ToolExecutionProjection,
@@ -496,6 +497,30 @@ const useStyles = createStyles(({ token, css }) => ({
     display: inline-block;
     background: ${token.colorPrimary};
     animation: typing-dot 1.4s ease-in-out infinite;
+  `,
+
+  agentStatusPanel: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 7px 8px;
+    margin: 0 0 8px;
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillQuaternary};
+    font-size: 11px;
+    color: ${token.colorTextSecondary};
+    font-variant-numeric: tabular-nums;
+  `,
+
+  agentStatusItem: css`
+    white-space: nowrap;
+  `,
+
+  agentStatusAlert: css`
+    color: ${token.colorError};
+    font-weight: 600;
   `,
 
   /* 用主内容背景色,不再做模糊浮层 */
@@ -1397,6 +1422,7 @@ export default function ChatPane({
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<PiRuntimeCapabilities | null>(null)
+  const [agentStatus, setAgentStatus] = useState<AgentRunStatusSnapshot | null>(null)
   const [input, setInput] = useState('')
   const [images, setImages] = useState<ImageContent[]>([])
   const [sending, setSending] = useState(false)
@@ -1514,6 +1540,7 @@ export default function ChatPane({
       setMessages([])
       setToolExecutions({})
       setRuntimeCapabilities(null)
+      setAgentStatus(null)
       setRunRecords([])
       setApprovalRequests([])
       setMemorySuggestion(null)
@@ -1529,6 +1556,7 @@ export default function ChatPane({
         setApprovalRequests(projection.approvals.map(approvalFromProjection))
       })
       .catch(() => {})
+    api.pi.getAgentStatusSnapshot().then(setAgentStatus).catch(() => setAgentStatus(null))
     api.pi.getAvailableModels().then(setModels).catch(() => {})
     api.pi.getCapabilities().then(setRuntimeCapabilities).catch(() => setRuntimeCapabilities(null))
     api.pi.getCommands().then(setCommands).catch(() => {})
@@ -1548,6 +1576,10 @@ export default function ChatPane({
       })
       .catch(() => {})
   }, [workspace?.path, refreshModelSwitcherState])
+
+  useEffect(() => {
+    return api.pi.onAgentStatusSnapshot(setAgentStatus)
+  }, [])
 
   useEffect(() => {
     return api.pi.onSessionProjection((projection) => {
@@ -3218,6 +3250,36 @@ export default function ChatPane({
 
       <div className={styles.inputArea}>
         <div className={styles.inputAreaInner}>
+          {agentStatus && (
+            <div className={styles.agentStatusPanel}>
+              <span className={styles.agentStatusItem}>
+                {agentStatus.phase === 'awaiting_approval'
+                  ? '等待审批'
+                  : agentStatus.phase === 'stopped'
+                    ? '已停止'
+                    : agentStatus.phase === 'running'
+                      ? '运行中'
+                      : '空闲'}
+              </span>
+              <span className={styles.agentStatusItem}>
+                TODO {agentStatus.todo.completed}/{agentStatus.todo.pending + agentStatus.todo.inProgress + agentStatus.todo.completed}
+              </span>
+              <span className={styles.agentStatusItem}>
+                工具 {Object.values(agentStatus.tools).reduce((total, count) => total + count, 0)}
+              </span>
+              {agentStatus.failures > 0 && (
+                <span className={styles.agentStatusItem}>失败 {agentStatus.failures}</span>
+              )}
+              {agentStatus.activeApprovals > 0 && (
+                <span className={styles.agentStatusItem}>审批 {agentStatus.activeApprovals}</span>
+              )}
+              {agentStatus.loopDetected && (
+                <span className={cx(styles.agentStatusItem, styles.agentStatusAlert)}>
+                  循环已拦截
+                </span>
+              )}
+            </div>
+          )}
           {sending && (
             <div className={styles.runStatus}>
               {[0, 160, 320].map((delay) => (

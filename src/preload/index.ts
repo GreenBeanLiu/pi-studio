@@ -3,6 +3,7 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type { LlmProfileSavePayload, SettingsSaveInput } from '../shared/contracts'
 import type {
   AgentRuntimeSnapshot,
+  AgentRunStatusSnapshot,
   AgentStatusEvent,
   DesktopApi,
   ImageModel,
@@ -155,11 +156,17 @@ const api = {
       return () => ipcRenderer.off('pi:sessionActivity', handler)
     },
     getRuntimeSnapshot: () => ipcRenderer.invoke('pi:getRuntimeSnapshot'),
+    getAgentStatusSnapshot: () => ipcRenderer.invoke('pi:getAgentStatusSnapshot'),
     getCapabilities: () => ipcRenderer.invoke('pi:getCapabilities'),
     onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => {
       const handler = (_e: Electron.IpcRendererEvent, data: AgentRuntimeSnapshot) => cb(data)
       ipcRenderer.on('agent:runtime', handler)
       return () => ipcRenderer.off('agent:runtime', handler)
+    },
+    onAgentStatusSnapshot: (cb: (snapshot: AgentRunStatusSnapshot | null) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, data: AgentRunStatusSnapshot | null) => cb(data)
+      ipcRenderer.on('agent:statusSnapshot', handler)
+      return () => ipcRenderer.off('agent:statusSnapshot', handler)
     },
     getSessionProjection: () => ipcRenderer.invoke('pi:getSessionProjection'),
     getSessionChanges: (sessionId: string | null, afterSeq: number) =>

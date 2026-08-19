@@ -75,6 +75,14 @@ export class AgentStatusTracker {
     this.timer.unref?.()
   }
 
+  snapshot(): AgentStatusSnapshot {
+    return {
+      ...this.snap,
+      todo: { ...this.snap.todo },
+      tools: { ...this.snap.tools },
+    }
+  }
+
   prompt(message: string): void {
     this.snap.prompt = message.slice(0, 500)
     this.snap.phase = 'running'
