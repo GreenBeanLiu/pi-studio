@@ -2541,6 +2541,10 @@ export default function ChatPane({
   // Visible while the first token is being typed (`/…` with no space yet).
   const slashFilter =
     workspace && /^\/\S*$/.test(input) && !slashDismissed ? input.slice(1).toLowerCase() : null
+  // 流式期间每个 token 一次 setMessages。原来这一行内联在 JSX 里,每个 token 都把整个
+  // 会话重新分段一遍;MessageBubble 有 memo 挡着,但分段本身和下面的 ToolStepsGroup 挡不住。
+  const renderSegments = useMemo(() => segmentMessages(messages), [messages])
+
   const slashMatches = useMemo(() => {
     if (slashFilter === null || commands.length === 0) return []
     return commands
@@ -3233,7 +3237,7 @@ export default function ChatPane({
                 <p className={styles.emptyHint}>向 agent 描述你想做的事，它可以读文件、跑命令、改代码。</p>
               </div>
             ) : (
-              segmentMessages(messages).map((seg) =>
+              renderSegments.map((seg) =>
                 seg.kind === 'toolSteps' ? (
                   <ToolStepsGroup
                     key={`ts-${seg.steps[0].index}`}
@@ -3789,7 +3793,7 @@ function segmentMessages(messages: AgentMessage[]): RenderSegment[] {
 }
 
 /** 连续工具步骤折叠成一条"执行了 N 步",点开逐条展开(每步含各自思考+工具卡)。 */
-function ToolStepsGroup({
+const ToolStepsGroup = memo(function ToolStepsGroup({
   steps,
   toolExecutions,
   styles,
@@ -3838,4 +3842,4 @@ function ToolStepsGroup({
       )}
     </div>
   )
-}
+})
