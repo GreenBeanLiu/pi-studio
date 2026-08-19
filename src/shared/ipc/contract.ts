@@ -135,7 +135,7 @@ export type DesktopApi = {
     onSessionActivity: (cb: (event: SessionActivity) => void) => () => void
     getState: () => Promise<RpcSessionState>
     getMessages: () => Promise<AgentMessage[]>
-    getArtifact: (artifactId: string) => Promise<{ artifact: ToolOutputArtifact; raw: string }>
+    getArtifactChunk: (artifactId: string, offsetChars: number) => Promise<ArtifactChunk>
     getAvailableModels: () => Promise<ModelInfo[]>
     getCommands: () => Promise<SlashCommand[]>
     setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
@@ -809,6 +809,15 @@ export type StudioAgentEvent = {
     | 'run.failed'
     | 'agent.event'
   data: Record<string, unknown>
+}
+
+export type ArtifactChunk = {
+  artifact: ToolOutputArtifact
+  text: string
+  offsetChars: number
+  endChars: number
+  totalChars: number
+  complete: boolean
 }
 
 export type ToolOutputArtifact = {

@@ -380,7 +380,14 @@ function SubagentCard({ call, execution }: { call: ToolCall; execution?: ToolExe
 export default function ToolCallCard({ call, execution }: { call: ToolCall; execution?: ToolExecutionState }) {
   const { styles, cx, theme: token } = useStyles()
   const [open, setOpen] = useState(false)
-  const [artifactText, setArtifactText] = useState<string | null>(null)
+  const [artifactChunk, setArtifactChunk] = useState<{
+    text: string
+    offsetChars: number
+    endChars: number
+    totalChars: number
+    complete: boolean
+  } | null>(null)
+  const [artifactError, setArtifactError] = useState<string | null>(null)
   const [artifactLoading, setArtifactLoading] = useState(false)
   // 子代理调用走专属卡片(区别于普通工具)
   if (call.name === 'subagent') return <SubagentCard call={call} execution={execution} />
@@ -392,14 +399,15 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
     (execution?.details as { artifact?: ToolExecutionState['artifact'] } | undefined)?.artifact ??
     (execution?.result as { artifact?: { artifact?: ToolExecutionState['artifact'] } } | undefined)?.artifact?.artifact ??
     (execution?.result as { details?: { artifact?: ToolExecutionState['artifact'] } } | undefined)?.details?.artifact
-  const loadArtifact = async (): Promise<void> => {
+  const loadArtifact = async (offsetChars: number): Promise<void> => {
     if (!artifact || artifactLoading) return
     setArtifactLoading(true)
+    setArtifactError(null)
     try {
-      const loaded = await api.pi.getArtifact(artifact.id)
-      setArtifactText(loaded.raw)
+      const loaded = await api.pi.getArtifactChunk(artifact.id, offsetChars)
+      setArtifactChunk(loaded)
     } catch (error) {
-      setArtifactText(`读取完整输出失败：${error instanceof Error ? error.message : String(error)}`)
+      setArtifactError(`读取输出失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setArtifactLoading(false)
     }
@@ -429,13 +437,38 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
               <div>{artifact.summary}</div>
               <button
                 type="button"
-                onClick={loadArtifact}
+                onClick={() => void loadArtifact(0)}
+                disabled={artifactLoading}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 8 }}
               >
                 <Download size={12} />
-                {artifactLoading ? '读取中…' : artifactText === null ? `查看完整输出（${Math.ceil(artifact.bytes / 1024)} KB）` : '重新读取完整输出'}
+                {artifactLoading ? '读取中…' : artifactChunk === null ? `分块查看输出（${Math.ceil(artifact.bytes / 1024)} KB）` : '回到第一块'}
               </button>
-              {artifactText !== null && <div style={{ marginTop: 8 }}>{artifactText}</div>}
+              {artifactError && <div style={{ marginTop: 8, color: token.colorError }}>{artifactError}</div>}
+              {artifactChunk && (
+                <>
+                  <div style={{ marginTop: 8, color: token.colorTextTertiary }}>
+                    字符 {artifactChunk.offsetChars + 1}–{artifactChunk.endChars} / {artifactChunk.totalChars}
+                  </div>
+                  <div style={{ marginTop: 8 }}>{artifactChunk.text}</div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button
+                      type="button"
+                      disabled={artifactLoading || artifactChunk.offsetChars === 0}
+                      onClick={() => void loadArtifact(Math.max(0, artifactChunk.offsetChars - 64 * 1024))}
+                    >
+                      上一块
+                    </button>
+                    <button
+                      type="button"
+                      disabled={artifactLoading || artifactChunk.complete}
+                      onClick={() => void loadArtifact(artifactChunk.endChars)}
+                    >
+                      下一块
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           ) : execution?.result !== undefined ? (
             stringifyResult(execution.result)

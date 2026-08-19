@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  ARTIFACT_UI_CHUNK_CHARS,
   AgentArtifactStore,
   TOOL_ARTIFACT_THRESHOLD,
   artifactWorkspaceKey,
@@ -78,6 +79,31 @@ describe('AgentArtifactStore', () => {
     expect(second.details.artifact.createdAt).toBe(first.details.artifact.createdAt)
     expect(stableArtifactId('call', 'bash', 'digest')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    )
+  })
+
+  it('returns bounded UI chunks without accumulating the complete output', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-artifact-'))
+    roots.push(root)
+    const store = new AgentArtifactStore(root)
+    const raw = 'x'.repeat(ARTIFACT_UI_CHUNK_CHARS + 123)
+    const artifact = store.write('workspace', 'call', 'bash', raw)
+    const first = store.readChunk('workspace', artifact.id, 0)
+    expect(first.text).toHaveLength(ARTIFACT_UI_CHUNK_CHARS)
+    expect(first).toMatchObject({
+      offsetChars: 0,
+      endChars: ARTIFACT_UI_CHUNK_CHARS,
+      totalChars: raw.length,
+      complete: false,
+    })
+    const second = store.readChunk('workspace', artifact.id, first.endChars)
+    expect(second.text).toHaveLength(123)
+    expect(second.complete).toBe(true)
+    expect(() => store.readChunk('workspace', artifact.id, raw.length + 1)).toThrow(
+      'Artifact offset is out of range',
+    )
+    expect(() => store.readChunk('workspace', artifact.id, -1)).toThrow(
+      'Artifact offset must be a non-negative safe integer',
     )
   })
 

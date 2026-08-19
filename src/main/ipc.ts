@@ -822,12 +822,15 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
-  ipcMain.handle('pi:getArtifact', (_event, artifactId: unknown) => {
+  ipcMain.handle('pi:getArtifactChunk', (_event, artifactId: unknown, offsetChars: unknown) => {
     if (typeof artifactId !== 'string') throw new TypeError('artifactId must be a string')
+    if (!Number.isSafeInteger(offsetChars) || (offsetChars as number) < 0) {
+      throw new TypeError('offsetChars must be a non-negative safe integer')
+    }
     const workspacePath = piClientManager.getWorkspacePath()
     const identity = piClientManager.getActiveSessionIdentity()
     if (!workspacePath || !identity) throw new Error('No workspace is open')
-    return getAgentArtifacts().read(workspacePath, artifactId)
+    return getAgentArtifacts().readChunk(workspacePath, artifactId, offsetChars as number)
   })
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
   ipcMain.handle('pi:getCommands', () => piClientManager.getCommands())

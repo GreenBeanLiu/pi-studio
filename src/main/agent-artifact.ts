@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { basename, join } from 'path'
 
 export const TOOL_ARTIFACT_THRESHOLD = 32 * 1024
+export const ARTIFACT_UI_CHUNK_CHARS = 64 * 1024
 const SUMMARY_LIMIT = 2_000
 const ARTIFACT_VERSION = 1
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -24,6 +25,15 @@ export type ArtifactRetentionPolicy = {
 export type ArtifactPruneResult = {
   removedFiles: number
   removedBytes: number
+}
+
+export type ArtifactChunk = {
+  artifact: ToolOutputArtifact
+  text: string
+  offsetChars: number
+  endChars: number
+  totalChars: number
+  complete: boolean
 }
 
 export type ArtifactSource = 'runtime-tool-result' | 'session-projection'
@@ -251,6 +261,23 @@ export class AgentArtifactStore {
 
   read(workspace: string, id: string): { artifact: ToolOutputArtifact; raw: string } {
     return readAgentArtifactFile(this.root, safeKey(workspace), id)
+  }
+
+  readChunk(workspace: string, id: string, offsetChars: number): ArtifactChunk {
+    if (!Number.isSafeInteger(offsetChars) || offsetChars < 0) {
+      throw new TypeError('Artifact offset must be a non-negative safe integer')
+    }
+    const { artifact, raw } = this.read(workspace, id)
+    if (offsetChars > raw.length) throw new Error('Artifact offset is out of range')
+    const endChars = Math.min(raw.length, offsetChars + ARTIFACT_UI_CHUNK_CHARS)
+    return {
+      artifact,
+      text: raw.slice(offsetChars, endChars),
+      offsetChars,
+      endChars,
+      totalChars: raw.length,
+      complete: endChars >= raw.length,
+    }
   }
 
   /** Replace only oversized completed tool results. Small results retain Pi's original shape. */
