@@ -585,20 +585,29 @@ class PiClientManager {
 
   prompt(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
-    entry.status.prompt(message)
-    return entry.client.send(message, images)
+    const checkpoint = entry.status.prompt(message)
+    return entry.client.send(message, images).catch((error) => {
+      entry.status.promptRejected(checkpoint)
+      throw error
+    })
   }
 
   steer(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
-    entry.status.prompt(message)
-    return entry.client.steer(message, images)
+    const checkpoint = entry.status.prompt(message)
+    return entry.client.steer(message, images).catch((error) => {
+      entry.status.promptRejected(checkpoint)
+      throw error
+    })
   }
 
   followUp(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
-    entry.status.prompt(message)
-    return entry.client.followUp(message, images)
+    const checkpoint = entry.status.prompt(message)
+    return entry.client.followUp(message, images).catch((error) => {
+      entry.status.promptRejected(checkpoint)
+      throw error
+    })
   }
 
   abort(): Promise<void> {

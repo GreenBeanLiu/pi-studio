@@ -25,6 +25,12 @@ function todoCounts(args: unknown): AgentStatusSnapshot['todo'] | null {
   return counts
 }
 
+export type AgentPromptCheckpoint = {
+  epoch: number
+  runEpoch: number
+  prompt: string | null
+}
+
 export type AgentStatusSnapshot = {
   version: 1
   cwd: string
@@ -55,6 +61,9 @@ export class AgentStatusTracker {
   private readonly snap: AgentStatusSnapshot
   private timer: ReturnType<typeof setInterval> | null = null
   private lastFailureSignature: string | null = null
+  private promptEpoch = 0
+  private runEpoch = 0
+  private dirty = true
 
   constructor(private readonly file: string, cwd: string) {
     this.snap = {
@@ -71,7 +80,9 @@ export class AgentStatusTracker {
       updatedAt: new Date().toISOString(),
       loopDetected: null,
     }
-    this.timer = setInterval(() => this.write(), 1_000)
+    this.timer = setInterval(() => {
+      if (this.dirty) this.write()
+    }, 1_000)
     this.timer.unref?.()
   }
 
@@ -83,11 +94,23 @@ export class AgentStatusTracker {
     }
   }
 
-  prompt(message: string): void {
+  prompt(message: string): AgentPromptCheckpoint {
+    const checkpoint = {
+      epoch: ++this.promptEpoch,
+      runEpoch: this.runEpoch,
+      prompt: this.snap.prompt,
+    }
     this.snap.prompt = message.slice(0, 500)
-    this.snap.phase = 'running'
-    this.snap.startedAt ??= Date.now()
     this.write()
+    return checkpoint
+  }
+
+  promptRejected(checkpoint: AgentPromptCheckpoint): boolean {
+    if (checkpoint.epoch !== this.promptEpoch || checkpoint.runEpoch !== this.runEpoch) return false
+    this.snap.prompt = checkpoint.prompt
+    this.promptEpoch += 1
+    this.write()
+    return true
   }
 
   approvalResolved(): void {
@@ -101,6 +124,7 @@ export class AgentStatusTracker {
   observe(event: RuntimeEvent): void {
     let changed = true
     if (event.type === 'agent_start') {
+      this.runEpoch += 1
       this.snap.phase = 'running'
       this.snap.todo = { pending: 0, inProgress: 0, completed: 0 }
       this.snap.tools = {}
@@ -150,10 +174,11 @@ export class AgentStatusTracker {
   }
 
   write(): void {
+    this.dirty = true
     this.snap.updatedAt = new Date().toISOString()
-    mkdirSync(dirname(this.file), { recursive: true })
     const temp = `${this.file}.tmp`
     try {
+      mkdirSync(dirname(this.file), { recursive: true })
       writeFileSync(temp, JSON.stringify(this.snap), 'utf8')
       try {
         renameSync(temp, this.file)
@@ -163,6 +188,7 @@ export class AgentStatusTracker {
         rmSync(this.file, { force: true })
         renameSync(temp, this.file)
       }
+      this.dirty = false
     } catch {
       try { rmSync(temp, { force: true }) } catch { /* best effort cleanup */ }
     }

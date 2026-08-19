@@ -37,6 +37,26 @@ describe('agent status tracker', () => {
     tracker.dispose()
   })
 
+  it('waits for agent_start and rolls back a rejected prompt safely', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-prompt-'))
+    const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')
+    const first = tracker.prompt('first task')
+    expect(tracker.snapshot()).toMatchObject({ prompt: 'first task', phase: 'idle', startedAt: null })
+    expect(tracker.promptRejected(first)).toBe(true)
+    expect(tracker.snapshot()).toMatchObject({ prompt: null, phase: 'idle', startedAt: null })
+
+    const stale = tracker.prompt('older task')
+    tracker.prompt('newer task')
+    expect(tracker.promptRejected(stale)).toBe(false)
+    expect(tracker.snapshot().prompt).toBe('newer task')
+
+    const accepted = tracker.prompt('accepted task')
+    tracker.observe({ type: 'agent_start' })
+    expect(tracker.promptRejected(accepted)).toBe(false)
+    expect(tracker.snapshot()).toMatchObject({ prompt: 'accepted task', phase: 'running' })
+    tracker.dispose()
+  })
+
   it('resets run-scoped counters when a new run starts', () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-new-run-'))
     const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')
