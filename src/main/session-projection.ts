@@ -6,6 +6,7 @@ import type {
   SessionProjectionChanges,
   SessionProjectionSnapshot,
   StudioAgentEvent,
+  ToolExecutionProjection,
 } from '../shared/ipc/contract'
 
 export type SessionProjectionLoad = {
@@ -112,6 +113,8 @@ function projectDurableTools(
       status: message.isError ? 'error' : 'done',
       result: message.content,
       details: message.details,
+      artifact:
+        (message.details as { artifact?: ToolExecutionProjection['artifact'] } | undefined)?.artifact,
       startedAt: current?.startedAt ?? messageTime(message, now),
       endedAt: messageTime(message, now),
     }
@@ -305,6 +308,7 @@ export class SessionProjectionTracker {
         ...currentTool,
         result: partialResult,
         details: (partialResult as { details?: unknown } | undefined)?.details,
+        artifact: (partialResult as { details?: { artifact?: ToolExecutionProjection['artifact'] } } | undefined)?.details?.artifact,
       }
     } else if (runtimeEvent.type === 'tool_execution_end' && callId) {
       const result = runtimeEvent.result
@@ -317,6 +321,7 @@ export class SessionProjectionTracker {
         status: runtimeEvent.isError ? 'error' : 'done',
         result,
         details: (result as { details?: unknown } | undefined)?.details,
+        artifact: (result as { details?: { artifact?: ToolExecutionProjection['artifact'] } } | undefined)?.details?.artifact,
         startedAt: currentTool?.startedAt ?? now,
         endedAt: now,
       }

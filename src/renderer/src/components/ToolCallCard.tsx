@@ -13,9 +13,10 @@ import {
   Bot,
   ClipboardList,
   Hammer,
+  Download,
   ShieldCheck,
 } from 'lucide-react'
-import type { ToolCall } from '../lib/api'
+import { api, type ToolCall } from '../lib/api'
 
 export type ToolExecutionState = {
   toolName: string
@@ -24,6 +25,7 @@ export type ToolExecutionState = {
   result?: unknown
   /** 工具结果的结构化 details(pi AgentToolResult.details);subagent 用它承载子代理运行信息 */
   details?: unknown
+  artifact?: { id: string; bytes: number; sha256: string; summary: string }
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -378,11 +380,30 @@ function SubagentCard({ call, execution }: { call: ToolCall; execution?: ToolExe
 export default function ToolCallCard({ call, execution }: { call: ToolCall; execution?: ToolExecutionState }) {
   const { styles, cx, theme: token } = useStyles()
   const [open, setOpen] = useState(false)
+  const [artifactText, setArtifactText] = useState<string | null>(null)
+  const [artifactLoading, setArtifactLoading] = useState(false)
   // 子代理调用走专属卡片(区别于普通工具)
   if (call.name === 'subagent') return <SubagentCard call={call} execution={execution} />
 
   const Icon = TOOL_ICONS[call.name] ?? Terminal
   const status = execution?.status ?? 'running'
+  const artifact =
+    execution?.artifact ??
+    (execution?.details as { artifact?: ToolExecutionState['artifact'] } | undefined)?.artifact ??
+    (execution?.result as { artifact?: { artifact?: ToolExecutionState['artifact'] } } | undefined)?.artifact?.artifact ??
+    (execution?.result as { details?: { artifact?: ToolExecutionState['artifact'] } } | undefined)?.details?.artifact
+  const loadArtifact = async (): Promise<void> => {
+    if (!artifact || artifactLoading) return
+    setArtifactLoading(true)
+    try {
+      const loaded = await api.pi.getArtifact(artifact.id)
+      setArtifactText(loaded.raw)
+    } catch (error) {
+      setArtifactText(`读取完整输出失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setArtifactLoading(false)
+    }
+  }
 
   return (
     <div className={styles.card}>
@@ -403,11 +424,26 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
       </div>
       {open && (
         <div className={styles.body}>
-          {execution?.result !== undefined
-            ? stringifyResult(execution.result)
-            : status === 'running'
-              ? '执行中…'
-              : '（无结果）'}
+          {artifact ? (
+            <>
+              <div>{artifact.summary}</div>
+              <button
+                type="button"
+                onClick={loadArtifact}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 8 }}
+              >
+                <Download size={12} />
+                {artifactLoading ? '读取中…' : artifactText === null ? `查看完整输出（${Math.ceil(artifact.bytes / 1024)} KB）` : '重新读取完整输出'}
+              </button>
+              {artifactText !== null && <div style={{ marginTop: 8 }}>{artifactText}</div>}
+            </>
+          ) : execution?.result !== undefined ? (
+            stringifyResult(execution.result)
+          ) : status === 'running' ? (
+            '执行中…'
+          ) : (
+            '（无结果）'
+          )}
         </div>
       )}
     </div>

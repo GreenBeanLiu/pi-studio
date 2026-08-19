@@ -1275,6 +1275,7 @@ function toolsFromProjection(
         status: tool.status,
         result: tool.result,
         details: tool.details,
+        artifact: tool.artifact,
       },
     ]),
   )

@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, app, clipboard, dialog, shell } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import {
   listSessions,
   deleteSession,
@@ -10,12 +11,14 @@ import {
 } from './pi-sessions'
 import { syncWebSearchExtension } from './web-search-extension'
 import { syncAgentStatusExtension } from './agent-status-extension-sync'
+import { AgentArtifactStore, materializeToolEvent } from './agent-artifact'
 import {
   loadSettings,
   saveSettings,
   saveRemoteEnabled,
   addRecentWorkspace,
   removeRecentWorkspace,
+  agentConfigDir,
 } from './settings'
 import { piClientManager, resolvePiCliPath, type AgentStatusEvent } from './pi-client'
 import { syncSubagentWorkflow } from './subagent-workflow'
@@ -65,7 +68,7 @@ import { createSettingsView } from './settings-view'
 import { AgentRuntimeTracker } from './agent-runtime'
 import { SessionProjectionTracker } from './session-projection'
 import { removeLegacySecurityGuardExtension } from './legacy-extension-cleanup'
-import type { ApprovalProjection, ExtensionUiResponse } from '../shared/ipc/contract'
+import type { ApprovalProjection, ExtensionUiResponse, PiRuntimeEvent } from '../shared/ipc/contract'
 import { approvalAuditJournal } from './approval-audit'
 import { canRespondToOwnedUiRequest } from './extension-ui-ownership'
 
@@ -76,6 +79,10 @@ const agentRuntime = new AgentRuntimeTracker((snapshot) => {
   }
 })
 const sessionProjection = new SessionProjectionTracker()
+let agentArtifacts: AgentArtifactStore | null = null
+function getAgentArtifacts(): AgentArtifactStore {
+  return (agentArtifacts ??= new AgentArtifactStore(join(agentConfigDir(), 'artifacts')))
+}
 remoteControl.setProjectionProvider({
   snapshot: () => sessionProjection.snapshot(),
   changes: (sessionId, afterSeq) => sessionProjection.changes(sessionId, afterSeq),
@@ -132,7 +139,10 @@ async function refreshSessionProjection(): Promise<ReturnType<SessionProjectionT
       'interrupted approval outcome',
     )
   }
-  const snapshot = sessionProjection.commit(load, source.messages)
+  const snapshot = sessionProjection.commit(
+    load,
+    getAgentArtifacts().materializeMessages(workspacePath, source.messages) as AgentMessage[],
+  )
   broadcastSessionProjection()
   return snapshot
 }
@@ -434,17 +444,22 @@ export function registerIpcHandlers(): void {
             subagentsAvailable,
           }),
         async (agentEvent, context) => {
-          const projected = sessionProjection.ingest(context.sessionId, agentEvent)
+          const normalizedAgentEvent = materializeToolEvent(
+            getAgentArtifacts(),
+            workspacePath,
+            agentEvent as unknown as Record<string, unknown>,
+          ) as unknown as PiRuntimeEvent
+          const projected = sessionProjection.ingest(context.sessionId, normalizedAgentEvent)
           let projectionChanged = projected.projectionChanged
           const approvalId =
-            agentEvent.type === 'extension_ui_request' && agentEvent.method === 'confirm'
-              ? agentEvent.id
+            normalizedAgentEvent.type === 'extension_ui_request' && normalizedAgentEvent.method === 'confirm'
+              ? normalizedAgentEvent.id
               : undefined
           const approval = approvalId
             ? sessionProjection.snapshot().approvals.find((item) => item.id === approvalId)
             : undefined
           if (approval) persistApprovalAudits(context.sessionFile, [approval], 'approval request')
-          if (agentEvent.type === 'agent_settled') {
+          if (normalizedAgentEvent.type === 'agent_settled') {
             const cancelled = sessionProjection.cancelPendingApprovals(
               context.sessionId,
               '运行已结束，审批已失效',
@@ -455,17 +470,17 @@ export function registerIpcHandlers(): void {
           if (projectionChanged) {
             broadcastSessionProjection()
           }
-          agentRuntime.agentEvent(context.sessionId, agentEvent)
+          agentRuntime.agentEvent(context.sessionId, normalizedAgentEvent)
           // Forward before any await: otherwise a session switch can make this old,
           // unscoped Pi event mutate the newly selected renderer conversation.
-          if (win && !win.isDestroyed()) win.webContents.send('pi:event', agentEvent)
+          if (win && !win.isDestroyed()) win.webContents.send('pi:event', normalizedAgentEvent)
           if (projected.accepted) remoteControl.forwardEvent(projected.event)
           // willRetry 的 agent_end 只是重试前的一段间隙,这时封存基线,重试里新写的
           // 文件就落在任何一次运行变更之外 —— 回滚兜不住它们。
-          if (agentEvent.type === 'agent_end' && !agentEvent.willRetry) {
+          if (normalizedAgentEvent.type === 'agent_end' && !normalizedAgentEvent.willRetry) {
             await sealRunChanges(workspacePath, 'agent ended')
           }
-          if (agentEvent.type === 'agent_settled') refreshSessionProjectionInBackground()
+          if (normalizedAgentEvent.type === 'agent_settled') refreshSessionProjectionInBackground()
         },
         (statusEvent) => {
           agentRuntime.status(statusEvent)
@@ -790,6 +805,13 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
+  ipcMain.handle('pi:getArtifact', (_event, artifactId: unknown) => {
+    if (typeof artifactId !== 'string') throw new TypeError('artifactId must be a string')
+    const workspacePath = piClientManager.getWorkspacePath()
+    const identity = piClientManager.getActiveSessionIdentity()
+    if (!workspacePath || !identity) throw new Error('No workspace is open')
+    return getAgentArtifacts().read(workspacePath, artifactId)
+  })
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
   ipcMain.handle('pi:getCommands', () => piClientManager.getCommands())
   ipcMain.handle('pi:setModel', (_e, provider: string, modelId: string) =>

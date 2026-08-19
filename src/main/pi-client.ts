@@ -27,6 +27,7 @@ import {
 } from './agent-job-registry'
 import { AgentLoopGuard, type LoopDetection } from './agent-loop-guard'
 import { AgentStatusTracker } from './agent-status'
+import { artifactWorkspaceKey } from './agent-artifact'
 
 export { embeddedNodeEnv, loadRpcClient, resolveEmbeddedNodePath, resolvePiCliPath } from './pi-process'
 
@@ -224,6 +225,10 @@ class PiClientManager {
         PI_STUDIO_STATUS_FILE: launch.sandboxSessionPaths
           ? sandboxAgentPath(statusFile, launch.sandboxMode!)
           : statusFile,
+        PI_STUDIO_ARTIFACT_DIR: launch.sandboxSessionPaths
+          ? sandboxAgentPath(join(agentConfigDir(), 'artifacts'), launch.sandboxMode!)
+          : join(agentConfigDir(), 'artifacts'),
+        PI_STUDIO_ARTIFACT_WORKSPACE_KEY: artifactWorkspaceKey(launch.cwd),
       },
     }
     const client = await startPiRuntime(runtimeLaunch)

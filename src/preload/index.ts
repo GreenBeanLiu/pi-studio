@@ -130,6 +130,7 @@ const api = {
     newSession: () => ipcRenderer.invoke('pi:newSession'),
     getState: () => ipcRenderer.invoke('pi:getState'),
     getMessages: () => ipcRenderer.invoke('pi:getMessages'),
+    getArtifact: (artifactId: string) => ipcRenderer.invoke('pi:getArtifact', artifactId),
     getAvailableModels: () => ipcRenderer.invoke('pi:getAvailableModels'),
     getCommands: () => ipcRenderer.invoke('pi:getCommands'),
     setModel: (provider: string, modelId: string) => ipcRenderer.invoke('pi:setModel', provider, modelId),

@@ -3,10 +3,58 @@ import { join } from 'path'
 import { agentConfigDir } from './settings'
 
 const EXTENSION_SOURCE = `import fs from 'node:fs'
+import crypto from 'node:crypto'
+import path from 'node:path'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 
 const MAX_STATUS_CHARS = 8000
+const ARTIFACT_THRESHOLD = 32 * 1024
+const ARTIFACT_SUMMARY_LIMIT = 2000
+
+function artifactText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value == null) return ''
+  if (Array.isArray(value)) return value.map(artifactText).filter(Boolean).join('\\n')
+  if (typeof value === 'object') {
+    const item = value as Record<string, unknown>
+    if (typeof item.text === 'string') return item.text
+    if (typeof item.content !== 'undefined') return artifactText(item.content)
+  }
+  return ''
+}
+
+function artifactJson(value: unknown): string {
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value, null, 2) || String(value) } catch { return String(value) }
+}
+
+function installToolArtifactHook(pi: ExtensionAPI): void {
+  pi.on('tool_result', (event) => {
+    const raw = artifactJson({ content: event.content, details: event.details, isError: event.isError })
+    if (Buffer.byteLength(raw, 'utf8') <= ARTIFACT_THRESHOLD) return undefined
+    const root = process.env.PI_STUDIO_ARTIFACT_DIR
+    const workspaceKey = process.env.PI_STUDIO_ARTIFACT_WORKSPACE_KEY
+    if (!root || !workspaceKey) return undefined
+    try {
+      const bytes = Buffer.byteLength(raw, 'utf8')
+      const sha256 = crypto.createHash('sha256').update(raw).digest('hex')
+      const id = crypto.randomUUID()
+      const summary = (artifactText(event.content) || raw).slice(0, ARTIFACT_SUMMARY_LIMIT) + '\\n… (完整输出见 artifact)'
+      const artifact = { version: 1, id, toolName: event.toolName, bytes, sha256, createdAt: new Date().toISOString(), summary }
+      const dir = path.join(root, workspaceKey)
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify({ artifact, raw }), 'utf8')
+      return {
+        content: [{ type: 'text' as const, text: artifact.summary }],
+        details: { ...(event.details && typeof event.details === 'object' ? event.details : {}), artifact },
+        isError: event.isError,
+      }
+    } catch {
+      return undefined
+    }
+  })
+}
 
 function readStatus() {
   const file = process.env.PI_STUDIO_STATUS_FILE
@@ -33,6 +81,7 @@ function readStatus() {
 }
 
 export default function piStudioAgentStatus(pi: ExtensionAPI) {
+  installToolArtifactHook(pi)
   pi.registerTool({
     name: 'update_agent_todo',
     label: 'Update task progress',

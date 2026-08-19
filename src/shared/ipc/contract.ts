@@ -135,6 +135,7 @@ export type DesktopApi = {
     onSessionActivity: (cb: (event: SessionActivity) => void) => () => void
     getState: () => Promise<RpcSessionState>
     getMessages: () => Promise<AgentMessage[]>
+    getArtifact: (artifactId: string) => Promise<{ artifact: ToolOutputArtifact; raw: string }>
     getAvailableModels: () => Promise<ModelInfo[]>
     getCommands: () => Promise<SlashCommand[]>
     setModel: (provider: string, modelId: string) => Promise<{ provider: string; id: string }>
@@ -808,6 +809,16 @@ export type StudioAgentEvent = {
   data: Record<string, unknown>
 }
 
+export type ToolOutputArtifact = {
+  version: 1
+  id: string
+  toolName: string
+  bytes: number
+  sha256: string
+  createdAt: string
+  summary: string
+}
+
 export type ToolExecutionProjection = {
   callId: string
   sessionId: string
@@ -817,6 +828,7 @@ export type ToolExecutionProjection = {
   status: 'running' | 'done' | 'error'
   result?: unknown
   details?: unknown
+  artifact?: ToolOutputArtifact
   startedAt: string
   endedAt?: string
 }
