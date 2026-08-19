@@ -37,6 +37,37 @@ describe('agent status tracker', () => {
     tracker.dispose()
   })
 
+  it('resets run-scoped counters when a new run starts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-new-run-'))
+    const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')
+    tracker.prompt('first task')
+    tracker.observe({ type: 'agent_start' })
+    tracker.observe({ type: 'tool_execution_start', toolName: 'read' })
+    tracker.observe({ type: 'tool_execution_end', toolName: 'read', isError: true, result: { error: 'failed' } })
+    tracker.observe({ type: 'extension_ui_request', method: 'confirm' })
+    tracker.observe({
+      type: 'tool_execution_start',
+      toolName: 'update_agent_todo',
+      args: { items: [{ id: '1', content: 'inspect', status: 'completed' }] },
+    })
+
+    tracker.observe({ type: 'agent_settled' })
+    tracker.prompt('second task')
+    tracker.observe({ type: 'agent_start' })
+
+    expect(tracker.snapshot()).toMatchObject({
+      prompt: 'second task',
+      phase: 'running',
+      tools: {},
+      todo: { pending: 0, inProgress: 0, completed: 0 },
+      failures: 0,
+      repeatedFailures: 0,
+      activeApprovals: 0,
+      loopDetected: null,
+    })
+    tracker.dispose()
+  })
+
   it('returns a detached snapshot for IPC consumers', () => {
     const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-snapshot-'))
     const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')

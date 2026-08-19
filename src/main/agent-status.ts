@@ -101,8 +101,14 @@ export class AgentStatusTracker {
   observe(event: RuntimeEvent): void {
     if (event.type === 'agent_start') {
       this.snap.phase = 'running'
+      this.snap.todo = { pending: 0, inProgress: 0, completed: 0 }
+      this.snap.tools = {}
+      this.snap.failures = 0
+      this.snap.repeatedFailures = 0
+      this.snap.activeApprovals = 0
       this.snap.startedAt = Date.now()
       this.snap.loopDetected = null
+      this.lastFailureSignature = null
     } else if (event.type === 'agent_settled') {
       this.snap.phase = 'idle'
       this.snap.startedAt = null
