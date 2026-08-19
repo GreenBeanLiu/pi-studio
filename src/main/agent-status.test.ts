@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AgentStatusTracker } from './agent-status'
 
 describe('agent status tracker', () => {
@@ -65,6 +65,16 @@ describe('agent status tracker', () => {
       activeApprovals: 0,
       loopDetected: null,
     })
+    tracker.dispose()
+  })
+
+  it('does not write the status file for unrelated streaming events', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-studio-status-streaming-'))
+    const tracker = new AgentStatusTracker(join(root, 'status.json'), 'D:/workspace')
+    const write = vi.spyOn(tracker, 'write')
+    tracker.observe({ type: 'message_update' })
+    tracker.observe({ type: 'message_update' })
+    expect(write).not.toHaveBeenCalled()
     tracker.dispose()
   })
 

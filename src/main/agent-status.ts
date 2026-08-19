@@ -99,6 +99,7 @@ export class AgentStatusTracker {
   }
 
   observe(event: RuntimeEvent): void {
+    let changed = true
     if (event.type === 'agent_start') {
       this.snap.phase = 'running'
       this.snap.todo = { pending: 0, inProgress: 0, completed: 0 }
@@ -136,8 +137,10 @@ export class AgentStatusTracker {
         // result breaks the sequence even if the same error appears later.
         this.lastFailureSignature = null
       }
+    } else {
+      changed = false
     }
-    this.write()
+    if (changed) this.write()
   }
 
   loopDetected(message: string): void {
