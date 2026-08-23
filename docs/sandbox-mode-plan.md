@@ -159,3 +159,114 @@ Clash 代理对比、node 与 electron-as-node 双运行时手跑 pi CLI(全通)
    `HTTP_PROXY/HTTPS_PROXY` 指向 pi-studio 内置的白名单代理(只放行 LLM 网关等认可域名)。
    非强制隔离(恶意代码可绕),但对"agent 犯傻乱连"够用,与 securityPolicy 设置天然衔接;
    将来切 srt 时这个代理直接升级为 WFP 背后的代理,投资不浪费。
+
+---
+
+## macOS 沙箱现状与选型（2026-08-23 实测）
+
+### 现状:mac 上开沙箱等于开 Docker,而 Docker 这条是封存的
+
+- `sandbox.ts` 的 WSL 探测在非 Windows 直接返回不可用,所以 mac 只会走 **Docker 回退**。
+- 设置页那段「整盘只读 + 域名白名单代理」的文案描述的是 **WSL/bwrap 专属**能力
+  (`sandbox-wsl.ts` + `sandbox-proxy.ts`)。`buildSandboxDockerArgs` 里**一个网络参数都没有**,
+  容器拿默认 bridge 网络,**出站完全不受限**。文案已按平台分支(2026-08-23)。
+- 而 Docker 链路正是上面复盘里封存的那条:容器出网不通、聊天每轮 Connection error,
+  从未通过 E2E。**在 mac 上开沙箱,大概率直接把聊天弄挂。**
+
+结论:**现阶段 mac 上不要开这个开关**,除非要跑不信任的代码且愿意自己趟 Docker。
+
+### macOS 原生沙箱是有的:Seatbelt(`sandbox-exec`)
+
+macOS 自带 `/usr/bin/sandbox-exec`,能力与 Linux 的 bwrap 对位。本机实测
+(macOS 26.5.1 / Darwin 25.5,profile 见下)全部通过:
+
+| 验证项 | 结果 |
+|---|---|
+| 工作区内写入 | ✅ 允许 |
+| 工作区外写入 | ✅ 被拒(`Operation not permitted`),原文件未被改动 |
+| 系统路径读取 | ✅ 允许(等价 bwrap `--ro-bind / /`) |
+| `(deny network*)` 后直连外网 | ✅ 被拒(curl 返回 000) |
+| 只放行 `localhost:<代理端口>` | ✅ 该端口通,外网不通,**其它 localhost 端口也不通** |
+
+最后一行是关键:**WSL 那套「出站强制走主机侧白名单代理」的设计,在 mac 上原样成立**,
+`sandbox-proxy.ts` 可以直接复用,不用重写。
+
+实测用的 profile 骨架:
+
+```scheme
+(version 1)
+(deny default)
+(import "system.sb")
+(allow process-exec* process-fork)
+(allow file-read*)                                  ; 整盘可读
+(allow file-write* (subpath (param "WS")))          ; 只写工作区(agent 目录同理再加一条)
+(deny network*)
+(allow network-outbound (remote ip "localhost:18923"))  ; 只放行白名单代理端口
+```
+
+注意:`sandbox-exec` 的 man page 标了 deprecated,但系统仍在用它(Chrome、Claude Code
+都走这条),短期不会消失。
+
+### 选项对比
+
+| 方案 | 文件隔离 | 网络管控 | 依赖 | 启动开销 | 评价 |
+|---|---|---|---|---|---|
+| **不开(现状)** | 无 | 无 | 无 | 0 | 功能不受影响,只是没隔离。当前默认 |
+| **Docker 回退** | 有(只挂工作区+agent 目录) | **无** | Docker daemon + 构建镜像 | 每次开工作区一次 `docker run` | 已封存,出网问题未解,不推荐 |
+| **srt(推荐)** | 有 | **有**(域名白名单代理) | mac 侧只要 ripgrep | 进程级,无虚机 | 见下 |
+| **自写 Seatbelt profile** | 有 | 有(自接 `sandbox-proxy.ts`) | 无 | 进程级 | 可行但要自己维护 profile |
+
+### 推荐:srt(anthropic-experimental/sandbox-runtime)
+
+[sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 就是 Claude Code
+自己那套,上面复盘里已经为 Windows 记过一笔。**它在 mac 上的实现正是本节实测的形状**:
+
+- macOS:`sandbox-exec` + 动态生成 Seatbelt profile;
+- 网络:HTTP 代理做域名白名单 + SOCKS5 兜其它 TCP,**macOS 侧就是限制到 localhost 端口**;
+- Linux:bubblewrap;Windows:alpha,专用本地账户 + WFP;
+- **mac 依赖只有 ripgrep**——没有 daemon、没有虚机、没有镜像构建;
+- 提供 CLI(`srt`)和 TS 库(`SandboxManager`)两种接法。
+
+对 pi-studio 的接法与现有架构一致:中继 shim 不动,把 `docker run …` 换成
+`srt … pi --mode rpc …`(或用 `SandboxManager` 在 main 里包一层),
+`sandbox-proxy.ts` 的白名单代理继续用。
+
+### 已落地(2026-08-23)
+
+**macOS 走 Seatbelt,不走 Docker。** `src/main/sandbox-seatbelt.ts`:
+
+- `prepareSandboxLaunch` 第一条分支就是 `detectSeatbelt()`,mac 上永远不会落到 Docker;
+- 沿用中继 shim 架构:`cliPath` 指向 `sandbox-seatbelt-shim.cjs`,那个进程再
+  `spawn('/usr/bin/sandbox-exec', ['-f', profile, process.execPath, realCli, ...argv])`,
+  stdio 原样继承 —— RpcClient 零改动;
+- profile 用 `(allow default)` 打底再 `(deny file-write*)` 收窄,只放行
+  **工作区 / agent 目录 / 临时目录** 三个 subpath 加 stdio 设备。
+  不用 `(deny default)` 全量白名单:那要把 mach 服务、sysctl、IPC 一条条列全,
+  漏一条就是难查的运行时故障,而我们要的只是"别写工作区外面";
+- 临时目录必须放行:node 要用,粘贴图桥(pi-studio-imagegen 扩展)也写在那里;
+- `sandboxAgentPath` 对 seatbelt 是恒等 —— 同一个文件系统,没有命名空间转换;
+- `securitySnapshot` 报 `backend: 'macos-seatbelt'`、`filesystemMode: 'workspace-write'`、
+  **`networkMode: 'unrestricted'`**(只做文件隔离,别报成 allowlist);
+- 标题栏徽标显示「沙箱·仅工作区可写」。
+
+**网络暂不收敛**(2026-08-23 决定):Seatbelt 只放行 `localhost:<代理端口>` 已实测可行,
+但白名单外的域名一律 403,agent 跑 `git clone github`、`curl` 文档都会被拦,
+需要按实际用法补名单。`sandbox-proxy.ts` 原样留着,要收紧时把
+`(deny network*)` + 放行代理端口加回 `buildSeatbeltProfile` 即可。
+
+**验证**(`src/main/sandbox-seatbelt.test.ts`,非 darwin 自动跳过):profile 形状 5 项 +
+真调 `sandbox-exec` 5 项 —— 工作区可写、区外写入被拒且原文件未改、区外删除被拒、
+系统路径可读,以及**真实 pi CLI 在沙箱里能启动**(Docker 那条正是死在这一步,
+而且从来没人真跑过)。
+
+### 若要进一步收紧,待办
+
+1. 复用 `sandbox-proxy.ts`,把 `(deny network*)` + `(allow network-outbound (remote ip "localhost:<port>"))`
+   加进 `buildSeatbeltProfile`,并给 shim 注入 `HTTPS_PROXY`。
+2. 先摸清实际需要的域名(github、各类文档站、非 npm 源的包管理器),否则一开就到处 403。
+3. 补 E2E:非白名单出站被拦(照 WSL 的验收标准)。
+
+**要不要换成 srt?** [sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime)
+在 mac 上就是 `sandbox-exec` + localhost 白名单代理,和上面自建的是同一套原语,
+额外带来的是现成的域名白名单代理和跨平台一致性(Linux bwrap / Windows WFP)。
+自建这版已经能跑且零依赖;等要做网络收敛时再评估是否换过去更划算。

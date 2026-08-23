@@ -4,7 +4,7 @@ import { prepareAgentRuntime } from './agent-runtime-config'
 import { resolvePiCliPath } from './pi-process'
 import { prepareSandboxLaunch, sandboxAgentPath } from './sandbox'
 import { loadSettings } from './settings'
-import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
+import type { ExecutionSecuritySnapshot, SandboxMode } from '../shared/ipc/contract'
 import { DEFAULT_THINKING_LEVEL } from '../shared/agent-defaults'
 import { appendAppLog } from './app-log'
 
@@ -24,7 +24,7 @@ export type CompiledRunProfile = {
   cliPath: string
   args: string[]
   thinkingLevel: typeof DEFAULT_THINKING_LEVEL
-  sandboxMode: 'wsl' | 'docker' | null
+  sandboxMode: SandboxMode | null
   security: ExecutionSecuritySnapshot
   declaredCapabilities?: { subagents: boolean }
   profileDigest: string
@@ -36,7 +36,7 @@ type RunProfileCompilerDependencies = {
   prepareSandbox: (
     cwd: string,
     env: Record<string, string>,
-  ) => Promise<{ cliPath: string; env: Record<string, string>; mode: 'wsl' | 'docker' }>
+  ) => Promise<{ cliPath: string; env: Record<string, string>; mode: SandboxMode }>
   resolveCliPath: () => string
 }
 
@@ -61,7 +61,7 @@ function profileDigest(profile: Omit<CompiledRunProfile, 'profileDigest' | 'env'
 
 function securitySnapshot(
   kind: RunProfileKind,
-  sandboxMode: 'wsl' | 'docker' | null,
+  sandboxMode: SandboxMode | null,
 ): ExecutionSecuritySnapshot {
   const hostCodeExecution = kind === 'code-model' || kind === 'blender-model'
   if (sandboxMode === 'wsl') {
@@ -75,6 +75,20 @@ function securitySnapshot(
       reason: hostCodeExecution
         ? 'Pi is confined by WSL bubblewrap and the outbound allowlist; generated code is still executed by the host.'
         : 'Pi is confined by WSL bubblewrap and the outbound allowlist.',
+    }
+  }
+  if (sandboxMode === 'seatbelt') {
+    return {
+      requested: 'confined',
+      filesystemMode: 'workspace-write',
+      // 只收窄了写权限,网络照旧 —— 别报成 allowlist
+      networkMode: 'unrestricted',
+      backend: 'macos-seatbelt',
+      enforcement: 'partial',
+      hostCodeExecution,
+      reason: hostCodeExecution
+        ? 'Pi filesystem writes are confined by the macOS Seatbelt sandbox; outbound network access and generated host code execution are unrestricted.'
+        : 'Pi filesystem writes are confined by the macOS Seatbelt sandbox; outbound network access is unrestricted.',
     }
   }
   if (sandboxMode === 'docker') {

@@ -566,11 +566,16 @@ export type ProviderModelListResult =
   | { ok: true; message: string; models: string[] }
   | { ok: false; message: string; details?: string }
 
+/** 沙箱后端:macOS 走系统自带 Seatbelt,Windows 首选 WSL2+bwrap,Docker 是历史回退。 */
+export type SandboxMode = 'wsl' | 'docker' | 'seatbelt'
+
 export type SandboxDetect = {
   docker: { cliFound: boolean; daemonRunning: boolean; version: string }
   /** 首选执行路径:pi-studio-sandbox WSL 发行版是否就绪 */
   wslSandboxReady: boolean
   wsl: { available: boolean; distros: string[] }
+  /** macOS 原生沙箱(sandbox-exec)是否可用 —— mac 上这是唯一路径,不走 Docker */
+  seatbelt: boolean
 }
 
 export type SandboxImageStatus = {
@@ -688,7 +693,7 @@ export type ExtensionUiResponse =
   | { type: 'extension_ui_response'; id: string; cancelled: true }
 
 /**
- * 由 `patches/@earendil-works__pi-coding-agent@0.80.7.patch` 注入。
+ * 由 `patches/@earendil-works__pi-coding-agent@0.82.1.patch` 注入。
  * 原版 rpc 模式在 prompt 预检通过之后再抛出的异常没有任何出口 —— 响应早就发过了,
  * 事件流里也不会有 agent_end,宿主只能看到这一轮凭空消失(两个会话同时"停住"就是这么来的)。
  * 补丁把它变成一条事件,ChatPane 才能把真实错误摆出来。
@@ -711,7 +716,7 @@ export type ExecutionSecuritySnapshot = {
   requested: 'confined' | 'full-access'
   filesystemMode: 'workspace-write' | 'danger-full-access'
   networkMode: 'allowlist' | 'unrestricted'
-  backend: 'wsl-bwrap' | 'docker' | 'host'
+  backend: 'wsl-bwrap' | 'docker' | 'macos-seatbelt' | 'host'
   enforcement: 'full' | 'partial' | 'none'
   hostCodeExecution: boolean
   reason: string
@@ -758,7 +763,7 @@ export type AgentRuntimeSnapshot = {
   workspacePath: string | null
   sessionId: string | null
   sessionFile: string | null
-  sandbox: 'wsl' | 'docker' | null
+  sandbox: SandboxMode | null
   security: ExecutionSecuritySnapshot | null
   profileDigest: string | null
   activeRun: { startedAt: number } | null
@@ -881,6 +886,12 @@ export type SessionProjectionChanges = {
 
 export type SessionProjectionSnapshot = {
   revision: number
+  /**
+   * 只在 messages 被整体替换时递增(落库读取 / 换会话 / 清空)。
+   * revision 每来一个 agent 事件都会动,分不出"消息变了"还是"只是工具进度变了";
+   * 渲染层靠这个字段判断该不该用 projection 覆盖本地流式拼出来的消息。
+   */
+  messagesRevision: number
   asOfSeq: number
   workspacePath: string | null
   sessionFile: string | null
@@ -914,7 +925,7 @@ export type AgentStatusEvent =
       restoredSession: boolean
       sessionId?: string
       sessionFile?: string
-      sandbox?: 'wsl' | 'docker'
+      sandbox?: SandboxMode
       security?: ExecutionSecuritySnapshot
       profileDigest?: string
     }

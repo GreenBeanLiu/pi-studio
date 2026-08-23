@@ -16,6 +16,7 @@ import {
   api,
   type AgentStatusEvent,
   type ExecutionSecuritySnapshot,
+  type SandboxMode,
   type Workspace,
 } from './lib/api'
 
@@ -64,7 +65,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const [diagnosticsExporter, setDiagnosticsExporter] = useState<(() => void) | null>(null)
   const [activeView, setActiveView] = useState<ActiveView>('chat')
   // 当前工作区 agent 的沙箱运行模式(null=直跑主机);来自 agent:status started 事件
-  const [sandboxMode, setSandboxMode] = useState<'wsl' | 'docker' | null>(null)
+  const [sandboxMode, setSandboxMode] = useState<SandboxMode | null>(null)
   const [executionSecurity, setExecutionSecurity] = useState<ExecutionSecuritySnapshot | null>(null)
   // Bumped when the active session changes; remounts ChatPane so it reloads messages.
   const [sessionEpoch, setSessionEpoch] = useState(0)

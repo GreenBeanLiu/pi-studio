@@ -18,7 +18,7 @@ import {
   PRODUCTION_CONTENT_SECURITY_POLICY,
 } from './network-policy'
 import { cleanupStaleRunChangeTempDirs } from './run-change-set'
-import { syncBundledSkills } from './sculptor-skill'
+import { syncBundledExtensions, syncBundledSkills } from './bundled-agent-resources'
 import { startSharedMemoryService, stopSharedMemoryService } from './shared-memory'
 import { sharedMemoryPath } from './workspace-memory'
 
@@ -258,6 +258,7 @@ app.whenReady().then(() => {
     appendAppLog('warn', 'memory.service', 'Shared memory service failed to start', normalizeError(error))
   })
   syncBundledSkills()
+  syncBundledExtensions()
   piClientManager.warmup()
   // 上次开着远程控制就自动重连中转
   if (loadSettings().remoteEnabled) void remoteControl.enable()

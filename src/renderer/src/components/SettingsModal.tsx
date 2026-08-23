@@ -202,6 +202,13 @@ export default function SettingsModal({
   const [channelDraft, setChannelDraft] = useState<Channel | null>(null)
   const [channelTesting, setChannelTesting] = useState<string | null>(null)
   const [channelTestResult, setChannelTestResult] = useState<Record<string, string>>({})
+  // 三条执行路径各自的平台:Windows 走 WSL+bwrap(整盘只读、白名单代理),
+  // macOS 走系统自带 Seatbelt(只收窄写权限),其余平台才是 Docker。
+  // 文案不能互相照抄 —— 它们给的保证不一样。
+  const sandboxOnWsl = api.platform === 'win32'
+  const sandboxOnSeatbelt = api.platform === 'darwin'
+  const sandboxUsesDocker = !sandboxOnWsl && !sandboxOnSeatbelt
+  const sandboxFallbackWord = sandboxOnWsl ? '(回退)' : ''
   const [sandboxDetect, setSandboxDetect] = useState<SandboxDetect | null>(null)
   const [sandboxDetecting, setSandboxDetecting] = useState(false)
   const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
@@ -1018,12 +1025,20 @@ export default function SettingsModal({
 
               <div className={styles.section}>
                 <span className={styles.label}>
-                  沙箱模式（WSL2 + bubblewrap）
+                  {sandboxOnWsl
+                    ? '沙箱模式（WSL2 + bubblewrap）'
+                    : sandboxOnSeatbelt
+                      ? '沙箱模式（macOS 原生）'
+                      : '沙箱模式（Docker）'}
                   <Tag color="orange" style={{ marginLeft: 8 }}>
                     实验性
                   </Tag>
                   <span className={styles.labelHint}>
-                    agent 跑在隔离的 WSL 发行版里:文件只写工作区,出站经主机白名单代理
+                    {sandboxOnWsl
+                      ? 'agent 跑在隔离的 WSL 发行版里:文件只写工作区,出站经主机白名单代理'
+                      : sandboxOnSeatbelt
+                        ? 'agent 只能写工作区、agent 目录和临时目录,别处一律拒绝'
+                        : 'agent 跑在 Docker 容器里:只挂载工作区与 agent 目录'}
                   </span>
                 </span>
                 <div className={styles.actionRow}>
@@ -1037,10 +1052,16 @@ export default function SettingsModal({
                   </span>
                 </div>
                 <Alert
-                  type="info"
+                  type={sandboxUsesDocker ? 'warning' : 'info'}
                   showIcon
-                  message="pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。"
-                  description="bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理(mirrored 或 NAT 网络模式均自动适配)。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。"
+                  message={
+                    sandboxOnWsl
+                      ? '发行版就绪即用 WSL 沙箱,否则回退 Docker。'
+                      : sandboxOnSeatbelt
+                        ? '用系统自带的 sandbox-exec,无需 Docker。写权限收窄到工作区,网络不受限。'
+                        : '本平台只能走 Docker,需要 daemon 在跑且镜像已构建。这条链路已封存,开启可能导致聊天不可用。'
+                  }
+                  description="保存后自动重启当前工作区生效;沙箱运行中标题栏有标识。详见 docs/sandbox-mode-plan.md。"
                 />
                 <div className={styles.actionRow}>
                   <span className={styles.label}>环境</span>
@@ -1049,37 +1070,52 @@ export default function SettingsModal({
                   </Button>
                 </div>
                 <div className={styles.actionRow}>
-                  <Tag color={sandboxDetect?.wslSandboxReady ? 'green' : 'default'}>
-                    {sandboxDetect
-                      ? sandboxDetect.wslSandboxReady
-                        ? 'WSL 沙箱发行版就绪(pi-studio-sandbox)'
-                        : 'WSL 沙箱发行版未准备'
-                      : 'WSL 检测中…'}
-                  </Tag>
-                  <Tag color={sandboxDetect?.docker.daemonRunning ? 'green' : 'default'}>
-                    {sandboxDetect
-                      ? sandboxDetect.docker.daemonRunning
-                        ? `Docker 回退可用 v${sandboxDetect.docker.version}`
-                        : sandboxDetect.docker.cliFound
-                          ? 'Docker(回退)未运行'
-                          : '无 Docker(回退)'
-                      : 'Docker 检测中…'}
-                  </Tag>
-                  <Tag color={sandboxImage?.exists ? 'green' : 'default'}>
-                    {sandboxImage
-                      ? sandboxImage.exists
-                        ? `回退镜像已就绪`
-                        : '回退镜像未构建'
-                      : '镜像检测中…'}
-                  </Tag>
+                  {sandboxOnSeatbelt && (
+                    <Tag color={sandboxDetect?.seatbelt ? 'green' : 'default'}>
+                      {sandboxDetect
+                        ? sandboxDetect.seatbelt
+                          ? 'macOS 沙箱可用(sandbox-exec)'
+                          : 'macOS 沙箱不可用'
+                        : '检测中…'}
+                    </Tag>
+                  )}
+                  {sandboxOnWsl && (
+                    <Tag color={sandboxDetect?.wslSandboxReady ? 'green' : 'default'}>
+                      {sandboxDetect
+                        ? sandboxDetect.wslSandboxReady
+                          ? 'WSL 沙箱发行版就绪(pi-studio-sandbox)'
+                          : 'WSL 沙箱发行版未准备'
+                        : 'WSL 检测中…'}
+                    </Tag>
+                  )}
+                  {!sandboxOnSeatbelt && (
+                    <>
+                      <Tag color={sandboxDetect?.docker.daemonRunning ? 'green' : 'default'}>
+                        {sandboxDetect
+                          ? sandboxDetect.docker.daemonRunning
+                            ? `Docker${sandboxFallbackWord}可用 v${sandboxDetect.docker.version}`
+                            : sandboxDetect.docker.cliFound
+                              ? `Docker${sandboxFallbackWord}未运行`
+                              : `无 Docker${sandboxFallbackWord}`
+                          : 'Docker 检测中…'}
+                      </Tag>
+                      <Tag color={sandboxImage?.exists ? 'green' : 'default'}>
+                        {sandboxImage
+                          ? sandboxImage.exists
+                            ? '沙箱镜像已就绪'
+                            : '沙箱镜像未构建'
+                          : '镜像检测中…'}
+                      </Tag>
+                    </>
+                  )}
                 </div>
-                {sandboxDetect && !sandboxDetect.wslSandboxReady && (
+                {sandboxOnWsl && sandboxDetect && !sandboxDetect.wslSandboxReady && (
                   <span className={styles.labelHint}>
                     准备发行版(一次性,约 1 分钟):详见 docs/sandbox-mode-plan.md 或
                     src/main/sandbox-wsl.ts 头注释里的三条命令。
                   </span>
                 )}
-                {sandboxDetect?.docker.daemonRunning && !sandboxImage?.exists && (
+                {!sandboxOnSeatbelt && sandboxDetect?.docker.daemonRunning && !sandboxImage?.exists && (
                   <div className={styles.actionRow}>
                     <Button size="small" type="primary" loading={sandboxBuilding} onClick={buildSandboxImage}>
                       构建镜像

@@ -36,6 +36,8 @@ describe('SessionProjectionTracker', () => {
     const beforeClear = tracker.snapshot().asOfSeq
     expect(tracker.clear()).toEqual({
       revision: 3,
+      // beginLoad 建了一次(0→1)、commit 落库一次(1→2)、clear 抹平一次(2→3)
+      messagesRevision: 3,
       asOfSeq: 3,
       workspacePath: null,
       sessionFile: null,
@@ -368,5 +370,80 @@ describe('SessionProjectionTracker', () => {
     const snapshot = tracker.commit(load, [])
 
     expect(snapshot.tools['call-live']).toMatchObject({ status: 'running', toolName: 'write' })
+  })
+})
+
+// 2026-08-23: 提一个问题,画面刷一下,刚打的字就没了。运行途中每来一个工具事件都会
+// 广播 projection,而 snapshot.messages 只在 commit 时才更新 —— 那一刻它带的还是
+// 上一轮的旧消息。渲染层照单全收就把用户消息和正在流的回复一起抹了。
+// messagesRevision 的作用就是让渲染层能分辨"消息真变了"和"只是工具进度动了"。
+describe('messagesRevision', () => {
+  const userMessage = (text: string, timestamp: number): AgentMessage =>
+    ({ role: 'user', content: [{ type: 'text', text }], timestamp }) as unknown as AgentMessage
+
+  it('does not move while a run only reports tool progress', () => {
+    const tracker = new SessionProjectionTracker()
+    const load = tracker.beginLoad('/repo', '/sessions/a.jsonl', 'session-a')
+    tracker.commit(load, [userMessage('第一轮', 1)])
+    const committed = tracker.snapshot()
+
+    const started = tracker.ingest('session-a', {
+      type: 'tool_execution_start',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+    })
+    const afterTool = tracker.snapshot()
+
+    // 工具进度确实要推给界面
+    expect(started.projectionChanged).toBe(true)
+    expect(afterTool.tools['call-1']).toBeDefined()
+    expect(afterTool.revision).toBeGreaterThan(committed.revision)
+    // 但消息一个字都没变,渲染层不该拿它去覆盖本地流式拼出来的列表
+    expect(afterTool.messagesRevision).toBe(committed.messagesRevision)
+    expect(afterTool.messages).toBe(committed.messages)
+  })
+
+  it('moves when a durable read actually replaces the messages', () => {
+    const tracker = new SessionProjectionTracker()
+    const load = tracker.beginLoad('/repo', '/sessions/a.jsonl', 'session-a')
+    tracker.commit(load, [userMessage('第一轮', 1)])
+    const before = tracker.snapshot().messagesRevision
+
+    const after = tracker.commit(load, [userMessage('第一轮', 1), userMessage('第二轮', 2)])
+
+    expect(after.messagesRevision).toBe(before + 1)
+  })
+
+  it('stays put when a commit changes nothing', () => {
+    const tracker = new SessionProjectionTracker()
+    const load = tracker.beginLoad('/repo', '/sessions/a.jsonl', 'session-a')
+    tracker.commit(load, [userMessage('第一轮', 1)])
+    const before = tracker.snapshot().messagesRevision
+
+    // 同一份消息再落一次:指纹没变,不该让渲染层白刷一次
+    const after = tracker.commit(load, [userMessage('第一轮', 1)])
+
+    expect(after.messagesRevision).toBe(before)
+  })
+
+  it('moves when switching sessions wipes the list', () => {
+    const tracker = new SessionProjectionTracker()
+    const load = tracker.beginLoad('/repo', '/sessions/a.jsonl', 'session-a')
+    tracker.commit(load, [userMessage('第一轮', 1)])
+    const before = tracker.snapshot().messagesRevision
+
+    tracker.beginLoad('/repo', '/sessions/b.jsonl', 'session-b')
+
+    expect(tracker.snapshot().messages).toEqual([])
+    expect(tracker.snapshot().messagesRevision).toBe(before + 1)
+  })
+
+  it('moves when the projection is cleared', () => {
+    const tracker = new SessionProjectionTracker()
+    const load = tracker.beginLoad('/repo', '/sessions/a.jsonl', 'session-a')
+    tracker.commit(load, [userMessage('第一轮', 1)])
+    const before = tracker.snapshot().messagesRevision
+
+    expect(tracker.clear().messagesRevision).toBe(before + 1)
   })
 })

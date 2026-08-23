@@ -1492,6 +1492,8 @@ export default function ChatPane({
   // so update/end events replace the right slot even if other messages
   // (e.g. tool results) land in between.
   const streamingIndexRef = useRef<number | null>(null)
+  // 最后一次真正应用过的 projection messagesRevision;null = 还没应用过任何一份
+  const appliedMessagesRevisionRef = useRef<number | null>(null)
   const activeRunIdRef = useRef<string | null>(null)
   /** 本轮最后一条 assistant 消息的报错(stopReason === 'error'),正常结束时为 null。 */
   const lastAssistantErrorRef = useRef<string | null>(null)
@@ -1552,6 +1554,7 @@ export default function ChatPane({
     setError(null)
     setRetryNotice(null)
     streamingIndexRef.current = null
+    appliedMessagesRevisionRef.current = null
     if (!workspace || starting) {
       setMessages([])
       setToolExecutions({})
@@ -1567,6 +1570,7 @@ export default function ChatPane({
     api.pi
       .getSessionProjection()
       .then((projection) => {
+        appliedMessagesRevisionRef.current = projection.messagesRevision
         setMessages(projection.messages)
         setToolExecutions(toolsFromProjection(projection.tools))
         setApprovalRequests(projection.approvals.map(approvalFromProjection))
@@ -1600,8 +1604,16 @@ export default function ChatPane({
   useEffect(() => {
     return api.pi.onSessionProjection((projection) => {
       if (projection.workspacePath !== workspace?.path) return
-      streamingIndexRef.current = null
-      setMessages(projection.messages)
+      // 工具和审批是实时的,消息不是:snapshot.messages 只在落库读取后才更新。
+      // 运行途中任何一个工具事件都会广播 projection,那时它带的还是上一轮的旧消息 ——
+      // 无条件 setMessages 会把刚发出的用户消息和正在流式输出的回复一起抹掉,
+      // 顺带清空 streamingIndex,让后续 message_update 追加出一条重复的回复。
+      // 所以只在 messages 真被替换过(messagesRevision 变了)时才覆盖本地列表。
+      if (projection.messagesRevision !== appliedMessagesRevisionRef.current) {
+        appliedMessagesRevisionRef.current = projection.messagesRevision
+        streamingIndexRef.current = null
+        setMessages(projection.messages)
+      }
       setToolExecutions(toolsFromProjection(projection.tools))
       setApprovalRequests(projection.approvals.map(approvalFromProjection))
     })

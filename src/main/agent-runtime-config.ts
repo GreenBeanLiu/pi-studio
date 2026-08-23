@@ -1,4 +1,5 @@
 import { appendAppLog, normalizeError } from './app-log'
+import { getCloudConnection } from './cloud-connection'
 import type { LlmProviderProfile } from './llm-gateway'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { agentConfigDir, loadSettings } from './settings'
@@ -45,6 +46,10 @@ export async function prepareAgentRuntime(cwd?: string): Promise<AgentRuntimeCon
   }
 
   const memory = getSharedMemoryConnection() ?? await startSharedMemoryService(sharedMemoryPath())
+  const cloud = getCloudConnection()
+  const cloudEnv: Record<string, string> = cloud.available
+    ? { PI_CLOUD_IMAGE_RELAY: cloud.relay, PI_CLOUD_IMAGE_KEY: cloud.key }
+    : {}
 
   return {
     provider: selectedRoute.provider,
@@ -57,6 +62,7 @@ export async function prepareAgentRuntime(cwd?: string): Promise<AgentRuntimeCon
       PI_STUDIO_MEMORY_FILE: sharedMemoryPath(),
       ...(cwd ? { PI_STUDIO_MEMORY_WORKSPACE_PATH: cwd } : {}),
       ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
+      ...cloudEnv,
     },
     gatewayProfiles,
   }

@@ -98,6 +98,22 @@ const useStyles = createStyles(({ token, css }) => ({
     overflow-y: auto;
   `,
 
+  // 工具产出的图:折叠态也显示 —— 图本身就是结果,不是展开才看的细节
+  imageStrip: css`
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 12px 10px 34px;
+
+    img {
+      display: block;
+      max-width: 220px;
+      max-height: 220px;
+      border-radius: ${token.borderRadius}px;
+      border: 1px solid ${token.colorBorderSecondary};
+    }
+  `,
+
   // ── 子代理卡 ──────────────────────────────────────────────
   subCard: css`
     margin: 4px 0;
@@ -212,15 +228,33 @@ function summarizeArgs(args: unknown): string {
   }
 }
 
+type ResultImage = { data: string; mimeType: string }
+
+/**
+ * pi 的 toolResult.content 里的 ImageContent。生图/截图类工具的产出就在这里,
+ * 以前整个被 stringifyResult 丢掉了,卡片只剩一句文本。
+ */
+function resultImages(result: unknown): ResultImage[] {
+  if (!Array.isArray(result)) return []
+  return result.flatMap((b) => {
+    const block = b as { type?: string; data?: string; mimeType?: string } | null
+    if (!block || block.type !== 'image' || !block.data) return []
+    return [{ data: block.data, mimeType: block.mimeType ?? 'image/png' }]
+  })
+}
+
 function stringifyResult(result: unknown): string {
   if (result == null) return ''
   if (typeof result === 'string') return result
-  // pi's toolResult.content is (TextContent | ImageContent)[] — pull the text.
+  // pi's toolResult.content is (TextContent | ImageContent)[] — 文本在这里取,
+  // 图交给 resultImages() 渲染。带图的结果绝不能落到下面的 JSON.stringify:
+  // 那会把整段 base64 倒进卡片正文。
   if (Array.isArray(result)) {
     const texts = result
       .filter((b) => b && (b as { type?: string }).type === 'text')
       .map((b) => (b as { text?: string }).text ?? '')
     if (texts.length > 0) return texts.join('\n')
+    if (resultImages(result).length > 0) return ''
   }
   try {
     return JSON.stringify(result, null, 2)
@@ -404,6 +438,9 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
   // 子代理调用走专属卡片(区别于普通工具)
   if (call.name === 'subagent') return <SubagentCard call={call} execution={execution} />
 
+  const resultText = execution?.result === undefined ? '' : stringifyResult(execution.result)
+  const images = execution?.result === undefined ? [] : resultImages(execution.result)
+
   const loadArtifact = async (offsetChars: number): Promise<void> => {
     if (!artifact || artifactLoading) return
     setArtifactLoading(true)
@@ -444,6 +481,13 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
           )}
         </span>
       </div>
+      {images.length > 0 && (
+        <div className={styles.imageStrip}>
+          {images.map((img, i) => (
+            <img key={i} src={`data:${img.mimeType};base64,${img.data}`} alt="" />
+          ))}
+        </div>
+      )}
       {open && (
         <div className={styles.body}>
           {artifact ? (
@@ -484,13 +528,7 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
                 </>
               )}
             </>
-          ) : execution?.result !== undefined ? (
-            stringifyResult(execution.result)
-          ) : status === 'running' ? (
-            '执行中…'
-          ) : (
-            '（无结果）'
-          )}
+          ) : resultText || (images.length > 0 ? `${images.length} 张图片` : status === 'running' ? '执行中…' : '（无结果）')}
         </div>
       )}
     </div>

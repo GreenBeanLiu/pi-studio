@@ -4,6 +4,8 @@ import { writeFileSync, mkdirSync, readFileSync } from 'fs'
 import { join, dirname, posix, win32 } from 'path'
 import { resolvePiCliPath } from './pi-client'
 import { agentConfigDir } from './settings'
+import { detectSeatbelt, prepareSeatbeltSandboxLaunch } from './sandbox-seatbelt'
+import type { SandboxDetect, SandboxMode } from '../shared/ipc/contract'
 import { appendAppLog, normalizeError } from './app-log'
 import {
   detectWslSandboxDistro,
@@ -19,13 +21,6 @@ import {
  * 转发进 `docker run … IMAGE pi <RpcClient 追加的参数>`。RPC 是纯 JSONL over stdio,
  * shim 只当字节管道,RpcClient 的所有方法零改动即可隔着容器工作。
  */
-
-export type SandboxDetect = {
-  docker: { cliFound: boolean; daemonRunning: boolean; version: string }
-  /** 首选执行路径:pi-studio-sandbox WSL 发行版是否就绪(存在即自动启用) */
-  wslSandboxReady: boolean
-  wsl: { available: boolean; distros: string[] }
-}
 
 export type SandboxImageStatus = {
   tag: string
@@ -66,9 +61,11 @@ export function sandboxSessionPathToContainer(
 /** Convert an app-owned agent-config path into the selected sandbox namespace. */
 export function sandboxAgentPath(
   hostPath: string,
-  mode: 'wsl' | 'docker',
+  mode: SandboxMode,
   hostAgentDir?: string,
 ): string {
+  // seatbelt 跑在同一个文件系统上,没有命名空间转换可做
+  if (mode === 'seatbelt') return hostPath
   return mode === 'wsl'
     ? windowsToWslPath(hostPath)
     : sandboxSessionPathToContainer(hostPath, hostAgentDir ?? agentConfigDir())
@@ -270,7 +267,16 @@ export function buildSandboxDockerArgs(opts: {
 export async function prepareSandboxLaunch(
   cwd: string,
   env: Record<string, string>,
-): Promise<{ cliPath: string; env: Record<string, string>; mode: 'wsl' | 'docker' }> {
+): Promise<{ cliPath: string; env: Record<string, string>; mode: SandboxMode }> {
+  // macOS:系统自带的 Seatbelt,无 daemon / 无镜像 / 进程级。mac 上不走 Docker ——
+  // 那条 2026-07-15 已封存(容器出网不通),且 Docker Desktop 对桌面应用太重。
+  if (detectSeatbelt()) {
+    return {
+      ...(await prepareSeatbeltSandboxLaunch(cwd, env, resolvePiCliPath())),
+      mode: 'seatbelt',
+    }
+  }
+
   // 首选 WSL2 + bubblewrap(docs/sandbox-mode-plan.md「2026-07-15 复盘与决策」):
   // 文件隔离靠 mount namespace,出站经主机侧白名单代理——根治 Docker 容器出网不通。
   if (await detectWslSandboxDistro()) {
@@ -330,7 +336,7 @@ export function registerSandbox(): void {
       detectWsl(),
       detectWslSandboxDistro(),
     ])
-    return { docker, wslSandboxReady, wsl }
+    return { docker, wslSandboxReady, wsl, seatbelt: detectSeatbelt() }
   })
 
   ipcMain.handle('sandbox:imageStatus', async (): Promise<SandboxImageStatus> => {
