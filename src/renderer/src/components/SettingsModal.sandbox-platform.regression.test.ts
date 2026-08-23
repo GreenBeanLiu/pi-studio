@@ -31,8 +31,46 @@ describe('sandbox settings copy must match the platform', () => {
     expect(settingsModal).toContain('{sandboxOnWsl && sandboxDetect && !sandboxDetect.wslSandboxReady && (')
   })
 
+  it('never shows the word WSL to a non-Windows user', () => {
+    // 每一处提到 WSL 的 UI 文本,要么在三元的 sandboxOnWsl ? 真分支里,
+    // 要么整块被 {sandboxOnWsl && …} 包住。mac 用户不该看到这三个字母。
+    const lines = settingsModal.split('\n')
+    const sandboxStart = lines.findIndex((line) => line.includes('沙箱模式（WSL2'))
+    expect(sandboxStart).toBeGreaterThan(-1)
+
+    let gated = 0
+    for (let i = sandboxStart; i < lines.length; i++) {
+      const line = lines[i]
+      if (!/WSL|wsl/.test(line)) continue
+      if (line.trim().startsWith('//')) continue
+      const guarded =
+        line.includes('sandboxOnWsl ?') ||
+        line.includes('sandboxOnWsl &&') ||
+        /^\s*\? /.test(line) ||
+        withinGuardedBlock(lines, sandboxStart, i)
+      expect(guarded, `line ${i + 1} leaks WSL copy: ${line.trim()}`).toBe(true)
+      gated++
+    }
+    expect(gated).toBeGreaterThan(0)
+  })
+
   it('stops calling Docker a fallback where it is the only path', () => {
     expect(settingsModal).toContain("const sandboxFallbackWord = sandboxOnWsl ? '(回退)' : ''")
     expect(settingsModal).not.toContain('回退镜像未构建')
   })
 })
+
+/** i 行是否落在某个 {sandboxOnWsl && ( … )} 块里(按缩进配对,足够应付这段 JSX)。 */
+function withinGuardedBlock(lines: string[], from: number, i: number): boolean {
+  for (let j = i; j >= from; j--) {
+    if (!lines[j].includes('sandboxOnWsl &&')) continue
+    const guardIndent = lines[j].search(/\S/)
+    // 守卫和 i 之间,任何回到守卫缩进或更浅的收尾行都说明块已经闭合
+    for (let k = j + 1; k < i; k++) {
+      const indent = lines[k].search(/\S/)
+      if (indent >= 0 && indent <= guardIndent && /^\s*\)\}/.test(lines[k])) return false
+    }
+    return true
+  }
+  return false
+}

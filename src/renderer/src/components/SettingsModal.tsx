@@ -1027,12 +1027,12 @@ export default function SettingsModal({
                   message={
                     sandboxOnWsl
                       ? 'pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。'
-                      : '本平台没有 WSL,只能走 Docker 回退,需要 Docker daemon 在跑且镜像已构建。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。'
+                      : '本平台的沙箱只有 Docker 一条路,需要 Docker daemon 在跑且镜像已构建。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。'
                   }
                   description={
                     sandboxOnWsl
                       ? 'bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理(mirrored 或 NAT 网络模式均自动适配)。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。'
-                      : 'Docker 回退只有文件隔离(仅挂载工作区与 agent 目录),没有域名白名单代理 —— 那套是 WSL/bwrap 专属,容器拿的是默认网络,出站不受限。而且这条链路 2026-07-15 已封存:当时容器出网不通,聊天每轮都 Connection error,此后未再验证。注意沙箱内是 Linux 环境。详见 docs/sandbox-mode-plan.md。'
+                      : 'Docker 沙箱只有文件隔离(仅挂载工作区与 agent 目录),没有域名白名单代理 —— 容器拿的是默认网络,出站不受限。而且这条链路 2026-07-15 已封存:当时容器出网不通,聊天每轮都 Connection error,此后未再验证,开启有把聊天弄挂的风险。注意沙箱内是 Linux 环境。macOS 原生沙箱(sandbox-exec)的选型见 docs/sandbox-mode-plan.md。'
                   }
                 />
                 <div className={styles.actionRow}>
