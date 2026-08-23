@@ -908,7 +908,7 @@ export type AgentRunStatusSnapshot = {
   cwd: string
   phase: 'idle' | 'running' | 'awaiting_approval' | 'stopped'
   prompt: string | null
-  todo: { pending: number; inProgress: number; completed: number }
+  todo: AgentStatusTodo
   tools: Record<string, number>
   failures: number
   repeatedFailures: number
@@ -916,6 +916,14 @@ export type AgentRunStatusSnapshot = {
   startedAt: number | null
   updatedAt: string
   loopDetected: string | null
+}
+
+/** TODO 清单。只留计数的话界面就只能显示 "0/0",看不出在做什么、卡在哪一条。 */
+export type AgentStatusTodo = {
+  pending: number
+  inProgress: number
+  completed: number
+  items: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>
 }
 
 export type AgentStatusEvent =

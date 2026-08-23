@@ -1,3 +1,4 @@
+import type { AgentStatusTodo } from '../shared/ipc/contract'
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 
@@ -10,19 +11,33 @@ type RuntimeEvent = {
   method?: string
 }
 
-type TodoItem = { status?: unknown }
+type TodoItem = { id?: unknown; content?: unknown; status?: unknown }
 
-function todoCounts(args: unknown): AgentStatusSnapshot['todo'] | null {
+/** 一条 TODO 最多留这么长 —— 状态要进模型上下文,别让它被一条超长任务撑爆。 */
+const MAX_TODO_CONTENT = 200
+
+/**
+ * 从 update_agent_todo 的入参里取出清单。
+ * 只留计数的话,界面就只能显示 "TODO 0/0",看不出到底在做什么、卡在哪一条。
+ */
+function todoState(args: unknown): AgentStatusSnapshot['todo'] | null {
   if (!args || typeof args !== 'object') return null
-  const items = (args as { items?: unknown }).items
-  if (!Array.isArray(items)) return null
-  const counts = { pending: 0, inProgress: 0, completed: 0 }
-  for (const item of items as TodoItem[]) {
-    if (item?.status === 'pending') counts.pending += 1
-    else if (item?.status === 'in_progress') counts.inProgress += 1
-    else if (item?.status === 'completed') counts.completed += 1
+  const raw = (args as { items?: unknown }).items
+  if (!Array.isArray(raw)) return null
+  const state: AgentStatusSnapshot['todo'] = { pending: 0, inProgress: 0, completed: 0, items: [] }
+  for (const item of raw as TodoItem[]) {
+    const status = item?.status
+    if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') continue
+    if (status === 'pending') state.pending += 1
+    else if (status === 'in_progress') state.inProgress += 1
+    else state.completed += 1
+    state.items.push({
+      id: typeof item.id === 'string' ? item.id : String(state.items.length),
+      content: (typeof item.content === 'string' ? item.content : '').slice(0, MAX_TODO_CONTENT),
+      status,
+    })
   }
-  return counts
+  return state
 }
 
 export type AgentPromptCheckpoint = {
@@ -35,7 +50,7 @@ export type AgentStatusSnapshot = {
   cwd: string
   phase: 'idle' | 'running' | 'awaiting_approval' | 'stopped'
   prompt: string | null
-  todo: { pending: number; inProgress: number; completed: number }
+  todo: AgentStatusTodo
   tools: Record<string, number>
   failures: number
   repeatedFailures: number
@@ -72,7 +87,7 @@ export class AgentStatusTracker {
       cwd,
       phase: 'idle',
       prompt: null,
-      todo: { pending: 0, inProgress: 0, completed: 0 },
+      todo: { pending: 0, inProgress: 0, completed: 0, items: [] },
       tools: {},
       failures: 0,
       repeatedFailures: 0,
@@ -90,7 +105,7 @@ export class AgentStatusTracker {
   snapshot(): AgentStatusSnapshot {
     return {
       ...this.snap,
-      todo: { ...this.snap.todo },
+      todo: { ...this.snap.todo, items: this.snap.todo.items.map((item) => ({ ...item })) },
       tools: { ...this.snap.tools },
     }
   }
@@ -144,7 +159,7 @@ export class AgentStatusTracker {
       this.runEpoch += 1
       this.acceptPendingPrompts()
       this.snap.phase = 'running'
-      this.snap.todo = { pending: 0, inProgress: 0, completed: 0 }
+      this.snap.todo = { pending: 0, inProgress: 0, completed: 0, items: [] }
       this.snap.tools = {}
       this.snap.failures = 0
       this.snap.repeatedFailures = 0
@@ -166,7 +181,7 @@ export class AgentStatusTracker {
     } else if (event.type === 'tool_execution_start' && event.toolName) {
       this.snap.tools[event.toolName] = (this.snap.tools[event.toolName] ?? 0) + 1
       if (event.toolName === 'update_agent_todo') {
-        const todo = todoCounts(event.args)
+        const todo = todoState(event.args)
         if (todo) this.snap.todo = todo
       }
     } else if (event.type === 'tool_execution_end') {
@@ -223,5 +238,8 @@ export class AgentStatusTracker {
 export function formatAgentStatus(snapshot: AgentStatusSnapshot): string {
   const tools = Object.entries(snapshot.tools).sort(([a], [b]) => a.localeCompare(b)).map(([name, count]) => `${name}=${count}`).join(', ')
   const todo = `pending=${snapshot.todo.pending}, in_progress=${snapshot.todo.inProgress}, completed=${snapshot.todo.completed}`
-  return `<agent_status>\nphase: ${snapshot.phase}\nworkspace: ${snapshot.cwd}\nprompt: ${snapshot.prompt ?? '(none)'}\ntodo: ${todo}\ntool_calls: ${tools || '(none)'}\nfailures: ${snapshot.failures}\nrepeated_failures: ${snapshot.repeatedFailures}\nactive_approvals: ${snapshot.activeApprovals}\nloop_detected: ${snapshot.loopDetected ?? 'none'}\n</agent_status>`
+  const todoList = snapshot.todo.items
+    .map((item) => `  [${item.status === 'completed' ? 'x' : item.status === 'in_progress' ? '~' : ' '}] ${item.content}`)
+    .join('\n')
+  return `<agent_status>\nphase: ${snapshot.phase}\nworkspace: ${snapshot.cwd}\nprompt: ${snapshot.prompt ?? '(none)'}\ntodo: ${todo}${todoList ? `\n${todoList}` : ''}\ntool_calls: ${tools || '(none)'}\nfailures: ${snapshot.failures}\nrepeated_failures: ${snapshot.repeatedFailures}\nactive_approvals: ${snapshot.activeApprovals}\nloop_detected: ${snapshot.loopDetected ?? 'none'}\n</agent_status>`
 }

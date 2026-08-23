@@ -518,6 +518,55 @@ const useStyles = createStyles(({ token, css }) => ({
     white-space: nowrap;
   `,
 
+  agentStatusClickable: css`
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+
+    &:hover {
+      color: ${token.colorText};
+    }
+  `,
+
+  agentStatusDetail: css`
+    max-width: 420px;
+    max-height: 320px;
+    overflow-y: auto;
+    font-size: 12px;
+    line-height: 1.7;
+  `,
+
+  agentStatusTodoRow: css`
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    color: ${token.colorText};
+  `,
+
+  agentStatusTodoDone: css`
+    color: ${token.colorTextTertiary};
+    text-decoration: line-through;
+  `,
+
+  agentStatusTodoMark: css`
+    flex-shrink: 0;
+    width: 12px;
+    color: ${token.colorTextTertiary};
+  `,
+
+  agentStatusToolRow: css`
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    font-family: ${token.fontFamilyCode};
+    color: ${token.colorText};
+  `,
+
+  agentStatusToolCount: css`
+    color: ${token.colorTextTertiary};
+    font-variant-numeric: tabular-nums;
+  `,
+
   agentStatusTask: css`
     flex: 1 1 100%;
     min-width: 0;
@@ -3314,12 +3363,66 @@ export default function ChatPane({
                       ? '运行中'
                       : '空闲'}
               </span>
-              <span className={styles.agentStatusItem}>
-                TODO {agentStatus.todo.completed}/{agentStatus.todo.pending + agentStatus.todo.inProgress + agentStatus.todo.completed}
-              </span>
-              <span className={styles.agentStatusItem}>
-                工具 {Object.values(agentStatus.tools).reduce((total, count) => total + count, 0)}
-              </span>
+              {(() => {
+                const total =
+                  agentStatus.todo.pending + agentStatus.todo.inProgress + agentStatus.todo.completed
+                const label = `TODO ${agentStatus.todo.completed}/${total}`
+                // 只有数字看不出在做什么、卡在哪一条 —— 有清单就能点开看
+                if (agentStatus.todo.items.length === 0) {
+                  return <span className={styles.agentStatusItem}>{label}</span>
+                }
+                return (
+                  <Popover
+                    trigger="click"
+                    placement="top"
+                    content={
+                      <div className={styles.agentStatusDetail}>
+                        {agentStatus.todo.items.map((item) => (
+                          <div
+                            key={item.id}
+                            className={cx(
+                              styles.agentStatusTodoRow,
+                              item.status === 'completed' && styles.agentStatusTodoDone,
+                            )}
+                          >
+                            <span className={styles.agentStatusTodoMark}>
+                              {item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▶' : '○'}
+                            </span>
+                            <span>{item.content || '(无描述)'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    }
+                  >
+                    <span className={cx(styles.agentStatusItem, styles.agentStatusClickable)}>{label}</span>
+                  </Popover>
+                )
+              })()}
+              {(() => {
+                const entries = Object.entries(agentStatus.tools).sort((a, b) => b[1] - a[1])
+                const total = entries.reduce((sum, [, count]) => sum + count, 0)
+                const label = `工具 ${total}`
+                // 工具名一直都在数据里,以前只是被加总成一个数字
+                if (entries.length === 0) return <span className={styles.agentStatusItem}>{label}</span>
+                return (
+                  <Popover
+                    trigger="click"
+                    placement="top"
+                    content={
+                      <div className={styles.agentStatusDetail}>
+                        {entries.map(([name, count]) => (
+                          <div key={name} className={styles.agentStatusToolRow}>
+                            <span>{name}</span>
+                            <span className={styles.agentStatusToolCount}>{count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    }
+                  >
+                    <span className={cx(styles.agentStatusItem, styles.agentStatusClickable)}>{label}</span>
+                  </Popover>
+                )
+              })()}
               {agentStatus.failures > 0 && (
                 <span className={styles.agentStatusItem}>失败 {agentStatus.failures}</span>
               )}
