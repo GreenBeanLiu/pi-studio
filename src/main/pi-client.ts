@@ -4,7 +4,7 @@ import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
 import { agentConfigDir, saveSelectedModelRoute } from './settings'
-import { sandboxAgentPath, sandboxSessionPathToContainer, sandboxSessionPathToHost } from './sandbox'
+import { sandboxAgentPath, sandboxSessionPathToHost } from './sandbox'
 import type { CompiledRunProfile } from './run-profile'
 import type {
   ExecutionSecuritySnapshot,
@@ -264,9 +264,12 @@ class PiClientManager {
     // 全新的 agent 上没有正在跑的一轮,这时候 switch_session 是安全的
     if (restoreSessionFile) {
       try {
+        // 必须走 mode-aware 的 sandboxAgentPath:sandboxSessionPathToContainer 只会
+        // 映射到 Docker 的 /agent,而 seatbelt 用的就是宿主真实路径、wsl 用发行版路径。
+        // 直接调它会让 seatbelt 下每次恢复会话都 EPERM(mkdir '/agent/sessions/...')。
         await client.switchSession(
-          launch.sandboxSessionPaths
-            ? sandboxSessionPathToContainer(restoreSessionFile)
+          launch.sandboxSessionPaths && launch.sandboxMode
+            ? sandboxAgentPath(restoreSessionFile, launch.sandboxMode)
             : restoreSessionFile,
         )
       } catch (err) {
