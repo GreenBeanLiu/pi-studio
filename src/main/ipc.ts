@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, app, clipboard, dialog, shell } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
@@ -48,8 +48,13 @@ import {
   isRecord,
   oneOf,
   optionalString,
+  parseArtifactId,
+  parseModelSelection,
+  parseNonNegativeSafeInteger,
+  parsePrompt,
   parseSessionPath,
   parseSettingsSave,
+  parseWorkspacePath,
   requiredString,
 } from '../shared/ipc/validators'
 import type { Workspace } from '../shared/contracts'
@@ -424,9 +429,19 @@ export function registerIpcHandlers(): void {
   // 手机远程开工作区必须走同一条路,否则事件转发、run 变更封存这些都会漏,
   // 所以从 IPC handler 里拎出来复用。
   const openWorkspace = async (
-    workspacePath: string,
+    rawWorkspacePath: unknown,
     win: BrowserWindow | null,
   ): Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }> => {
+    let workspacePath: string
+    try {
+      workspacePath = parseWorkspacePath(rawWorkspacePath)
+      if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
+        throw new TypeError('工作区必须是已存在的目录')
+      }
+    } catch (err) {
+      appendAppLog('warn', 'ipc.contract', 'Rejected workspace:open', normalizeError(err))
+      return { error: err instanceof Error ? err.message : String(err) }
+    }
     const settings = loadSettings()
 
     syncWebSearchExtension(!!settings.tavilyApiKey)
@@ -543,7 +558,7 @@ export function registerIpcHandlers(): void {
     return { ok: true, recentWorkspaces }
   }
 
-  ipcMain.handle('workspace:open', (event, workspacePath: string) =>
+  ipcMain.handle('workspace:open', (event, workspacePath: unknown) =>
     openWorkspace(workspacePath, BrowserWindow.fromWebContents(event.sender)),
   )
 
@@ -557,8 +572,8 @@ export function registerIpcHandlers(): void {
     open: (path) => openWorkspace(path, BrowserWindow.getAllWindows()[0] ?? null),
   })
 
-  ipcMain.handle('workspace:remove', (_e, workspacePath: string) => {
-    return removeRecentWorkspace(workspacePath)
+  ipcMain.handle('workspace:remove', (_e, workspacePath: unknown) => {
+    return removeRecentWorkspace(parseWorkspacePath(workspacePath))
   })
 
   // ── Workspace memory ───────────────────────────────────────────
@@ -708,12 +723,12 @@ export function registerIpcHandlers(): void {
     acceptGitRunChanges(cwd)
     return { ok: true }
   })
-  ipcMain.handle('git:showFile', async (_event, filePath: string) => {
+  ipcMain.handle('git:showFile', async (_event, filePath: unknown) => {
     const cwd = piClientManager.getWorkspacePath()
     if (!cwd) return { error: 'No workspace is open' }
 
     const workspaceRoot = resolve(cwd)
-    const target = resolve(workspaceRoot, filePath)
+    const target = resolve(workspaceRoot, requiredString(filePath, '文件路径'))
     const workspaceRootKey = workspaceRoot.toLowerCase()
     const targetKey = target.toLowerCase()
     if (targetKey !== workspaceRootKey && !targetKey.startsWith(`${workspaceRootKey}${sep}`)) {
@@ -733,7 +748,8 @@ export function registerIpcHandlers(): void {
   })
 
   // ── Pi agent session ─────────────────────────────────────────────
-  ipcMain.handle('pi:prompt', async (_e, message: string, images?: ImageContent[]) => {
+  ipcMain.handle('pi:prompt', async (_e, rawMessage: unknown, images?: ImageContent[]) => {
+    const message = parsePrompt(rawMessage)
     const cwd = piClientManager.getWorkspacePath()
     let baselineCaptured = false
     if (cwd && (await isGitWorkspace(cwd))) {
@@ -757,14 +773,16 @@ export function registerIpcHandlers(): void {
       broadcastAgentStatusSnapshot()
     }
   })
-  ipcMain.handle('pi:steer', async (_e, message: string, images?: ImageContent[]) => {
+  ipcMain.handle('pi:steer', async (_e, rawMessage: unknown, images?: ImageContent[]) => {
+    const message = parsePrompt(rawMessage)
     try {
       await piClientManager.steer(message, images)
     } finally {
       broadcastAgentStatusSnapshot()
     }
   })
-  ipcMain.handle('pi:followUp', async (_e, message: string, images?: ImageContent[]) => {
+  ipcMain.handle('pi:followUp', async (_e, rawMessage: unknown, images?: ImageContent[]) => {
+    const message = parsePrompt(rawMessage)
     try {
       await piClientManager.followUp(message, images)
     } finally {
@@ -783,7 +801,9 @@ export function registerIpcHandlers(): void {
     if (cancelled.length > 0) broadcastSessionProjection()
     broadcastAgentStatusSnapshot()
   })
-  ipcMain.handle('pi:bash', (_e, command: string) => piClientManager.bash(command))
+  ipcMain.handle('pi:bash', (_e, command: unknown) =>
+    piClientManager.bash(parsePrompt(command)),
+  )
   ipcMain.handle(
     'pi:extensionUiResponse',
     (_e, response: ExtensionUiResponse) => {
@@ -840,19 +860,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:getState', () => piClientManager.getState())
   ipcMain.handle('pi:getMessages', () => piClientManager.getMessages())
   ipcMain.handle('pi:getArtifactChunk', (_event, artifactId: unknown, offsetChars: unknown) => {
-    if (typeof artifactId !== 'string') throw new TypeError('artifactId must be a string')
-    if (!Number.isSafeInteger(offsetChars) || (offsetChars as number) < 0) {
-      throw new TypeError('offsetChars must be a non-negative safe integer')
-    }
+    const parsedArtifactId = parseArtifactId(artifactId)
+    const parsedOffsetChars = parseNonNegativeSafeInteger(offsetChars, 'offsetChars')
     const workspacePath = piClientManager.getWorkspacePath()
     const identity = piClientManager.getActiveSessionIdentity()
     if (!workspacePath || !identity) throw new Error('No workspace is open')
-    return getAgentArtifacts().readChunk(workspacePath, artifactId, offsetChars as number)
+    return getAgentArtifacts().readChunk(workspacePath, parsedArtifactId, parsedOffsetChars)
   })
   ipcMain.handle('pi:getAvailableModels', () => piClientManager.getAvailableModels())
   ipcMain.handle('pi:getCommands', () => piClientManager.getCommands())
-  ipcMain.handle('pi:setModel', (_e, provider: string, modelId: string) =>
-    piClientManager.setModel(provider, modelId),
+  ipcMain.handle('pi:setModel', (_e, provider: unknown, modelId: unknown) =>
+    piClientManager.setModel(
+      parseModelSelection(provider, '模型提供方'),
+      parseModelSelection(modelId, '模型 ID'),
+    ),
   )
   // 这几个值原样透传给 agent,必须先确认落在枚举内(原来是 `level as never`)
   ipcMain.handle('pi:setThinkingLevel', (_e, level: unknown) =>

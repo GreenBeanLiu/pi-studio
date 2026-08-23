@@ -61,6 +61,40 @@ export function parseSessionPath(value: unknown, sessionDir: string, label = '�
   return target
 }
 
+/** Normalize a workspace path before main checks that it exists and is a directory. */
+export function parseWorkspacePath(value: unknown): string {
+  const path = requiredString(value, '工作区路径')
+  if (path.includes('\u0000')) throw new TypeError('工作区路径无效')
+  return resolve(path)
+}
+
+export function parseModelSelection(value: unknown, label: string): string {
+  const model = requiredString(value, label)
+  if (model.length > 256) throw new TypeError(`${label}过长`)
+  return model
+}
+
+export function parsePrompt(value: unknown): string {
+  const prompt = requiredString(value, '消息')
+  if (prompt.length > 1_000_000) throw new TypeError('消息过长')
+  return prompt
+}
+
+export function parseArtifactId(value: unknown): string {
+  const id = requiredString(value, 'artifact ID')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw new TypeError('artifact ID 无效')
+  }
+  return id
+}
+
+export function parseNonNegativeSafeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new TypeError(`${label}必须是非负安全整数`)
+  }
+  return value as number
+}
+
 // ── Routine 写入对象 ─────────────────────────────────────────────────
 // routines:save 原来直接 Object.assign(existing, routine),renderer 传什么并什么。
 // 这里只放行已知字段,并把 schedule 逐种校验 —— 一个 {type:'interval',minutes:0}

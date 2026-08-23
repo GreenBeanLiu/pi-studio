@@ -3,11 +3,16 @@ import { resolve, sep } from 'path'
 import {
   isContainedPath,
   oneOf,
+  parseArtifactId,
   parseContainedPath,
+  parseModelSelection,
+  parseNonNegativeSafeInteger,
+  parsePrompt,
   parseRoutineSave,
   parseRoutineSchedule,
   parseSettingsSave,
   parseSessionPath,
+  parseWorkspacePath,
   requiredString,
 } from './validators'
 
@@ -60,6 +65,32 @@ describe('parseSessionPath', () => {
 
   it('refuses a .jsonl outside the directory', () => {
     expect(() => parseSessionPath('../elsewhere/s.jsonl', ROOT)).toThrow('超出允许范围')
+  })
+})
+
+describe('IPC scalar parsers', () => {
+  it('normalizes a workspace path input', () => {
+    expect(parseWorkspacePath(`${ROOT}/..`)).toBe(resolve(ROOT, '..'))
+  })
+
+  it('rejects null bytes in workspace paths', () => {
+    expect(() => parseWorkspacePath(`${ROOT}\u0000bad`)).toThrow('工作区路径无效')
+  })
+
+  it('bounds model and prompt input', () => {
+    expect(parseModelSelection(' deepseek-v4-pro ', '模型 ID')).toBe('deepseek-v4-pro')
+    expect(parsePrompt('  inspect the repo  ')).toBe('inspect the repo')
+    expect(() => parseModelSelection('x'.repeat(257), '模型 ID')).toThrow('模型 ID过长')
+    expect(() => parsePrompt('x'.repeat(1_000_001))).toThrow('消息过长')
+  })
+
+  it('accepts only UUID artifact ids and non-negative offsets', () => {
+    expect(parseArtifactId('123e4567-e89b-12d3-a456-426614174000')).toBe(
+      '123e4567-e89b-12d3-a456-426614174000',
+    )
+    expect(parseNonNegativeSafeInteger(0, 'offsetChars')).toBe(0)
+    expect(() => parseArtifactId('../artifact')).toThrow('artifact ID 无效')
+    expect(() => parseNonNegativeSafeInteger(-1, 'offsetChars')).toThrow('非负安全整数')
   })
 })
 
