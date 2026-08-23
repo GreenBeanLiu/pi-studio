@@ -82,7 +82,10 @@ const REQUIRED_CORE_METHODS = [
   'getMessages',
   'getCommands',
 ] as const
-const SUPPORTED_ENGINE_VERSION = /^0\.80\./
+// 跟着 package.json 的 ^0.82.1 走。0.84 起 message_update 只发 assistantMessageEvent
+// 增量、不再带累积的 message,而 ChatPane 与手机端都直接读 event.message —— 升上去
+// 流式会整个断掉。这个闸门就是拦住那种情况的,放宽前先把两端的流式拼装改掉。
+const SUPPORTED_ENGINE_VERSION = /^0\.82\./
 
 function assertCoreCapabilities(client: StartablePiClient): asserts client is RpcClientType {
   const candidate = client as unknown as Record<string, unknown>

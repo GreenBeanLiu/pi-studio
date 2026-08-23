@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const chatPane = readFileSync(new URL('./ChatPane.tsx', import.meta.url), 'utf8')
 const rpcPatch = readFileSync(
-  new URL('../../../../patches/@earendil-works__pi-coding-agent@0.80.7.patch', import.meta.url),
+  new URL('../../../../patches/@earendil-works__pi-coding-agent@0.82.1.patch', import.meta.url),
   'utf8',
 )
 

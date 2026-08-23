@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import {
   createAssistantMessageEventStream,
@@ -6,10 +9,9 @@ import {
   type StreamFunction,
 } from '@earendil-works/pi-ai'
 import {
-  AuthStorage,
   createAgentSession,
   createExtensionRuntime,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
@@ -265,15 +267,28 @@ export class PiReplayEvalEngine implements EvalEngine {
       .filter((name): name is string => typeof name === 'string'))]
     const unsupported = toolNames.filter((name) => !BUILTIN_TOOLS.has(name))
     if (unsupported.length) throw new Error(`recording uses unsupported replay tools: ${unsupported.join(', ')}`)
-    const authStorage = AuthStorage.inMemory()
-    authStorage.setRuntimeApiKey('pi-studio-replay', 'recorded-stream-no-network')
-    const modelRegistry = ModelRegistry.inMemory(authStorage)
+    // 0.80.8 起 AuthStorage/ModelRegistry.inMemory 不再导出,凭据与目录都走 ModelRuntime。
+    // 回放不联网:authPath 指到临时文件,别读也别写用户真实的 auth.json。
+    const authPath = join(mkdtempSync(join(tmpdir(), 'pi-studio-replay-auth-')), 'auth.json')
+    const modelRuntime = await ModelRuntime.create({
+      authPath,
+      modelsPath: null,
+      allowModelNetwork: false,
+    })
+    // 0.82 的凭据解析是以 provider 为中心的:光设 runtime key 不够,provider 本身
+    // 没注册时 getAuth 返回 undefined,AgentSession 会直接把这一轮判成「没有 API key」。
+    modelRuntime.registerProvider('pi-studio-replay', {
+      name: 'pi-studio eval replay',
+      baseUrl: 'http://127.0.0.1.invalid',
+      api: 'openai-completions',
+      apiKey: 'recorded-stream-no-network',
+    })
+    await modelRuntime.setRuntimeApiKey('pi-studio-replay', 'recorded-stream-no-network')
     const { session } = await createAgentSession({
       cwd: request.workspacePath,
       model: replayModel(),
       thinkingLevel: 'off',
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       resourceLoader: emptyResourceLoader(),
       tools: toolNames.length ? toolNames : ['read', 'edit', 'write', 'grep', 'find', 'ls'],
       sessionManager: SessionManager.inMemory(request.workspacePath),
@@ -283,7 +298,11 @@ export class PiReplayEvalEngine implements EvalEngine {
       }),
     })
     this.activeSession = session
-    session.agent.streamFn = streamFn
+    session.agent.streamFunction = streamFn
+    // 回放的流是录制好的,压根不发请求。0.82 起凭据解析走 ModelRuntime,
+    // 一个凭空捏造的 provider 拿不到 key,校验会先一步把这一轮判成 error ——
+    // 直接顶掉这个查询,把「不联网」这件事说清楚。
+    session.agent.getApiKey = () => 'recorded-stream-no-network'
     const tracker = new SessionProjectionTracker()
     tracker.beginLoad(request.workspacePath, null, request.sessionId)
     const unsubscribe = session.subscribe((runtimeEvent) => {

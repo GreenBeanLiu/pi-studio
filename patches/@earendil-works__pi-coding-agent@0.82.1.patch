@@ -1,5 +1,5 @@
 diff --git a/dist/modes/rpc/rpc-client.d.ts b/dist/modes/rpc/rpc-client.d.ts
-index 4bcf34884d5d3f9c202f9b5c588e080c1e138a6f..7c8e507a428954b943b52b2b7cad431b1d1c3e81 100644
+index 9263bdea8e6224ed7869627dae092b9a6b31daa7..23f1959af73643b44e8bf6548f7f51151d9a920b 100644
 --- a/dist/modes/rpc/rpc-client.d.ts
 +++ b/dist/modes/rpc/rpc-client.d.ts
 @@ -13,6 +13,8 @@ import type { RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
@@ -12,7 +12,7 @@ index 4bcf34884d5d3f9c202f9b5c588e080c1e138a6f..7c8e507a428954b943b52b2b7cad431b
      cwd?: string;
      /** Environment variables */
 diff --git a/dist/modes/rpc/rpc-client.js b/dist/modes/rpc/rpc-client.js
-index af2b28976950551bcaa6526b48f1faae0c5b0a81..e94e95127ee34e2a8705433e44494c712f39b90b 100644
+index 8683f01cf1d2dbe20e83bfd88706317a24bdf17d..d7acc2180a8f4e051afca96545145db7fe0467d0 100644
 --- a/dist/modes/rpc/rpc-client.js
 +++ b/dist/modes/rpc/rpc-client.js
 @@ -39,7 +39,7 @@ export class RpcClient {
@@ -25,7 +25,7 @@ index af2b28976950551bcaa6526b48f1faae0c5b0a81..e94e95127ee34e2a8705433e44494c71
              env: { ...process.env, ...this.options.env },
              stdio: ["pipe", "pipe", "pipe"],
 diff --git a/dist/modes/rpc/rpc-mode.js b/dist/modes/rpc/rpc-mode.js
-index e064f7fb2d7fdc03d67674b7cbfb7d4c7460beec..b447cfeffd8ebb65e0eba73686b2199588c89404 100644
+index f5070072477ebb0288622be341291e89d4b08dc8..1156c341146a753ec2862756826337a23106d215 100644
 --- a/dist/modes/rpc/rpc-mode.js
 +++ b/dist/modes/rpc/rpc-mode.js
 @@ -311,9 +311,16 @@ export async function runRpcMode(runtimeHost) {
