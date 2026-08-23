@@ -30,7 +30,8 @@ export const DEFAULT_WORKSPACE_MEMORY = `# Workspace Memory
 -
 `
 
-const EXTENSION_SOURCE = `import fs from 'node:fs'
+/** 导出仅为可测:这段是要写进 agent 目录、由 pi 加载的真源码,语法错了整个工作区都开不了。 */
+export const EXTENSION_SOURCE = `import fs from 'node:fs'
 import path from 'node:path'
 import { Type } from 'typebox'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
@@ -193,7 +194,7 @@ export default function piStudioWorkspaceMemory(pi: ExtensionAPI) {
     parameters: Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
     async execute(_toolCallId, params) {
       const result = await memoryRequest<{ entries: SearchResult['entry'][] }>('GET', '/v1/memories?workspacePath=' + encodeURIComponent(memoryConfig()?.workspacePath || process.cwd()) + '&limit=' + (params.limit ?? 50))
-      return { content: [{ type: 'text' as const, text: formatSearch((result.entries || []).map((entry) => ({ entry, score: 0, snippet: entry?.content })))] }
+      return { content: [{ type: 'text' as const, text: formatSearch((result.entries || []).map((entry) => ({ entry, score: 0, snippet: entry?.content }))) }] }
     },
   })
 }
