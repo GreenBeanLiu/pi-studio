@@ -855,6 +855,12 @@ export type SessionProjectionChanges = {
 
 export type SessionProjectionSnapshot = {
   revision: number
+  /**
+   * 只在 messages 被整体替换时递增(落库读取 / 换会话 / 清空)。
+   * revision 每来一个 agent 事件都会动,分不出"消息变了"还是"只是工具进度变了";
+   * 渲染层靠这个字段判断该不该用 projection 覆盖本地流式拼出来的消息。
+   */
+  messagesRevision: number
   asOfSeq: number
   workspacePath: string | null
   sessionFile: string | null

@@ -159,6 +159,7 @@ describe('remote-control command protocol', () => {
   it('pushes a projection snapshot on reconnect and serves session-bound changes', async () => {
     const snapshot = {
       revision: 3,
+      messagesRevision: 1,
       asOfSeq: 8,
       workspacePath: '/workspace',
       sessionFile: '/sessions/a.jsonl',

@@ -17,6 +17,7 @@ export type SessionProjectionLoad = {
 
 const INITIAL_SNAPSHOT: SessionProjectionSnapshot = {
   revision: 0,
+  messagesRevision: 0,
   asOfSeq: 0,
   workspacePath: null,
   sessionFile: null,
@@ -158,6 +159,7 @@ export class SessionProjectionTracker {
       const event = this.append(sessionId, 'session.changed', { workspacePath, sessionFile })
       this.snap = {
         revision: this.snap.revision + 1,
+        messagesRevision: this.snap.messagesRevision + 1,
         asOfSeq: event.seq,
         workspacePath,
         sessionFile,
@@ -200,6 +202,7 @@ export class SessionProjectionTracker {
     }
     this.snap = {
       revision: this.snap.revision + 1,
+      messagesRevision: this.snap.messagesRevision + 1,
       asOfSeq,
       workspacePath: load.workspacePath,
       sessionFile: load.sessionFile,
@@ -511,6 +514,7 @@ export class SessionProjectionTracker {
     this.snap = {
       ...INITIAL_SNAPSHOT,
       revision: this.snap.revision + 1,
+      messagesRevision: this.snap.messagesRevision + 1,
       asOfSeq: event?.seq ?? this.snap.asOfSeq,
     }
     this.activeRunId = null
