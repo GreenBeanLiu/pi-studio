@@ -1,4 +1,5 @@
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -204,6 +205,144 @@ const text = (body: string): AgentToolResult<{ codexHome: string }> => ({
   details: { codexHome: codexHome() },
 })
 
+
+// ── 导入:Codex 会话 → pi 会话 ────────────────────────────────────
+
+/**
+ * pi 的会话目录名。规则抄自 pi 的 getDefaultSessionDirPath:
+ * 去掉开头一个分隔符,再把 / \ : 换成 -,两头各加两个连字符。
+ * 自己"猜"成 cwd.replace('/','-') 会多一个前导连字符,目录就对不上了。
+ */
+export function piSessionDirName(cwd: string): string {
+  return `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
+}
+
+/** pi 的会话文件名:ISO 时间戳里的 : 和 . 换成 -,接 _<sessionId>.jsonl。 */
+export function piSessionFileName(timestamp: string, sessionId: string): string {
+  return `${timestamp.replace(/[:.]/g, '-')}_${sessionId}.jsonl`
+}
+
+/**
+ * 合并连续同角色的轮次。Codex 一轮提问会产出十几条 agent 消息(实测 21 个用户
+ * 提问对 147 条 agent 消息),原样导入就是一长串连续 assistant —— 有的 provider
+ * 直接拒收,读起来也散。合并后是干净的 user → assistant 交替。
+ */
+export function mergeTurns(turns: Turn[]): Turn[] {
+  const merged: Turn[] = []
+  for (const turn of turns) {
+    const last = merged[merged.length - 1]
+    if (last && last.role === turn.role) last.text = `${last.text}\n\n${turn.text}`
+    else merged.push({ ...turn })
+  }
+  return merged
+}
+
+/** 截断要落在用户提问上,否则导入的历史会从半截回答开始。 */
+export function tailFromUserTurn(turns: Turn[], max: number): Turn[] {
+  if (turns.length <= max) return turns
+  const tail = turns.slice(-max)
+  const firstUser = tail.findIndex((turn) => turn.role === 'user')
+  return firstUser > 0 ? tail.slice(firstUser) : tail
+}
+
+/** 条目 id:pi 自己用 8 位十六进制,保持一致好认。 */
+function entryId(): string {
+  return randomUUID().replace(/-/g, '').slice(0, 8)
+}
+
+/**
+ * 把抽出来的轮次写成 pi 的 v3 会话。条目靠 id/parentId 串成一条链
+ * (pi 的会话是树,但导入的是线性历史,一条链就够)。
+ */
+export function buildPiSession(opts: {
+  cwd: string
+  turns: Turn[]
+  model: string
+  origin: string
+  startedAt: string
+}): { sessionId: string; timestamp: string; lines: string[] } {
+  const sessionId = randomUUID()
+  const timestamp = new Date().toISOString()
+  const lines: string[] = [
+    JSON.stringify({ type: 'session', version: 3, id: sessionId, timestamp, cwd: opts.cwd }),
+  ]
+
+  let parentId: string | null = null
+  const push = (entry: Record<string, unknown>): void => {
+    lines.push(JSON.stringify(entry))
+    parentId = entry.id as string
+  }
+
+  // 开头交代来历:否则模型会以为这些话是它自己在本会话里说过的
+  push({
+    type: 'message',
+    id: entryId(),
+    parentId,
+    timestamp,
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            `以下是从 Codex 导入的历史对话(会话 ${opts.origin},开始于 ${opts.startedAt},模型 ${opts.model || '未知'})。` +
+            '这些内容发生在本次会话之前、由另一个 agent 完成,不是你做的。' +
+            '把它当作已有上下文继续往下做,不要重复已经完成的工作。',
+        },
+      ],
+      timestamp: Date.parse(timestamp),
+    },
+  })
+
+  for (const turn of opts.turns) {
+    const at = new Date().toISOString()
+    if (turn.role === 'user') {
+      push({
+        type: 'message',
+        id: entryId(),
+        parentId,
+        timestamp: at,
+        message: { role: 'user', content: [{ type: 'text', text: turn.text }], timestamp: Date.parse(at) },
+      })
+    } else {
+      push({
+        type: 'message',
+        id: entryId(),
+        parentId,
+        timestamp: at,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: turn.text }],
+          api: 'openai-completions',
+          provider: 'codex',
+          model: opts.model || 'codex',
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'stop',
+          timestamp: Date.parse(at),
+        },
+      })
+    }
+  }
+  return { sessionId, timestamp, lines }
+}
+
+const importParams = Type.Object({
+  sessionId: Type.String({ description: '要导入的 Codex 会话 id(从 list/search 拿)' }),
+  cwd: Type.Optional(
+    Type.String({ description: '导入到哪个工作区,默认当前工作区。会话要在这个工作区的列表里才看得到。' }),
+  ),
+  maxTurns: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 500, description: '最多导入几轮,默认 200(取最后 N 轮)' }),
+  ),
+})
+
 export default function piStudioCodexSessions(pi: ExtensionAPI): void {
   pi.registerTool({
     name: 'codex_sessions_list',
@@ -294,6 +433,54 @@ export default function piStudioCodexSessions(pi: ExtensionAPI): void {
           ? `\n\n(共 ${turns.length} 轮,已显示 ${offset + 1}–${offset + slice.length};继续读用 offset=${offset + slice.length})`
           : `\n\n(共 ${turns.length} 轮,已读完)`
       return text(`${describe(meta)}\n\n${body}${tail}`)
+    },
+  })
+
+  pi.registerTool({
+    name: 'codex_session_import',
+    label: '把 Codex 会话导入 pi',
+    description:
+      '把一个 Codex 会话转成 pi 的会话文件,落进 pi-studio 的会话目录。' +
+      '之后它会出现在会话列表里,点进去就是带着完整上下文继续聊 —— 不是读给你听,是真接着往下做。' +
+      '只搬用户和 agent 的消息文本,不搬工具调用。',
+    promptSnippet: 'codex_session_import: 把某个 Codex 会话导入成可继续的 pi 会话',
+    parameters: importParams,
+    async execute(_id: string, params: Static<typeof importParams>): Promise<AgentToolResult<{ codexHome: string }>> {
+      const meta = await locate(params.sessionId)
+      if (!meta) return text(`找不到会话 ${params.sessionId} —— 先用 codex_sessions_list 看看有哪些`)
+
+      const all = mergeTurns(await readTurns(meta.file))
+      if (all.length === 0) return text(`${describe(meta)}\n\n这个会话里没有可导入的对话消息。`)
+      const turns = tailFromUserTurn(all, params.maxTurns ?? 200)
+
+      const cwd = params.cwd?.trim() || meta.cwd || process.cwd()
+      const agentDir = process.env.PI_CODING_AGENT_DIR
+      if (!agentDir) return text('拿不到 PI_CODING_AGENT_DIR,无法定位 pi 的会话目录')
+
+      const built = buildPiSession({
+        cwd,
+        turns,
+        model: meta.model,
+        origin: meta.id,
+        startedAt: meta.startedAt,
+      })
+      const dir = join(agentDir, 'sessions', piSessionDirName(cwd))
+      mkdirSync(dir, { recursive: true })
+      const file = join(dir, piSessionFileName(built.timestamp, built.sessionId))
+      writeFileSync(file, built.lines.join('\n') + '\n', 'utf8')
+
+      const dropped = all.length - turns.length
+      const note =
+        dropped > 0
+          ? `(合并连续同角色后 ${all.length} 轮,取了最后 ${turns.length} 轮)`
+          : `(合并连续同角色后共 ${turns.length} 轮,全带上了)`
+      return text(
+        `已把 Codex 会话 ${meta.id} 导入为 pi 会话:\n\n` +
+          `  会话 id  ${built.sessionId}\n` +
+          `  工作区    ${cwd}\n` +
+          `  文件      ${file}\n\n` +
+          `${note}\n\n在会话列表里选它就能带着这些上下文继续。`,
+      )
     },
   })
 }

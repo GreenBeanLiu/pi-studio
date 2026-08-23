@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,6 +49,7 @@ const dirs: string[] = []
 afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
   delete process.env.CODEX_HOME
+  delete process.env.PI_CODING_AGENT_DIR
 })
 
 /** 造一个 rollout 文件。noise 用来模拟真实文件里占 99% 体积的 reasoning/工具载荷。 */
@@ -166,5 +167,38 @@ describe('codex session tools', () => {
     dirs.push(empty)
     process.env.CODEX_HOME = empty
     expect(await run('codex_sessions_list')).toContain('没有找到 Codex 会话')
+  })
+
+  it('imports a Codex session into a file pi itself can load', async () => {
+    // 往返验证:文件写出来只是第一步,pi 读不读得进去才算数
+    const agentDir = mkdtempSync(join(tmpdir(), 'pi-agent-'))
+    dirs.push(agentDir)
+    process.env.PI_CODING_AGENT_DIR = agentDir
+
+    const out = await run('codex_session_import', { sessionId: 'aaaa-1111', cwd: '/Users/me/alpha' })
+    expect(out).toContain('已把 Codex 会话 aaaa-1111 导入')
+
+    const sm = await import(
+      new URL('../node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js', import.meta.url).href
+    )
+    // 目录名必须和 pi 自己算的一致,否则会话不会出现在列表里
+    const dir = sm.getDefaultSessionDir('/Users/me/alpha', agentDir)
+    const files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'))
+    expect(files).toHaveLength(1)
+
+    const entries = sm.loadEntriesFromFile(join(dir, files[0]))
+    const context = sm.buildSessionContext(entries)
+    const messages = (context.messages ?? []) as Array<{ role: string; content: Array<{ text?: string }> }>
+    expect(messages.length).toBeGreaterThan(0)
+    expect(messages[0].content[0].text).toContain('从 Codex 导入的历史对话')
+    const transcript = messages.map((m) => m.content.map((c) => c.text ?? '').join('')).join('\n')
+    expect(transcript).toContain('帮我修 alpha 项目的登录问题')
+    expect(transcript).toContain('已经定位到 alpha 的 token 刷新逻辑')
+  })
+
+  it('refuses to import a session it cannot find', async () => {
+    process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), 'pi-agent-'))
+    dirs.push(process.env.PI_CODING_AGENT_DIR)
+    expect(await run('codex_session_import', { sessionId: 'nope' })).toContain('找不到会话')
   })
 })
