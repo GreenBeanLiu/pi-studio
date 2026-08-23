@@ -5,8 +5,12 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@earendil-works/pi-ai@0.84.2': c989edcb08ba00b1fb5b48adb202280a3b3b49af7207bbaee23e77502a7c6454
-  '@earendil-works/pi-coding-agent@0.84.2': 69863772691606af063439cadca482c34a8213f1a99a7463fb0753cf94fac7d0
+  '@earendil-works/pi-ai@0.84.2':
+    hash: c989edcb08ba00b1fb5b48adb202280a3b3b49af7207bbaee23e77502a7c6454
+    path: patches/@earendil-works__pi-ai@0.84.2.patch
+  '@earendil-works/pi-coding-agent@0.84.2':
+    hash: 69863772691606af063439cadca482c34a8213f1a99a7463fb0753cf94fac7d0
+    path: patches/@earendil-works__pi-coding-agent@0.84.2.patch
 
 importers:
 

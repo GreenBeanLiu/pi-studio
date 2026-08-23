@@ -110,5 +110,6 @@
       "mirror": "https://github.com/electron/electron/releases/download/"
     }
   },
-  "type": "module"
+  "type": "module",
+  "packageManager": "pnpm@10.6.1"
 }
