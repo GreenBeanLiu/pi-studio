@@ -219,6 +219,7 @@ export default function SettingsModal({
   const [deepSeekApiKey, setDeepSeekApiKey] = useState('')
   const [deepSeekSaving, setDeepSeekSaving] = useState(false)
   const [deepSeekResult, setDeepSeekResult] = useState<ProviderConnectionResult | null>(null)
+  const [sharedMemoryStatus, setSharedMemoryStatus] = useState<{ url: string; file: string; count: number } | null>(null)
 
   async function detectSandbox() {
     setSandboxDetecting(true)
@@ -258,6 +259,9 @@ export default function SettingsModal({
     api.app.version().then(setVersion).catch(() => {})
     api.app.piVersion().then(setPiVersion).catch(() => {})
     void loadLlmProfiles()
+    api.memory.sharedStatus().then((result) => {
+      if ('url' in result) setSharedMemoryStatus({ url: result.url, file: result.file, count: result.count })
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -759,6 +763,23 @@ export default function SettingsModal({
                 </span>
               </div>
 
+
+              <div className={styles.section}>
+                <span className={styles.label}>
+                  跨 Agent 共享记忆
+                  <Tag color="green">本地</Tag>
+                </span>
+                <span className={styles.labelHint}>
+                  Pi Studio、其他 Pi 进程和外部 Agent 可通过本地 Memory Service 共享事实、偏好、决策和命令。只监听 127.0.0.1，不会自动上传云端。
+                </span>
+                <div className={styles.actionRow}>
+                  <Tag color={sharedMemoryStatus ? 'green' : 'red'}>{sharedMemoryStatus ? `运行中 · ${sharedMemoryStatus.count} 条` : '未启动'}</Tag>
+                  <Button size="small" onClick={() => api.memory.sharedStatus().then((result) => {
+                    if ('url' in result) setSharedMemoryStatus({ url: result.url, file: result.file, count: result.count })
+                  })}>刷新</Button>
+                </div>
+                {sharedMemoryStatus && <span className={styles.labelHint}>数据文件：{sharedMemoryStatus.file}</span>}
+              </div>
 
               <div className={styles.section}>
                 <span className={styles.label}>

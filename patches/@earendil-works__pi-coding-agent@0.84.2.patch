@@ -1,0 +1,48 @@
+diff --git a/dist/modes/rpc/rpc-client.d.ts b/dist/modes/rpc/rpc-client.d.ts
+index 229c086..940188b 100644
+--- a/dist/modes/rpc/rpc-client.d.ts
++++ b/dist/modes/rpc/rpc-client.d.ts
+@@ -14,6 +14,8 @@ import type { RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+ export interface RpcClientOptions {
+     /** Path to the CLI entry point (default: searches for dist/cli.js) */
+     cliPath?: string;
++    /** Node-compatible executable used to launch the CLI */
++    runtimePath?: string;
+     /** Working directory for the agent */
+     cwd?: string;
+     /** Environment variables */
+diff --git a/dist/modes/rpc/rpc-client.js b/dist/modes/rpc/rpc-client.js
+index 8683f01..d7acc21 100644
+--- a/dist/modes/rpc/rpc-client.js
++++ b/dist/modes/rpc/rpc-client.js
+@@ -39,7 +39,7 @@ export class RpcClient {
+         if (this.options.args) {
+             args.push(...this.options.args);
+         }
+-        const childProcess = spawn("node", [cliPath, ...args], {
++        const childProcess = spawn(this.options.runtimePath ?? process.execPath, [cliPath, ...args], {
+             cwd: this.options.cwd,
+             env: { ...process.env, ...this.options.env },
+             stdio: ["pipe", "pipe", "pipe"],
+diff --git a/dist/modes/rpc/rpc-mode.js b/dist/modes/rpc/rpc-mode.js
+index a739ca7..f5ccb29 100644
+--- a/dist/modes/rpc/rpc-mode.js
++++ b/dist/modes/rpc/rpc-mode.js
+@@ -312,9 +312,16 @@ export async function runRpcMode(runtimeHost) {
+                     },
+                 })
+                     .catch((e) => {
++                    const message = e instanceof Error ? e.message : String(e);
+                     if (!preflightSucceeded) {
+-                        output(error(id, "prompt", e.message));
++                        output(error(id, "prompt", message));
++                        return;
+                     }
++                    // Once preflight has answered, a later rejection has no exit: the
++                    // response was already sent and the event stream never gets an
++                    // agent_end — the host just sees the turn vanish. Emit an event so
++                    // embedders can report it. Consumed by pi-studio's ChatPane.
++                    output({ type: "run_failed", scope: "prompt", message });
+                 });
+                 return undefined;
+             }

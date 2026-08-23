@@ -32,7 +32,7 @@ export type CompiledRunProfile = {
 
 type RunProfileCompilerDependencies = {
   loadSettings: () => { sandboxEnabled: boolean; subagentsEnabled?: boolean }
-  prepareRuntime: () => Promise<AgentRuntimeConfig>
+  prepareRuntime: (cwd?: string) => Promise<AgentRuntimeConfig>
   prepareSandbox: (
     cwd: string,
     env: Record<string, string>,
@@ -135,7 +135,7 @@ export class RunProfileCompiler {
     options: RunProfileCompileOptions = {},
   ): Promise<CompiledRunProfile> {
     const settings = this.dependencies.loadSettings()
-    const runtime = await this.dependencies.prepareRuntime()
+    const runtime = await this.dependencies.prepareRuntime(cwd)
     const prepared = settings.sandboxEnabled
       ? await this.dependencies.prepareSandbox(cwd, runtime.env)
       : { cliPath: this.dependencies.resolveCliPath(), env: runtime.env, mode: null }

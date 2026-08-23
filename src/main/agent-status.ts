@@ -28,7 +28,6 @@ function todoCounts(args: unknown): AgentStatusSnapshot['todo'] | null {
 export type AgentPromptCheckpoint = {
   epoch: number
   runEpoch: number
-  prompt: string | null
 }
 
 export type AgentStatusSnapshot = {
@@ -63,6 +62,8 @@ export class AgentStatusTracker {
   private lastFailureSignature: string | null = null
   private promptEpoch = 0
   private runEpoch = 0
+  private basePrompt: string | null = null
+  private readonly pendingPrompts = new Map<number, string>()
   private dirty = true
 
   constructor(private readonly file: string, cwd: string) {
@@ -95,22 +96,38 @@ export class AgentStatusTracker {
   }
 
   prompt(message: string): AgentPromptCheckpoint {
-    const checkpoint = {
-      epoch: ++this.promptEpoch,
-      runEpoch: this.runEpoch,
-      prompt: this.snap.prompt,
-    }
-    this.snap.prompt = message.slice(0, 500)
+    if (this.pendingPrompts.size === 0) this.basePrompt = this.snap.prompt
+    const epoch = ++this.promptEpoch
+    this.pendingPrompts.set(epoch, message.slice(0, 500))
+    this.snap.prompt = this.latestPendingPrompt() ?? this.basePrompt
     this.write()
-    return checkpoint
+    return { epoch, runEpoch: this.runEpoch }
   }
 
   promptRejected(checkpoint: AgentPromptCheckpoint): boolean {
-    if (checkpoint.epoch !== this.promptEpoch || checkpoint.runEpoch !== this.runEpoch) return false
-    this.snap.prompt = checkpoint.prompt
-    this.promptEpoch += 1
+    if (checkpoint.runEpoch !== this.runEpoch || !this.pendingPrompts.delete(checkpoint.epoch)) {
+      return false
+    }
+    this.snap.prompt = this.latestPendingPrompt() ?? this.basePrompt
     this.write()
     return true
+  }
+
+  private latestPendingPrompt(): string | null {
+    let latestEpoch = -1
+    let latest: string | null = null
+    for (const [epoch, prompt] of this.pendingPrompts) {
+      if (epoch > latestEpoch) {
+        latestEpoch = epoch
+        latest = prompt
+      }
+    }
+    return latest
+  }
+
+  private acceptPendingPrompts(): void {
+    this.pendingPrompts.clear()
+    this.basePrompt = this.snap.prompt
   }
 
   approvalResolved(): void {
@@ -125,6 +142,7 @@ export class AgentStatusTracker {
     let changed = true
     if (event.type === 'agent_start') {
       this.runEpoch += 1
+      this.acceptPendingPrompts()
       this.snap.phase = 'running'
       this.snap.todo = { pending: 0, inProgress: 0, completed: 0 }
       this.snap.tools = {}
@@ -135,6 +153,7 @@ export class AgentStatusTracker {
       this.snap.loopDetected = null
       this.lastFailureSignature = null
     } else if (event.type === 'agent_settled') {
+      this.acceptPendingPrompts()
       this.snap.phase = 'idle'
       this.snap.startedAt = null
       this.snap.activeApprovals = 0

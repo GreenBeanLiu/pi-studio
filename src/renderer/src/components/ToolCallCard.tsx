@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
 import {
   ChevronRight,
@@ -389,9 +389,6 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
   } | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
   const [artifactLoading, setArtifactLoading] = useState(false)
-  // 子代理调用走专属卡片(区别于普通工具)
-  if (call.name === 'subagent') return <SubagentCard call={call} execution={execution} />
-
   const Icon = TOOL_ICONS[call.name] ?? Terminal
   const status = execution?.status ?? 'running'
   const artifact =
@@ -399,6 +396,14 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
     (execution?.details as { artifact?: ToolExecutionState['artifact'] } | undefined)?.artifact ??
     (execution?.result as { artifact?: { artifact?: ToolExecutionState['artifact'] } } | undefined)?.artifact?.artifact ??
     (execution?.result as { details?: { artifact?: ToolExecutionState['artifact'] } } | undefined)?.details?.artifact
+  useEffect(() => {
+    setArtifactChunk(null)
+    setArtifactError(null)
+  }, [artifact?.id])
+
+  // 子代理调用走专属卡片(区别于普通工具)
+  if (call.name === 'subagent') return <SubagentCard call={call} execution={execution} />
+
   const loadArtifact = async (offsetChars: number): Promise<void> => {
     if (!artifact || artifactLoading) return
     setArtifactLoading(true)
@@ -415,7 +420,16 @@ export default function ToolCallCard({ call, execution }: { call: ToolCall; exec
 
   return (
     <div className={styles.card}>
-      <div className={styles.header} onClick={() => setOpen((v) => !v)}>
+      <div
+        className={styles.header}
+        onClick={() => setOpen((value) => {
+          if (value) {
+            setArtifactChunk(null)
+            setArtifactError(null)
+          }
+          return !value
+        })}
+      >
         <ChevronRight size={12} className={cx(styles.chevron, open && styles.chevronOpen)} />
         <Icon size={13} color={token.colorTextSecondary} />
         <span className={styles.toolName}>{call.name}</span>

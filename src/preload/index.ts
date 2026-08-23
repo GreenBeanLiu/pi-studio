@@ -98,6 +98,7 @@ const api = {
   memory: {
     load: () => ipcRenderer.invoke('memory:load'),
     save: (content: string) => ipcRenderer.invoke('memory:save', content),
+    sharedStatus: () => ipcRenderer.invoke('memory:sharedStatus'),
   },
 
   sessions: {

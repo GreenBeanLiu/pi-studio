@@ -45,10 +45,12 @@ describe('agent status tracker', () => {
     expect(tracker.promptRejected(first)).toBe(true)
     expect(tracker.snapshot()).toMatchObject({ prompt: null, phase: 'idle', startedAt: null })
 
-    const stale = tracker.prompt('older task')
-    tracker.prompt('newer task')
-    expect(tracker.promptRejected(stale)).toBe(false)
-    expect(tracker.snapshot().prompt).toBe('newer task')
+    const older = tracker.prompt('older task')
+    const newer = tracker.prompt('newer task')
+    expect(tracker.promptRejected(newer)).toBe(true)
+    expect(tracker.snapshot().prompt).toBe('older task')
+    expect(tracker.promptRejected(older)).toBe(true)
+    expect(tracker.snapshot().prompt).toBeNull()
 
     const accepted = tracker.prompt('accepted task')
     tracker.observe({ type: 'agent_start' })

@@ -19,6 +19,8 @@ import {
 } from './network-policy'
 import { cleanupStaleRunChangeTempDirs } from './run-change-set'
 import { syncBundledSkills } from './sculptor-skill'
+import { startSharedMemoryService, stopSharedMemoryService } from './shared-memory'
+import { sharedMemoryPath } from './workspace-memory'
 
 // 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
 if (process.env.PI_REMOTE_DEBUG_PORT)
@@ -252,6 +254,9 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
+  void startSharedMemoryService(sharedMemoryPath()).catch((error) => {
+    appendAppLog('warn', 'memory.service', 'Shared memory service failed to start', normalizeError(error))
+  })
   syncBundledSkills()
   piClientManager.warmup()
   // 上次开着远程控制就自动重连中转
@@ -292,4 +297,5 @@ app.on('before-quit', () => {
   appendAppLog('info', 'app', 'App quitting')
   clearAllGitRunChanges()
   piClientManager.stop().catch(() => {})
+  void stopSharedMemoryService()
 })

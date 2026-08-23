@@ -107,6 +107,7 @@ export type DesktopApi = {
   memory: {
     load: () => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
     save: (content: string) => Promise<{ ok: true; memory: WorkspaceMemory } | { error: string }>
+    sharedStatus: () => Promise<{ ok: true; url: string; file: string; count: number } | { error: string }>
   }
   sessions: {
     list: () => Promise<SessionInfo[]>

@@ -293,7 +293,7 @@ export async function prepareSandboxLaunch(
     hostWorkspace: cwd,
     hostAgentDir: agentConfigDir(),
     envNames: [
-      ...Object.keys(env),
+      ...Object.keys({ ...env, PI_STUDIO_MEMORY_FILE: '/agent/shared-memory.json' }),
       // Preserve proxy settings used by the host for OpenAI-compatible gateways.
       // Only names with a value are forwarded; secrets still travel by name
       // from the explicit env object above and never appear in this argv.
@@ -312,7 +312,11 @@ export async function prepareSandboxLaunch(
   appendAppLog('info', 'sandbox.launch', 'Launching pi inside Docker sandbox', { cwd, tag })
   return {
     cliPath: ensureShim(),
-    env: { ...env, PISTUDIO_DOCKER_ARGS: JSON.stringify(dockerArgs) },
+    env: {
+      ...env,
+      PI_STUDIO_MEMORY_FILE: '/agent/shared-memory.json',
+      PISTUDIO_DOCKER_ARGS: JSON.stringify(dockerArgs),
+    },
     mode: 'docker',
   }
 }

@@ -2,8 +2,10 @@ import { randomUUID } from 'crypto'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type {
   AgentSessionEvent,
+  JsonAgentSessionEvent,
   RpcClient as RpcClientType,
 } from '@earendil-works/pi-coding-agent'
+import type { AssistantMessage, AssistantMessageEvent } from '@earendil-works/pi-ai'
 import type { CompiledRunProfile } from './run-profile'
 import {
   embeddedNodeEnv,
@@ -82,7 +84,7 @@ const REQUIRED_CORE_METHODS = [
   'getMessages',
   'getCommands',
 ] as const
-const SUPPORTED_ENGINE_VERSION = /^0\.80\./
+const SUPPORTED_ENGINE_VERSION = /^0\.84\./
 
 function assertCoreCapabilities(client: StartablePiClient): asserts client is RpcClientType {
   const candidate = client as unknown as Record<string, unknown>
@@ -217,9 +219,77 @@ async function forceDisposeClient(
   await exit.promise
 }
 
+type PiRunFailedEvent = {
+  type: 'run_failed'
+  scope: 'prompt'
+  message: string
+}
+
+type StableRuntimeEvent = AgentSessionEvent | PiRunFailedEvent
+
+function cloneMessage(message: AssistantMessage): AssistantMessage {
+  return structuredClone(message)
+}
+
+function ensureContentSlot(message: AssistantMessage, index: number): void {
+  while (message.content.length <= index) {
+    message.content.push({ type: 'text', text: '' })
+  }
+}
+
+function applyAssistantDelta(
+  message: AssistantMessage,
+  event: AssistantMessageEvent,
+  toolCallArgumentText: Map<number, string>,
+): void {
+  if (event.type === 'start') return
+  if (event.type === 'done') {
+    Object.assign(message, cloneMessage(event.message))
+    return
+  }
+  if (event.type === 'error') {
+    Object.assign(message, cloneMessage(event.error))
+    return
+  }
+  ensureContentSlot(message, event.contentIndex)
+  const current = message.content[event.contentIndex]
+  if (event.type === 'text_start') {
+    message.content[event.contentIndex] = { type: 'text', text: '' }
+  } else if (event.type === 'text_delta' && current?.type === 'text') {
+    current.text += event.delta
+  } else if (event.type === 'text_end') {
+    message.content[event.contentIndex] = { type: 'text', text: event.content }
+  } else if (event.type === 'thinking_start') {
+    message.content[event.contentIndex] = { type: 'thinking', thinking: '' }
+  } else if (event.type === 'thinking_delta' && current?.type === 'thinking') {
+    current.thinking += event.delta
+  } else if (event.type === 'thinking_end') {
+    message.content[event.contentIndex] = { type: 'thinking', thinking: event.content }
+  } else if (event.type === 'toolcall_start') {
+    message.content[event.contentIndex] = { type: 'toolCall', id: '', name: '', arguments: {} }
+    toolCallArgumentText.set(event.contentIndex, '')
+  } else if (event.type === 'toolcall_delta') {
+    const toolCall = message.content[event.contentIndex]
+    if (toolCall?.type === 'toolCall') {
+      const argumentText = `${toolCallArgumentText.get(event.contentIndex) ?? ''}${event.delta}`
+      toolCallArgumentText.set(event.contentIndex, argumentText)
+      try {
+        toolCall.arguments = JSON.parse(argumentText) as Record<string, unknown>
+      } catch {
+        // Tool-call arguments are often delivered as incomplete JSON fragments.
+      }
+    }
+  } else if (event.type === 'toolcall_end') {
+    message.content[event.contentIndex] = event.toolCall
+    toolCallArgumentText.delete(event.contentIndex)
+  }
+}
+
 export class PiAgentRunHandle {
   readonly capabilities: PiRuntimeCapabilities
   private disposed = false
+  private streamingAssistant: AssistantMessage | null = null
+  private readonly toolCallArgumentText = new Map<number, string>()
   private approvalGate: UnattendedApprovalGate | null = null
   private detachApprovalGate: (() => void) | null = null
 
@@ -255,8 +325,45 @@ export class PiAgentRunHandle {
     return this.client.waitForIdle(timeout)
   }
 
-  onEvent(listener: (event: AgentSessionEvent) => void): () => void {
-    return this.client.onEvent(listener)
+  onEvent(listener: (event: StableRuntimeEvent) => void): () => void {
+    return this.client.onEvent((event) => listener(this.normalizeEvent(event)))
+  }
+
+  private normalizeEvent(event: JsonAgentSessionEvent): StableRuntimeEvent {
+    if (event.type === 'message_start') {
+      const message = event.message as AssistantMessage
+      if (message.role === 'assistant') {
+        this.streamingAssistant = cloneMessage(message)
+        this.toolCallArgumentText.clear()
+      }
+      return event
+    }
+    if (event.type === 'message_end') {
+      const message = event.message as AssistantMessage
+      if (message.role === 'assistant') {
+        this.streamingAssistant = null
+        this.toolCallArgumentText.clear()
+      }
+      return event
+    }
+    if (event.type !== 'message_update') return event
+
+    const update = event.assistantMessageEvent as AssistantMessageEvent & { message?: AssistantMessage }
+    if ('message' in update && update.message) {
+      this.streamingAssistant = cloneMessage(update.message)
+    } else if (!this.streamingAssistant) {
+      return event as unknown as StableRuntimeEvent
+    } else {
+      applyAssistantDelta(this.streamingAssistant, update, this.toolCallArgumentText)
+      this.streamingAssistant.usage = event.usage
+    }
+    const message = cloneMessage(this.streamingAssistant)
+    return {
+      type: 'message_update',
+      message,
+      usage: event.usage,
+      assistantMessageEvent: { ...update, partial: message },
+    } as unknown as AgentSessionEvent
   }
 
   /**

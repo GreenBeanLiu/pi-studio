@@ -10,6 +10,8 @@ import {
   type SessionExportFormat,
 } from './pi-sessions'
 import { syncWebSearchExtension } from './web-search-extension'
+import { getSharedMemoryConnection, getSharedMemoryStore, startSharedMemoryService } from './shared-memory'
+import { sharedMemoryPath } from './workspace-memory'
 import { syncAgentStatusExtension } from './agent-status-extension-sync'
 import { AgentArtifactStore, materializeToolEvent } from './agent-artifact'
 import {
@@ -582,6 +584,14 @@ export function registerIpcHandlers(): void {
       return { error: (err as Error).message ?? '保存 Workspace Memory 失败' }
     }
   })
+  ipcMain.handle('memory:sharedStatus', async () => {
+    try {
+      const memory = getSharedMemoryConnection() ?? await startSharedMemoryService(sharedMemoryPath())
+      return { ok: true, url: memory.url, file: memory.file, count: getSharedMemoryStore(memory.file).count() }
+    } catch (err) {
+      return { error: (err as Error).message ?? '共享记忆服务不可用' }
+    }
+  })
 
   // ── Sessions ─────────────────────────────────────────────────────
   ipcMain.handle('sessions:list', async () => {
@@ -740,19 +750,26 @@ export function registerIpcHandlers(): void {
     }
     try {
       await piClientManager.prompt(message, images)
-      broadcastAgentStatusSnapshot()
     } catch (err) {
       if (baselineCaptured && cwd) await sealRunChanges(cwd, 'prompt rejected')
       throw err
+    } finally {
+      broadcastAgentStatusSnapshot()
     }
   })
   ipcMain.handle('pi:steer', async (_e, message: string, images?: ImageContent[]) => {
-    await piClientManager.steer(message, images)
-    broadcastAgentStatusSnapshot()
+    try {
+      await piClientManager.steer(message, images)
+    } finally {
+      broadcastAgentStatusSnapshot()
+    }
   })
   ipcMain.handle('pi:followUp', async (_e, message: string, images?: ImageContent[]) => {
-    await piClientManager.followUp(message, images)
-    broadcastAgentStatusSnapshot()
+    try {
+      await piClientManager.followUp(message, images)
+    } finally {
+      broadcastAgentStatusSnapshot()
+    }
   })
   ipcMain.handle('pi:abort', async () => {
     await piClientManager.abort()

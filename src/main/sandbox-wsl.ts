@@ -156,6 +156,7 @@ export async function prepareWslSandboxLaunch(
     cliPath: shimPath,
     env: {
       ...env,
+      PI_STUDIO_MEMORY_FILE: windowsToWslPath(env.PI_STUDIO_MEMORY_FILE ?? ''),
       PISTUDIO_WSL_ARGS: JSON.stringify(wslArgs),
       WSLENV: secretNames.join(':'),
     },

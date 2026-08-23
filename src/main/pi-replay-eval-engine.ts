@@ -6,10 +6,9 @@ import {
   type StreamFunction,
 } from '@earendil-works/pi-ai'
 import {
-  AuthStorage,
   createAgentSession,
   createExtensionRuntime,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
@@ -169,7 +168,9 @@ function emptyResourceLoader(): ResourceLoader {
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => 'Replay a recorded pi-studio evaluation exactly.',
+    getSystemPromptSource: () => undefined,
     getAppendSystemPrompt: () => [],
+    getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {},
   }
@@ -265,15 +266,24 @@ export class PiReplayEvalEngine implements EvalEngine {
       .filter((name): name is string => typeof name === 'string'))]
     const unsupported = toolNames.filter((name) => !BUILTIN_TOOLS.has(name))
     if (unsupported.length) throw new Error(`recording uses unsupported replay tools: ${unsupported.join(', ')}`)
-    const authStorage = AuthStorage.inMemory()
-    authStorage.setRuntimeApiKey('pi-studio-replay', 'recorded-stream-no-network')
-    const modelRegistry = ModelRegistry.inMemory(authStorage)
+    const modelRuntime = await ModelRuntime.create({
+      allowModelNetwork: false,
+      refreshOnCreate: false,
+    })
+    modelRuntime.registerProvider('pi-studio-replay', {
+      name: 'pi-studio replay',
+      api: 'openai-completions',
+      apiKey: 'recorded-stream-no-network',
+      streamSimple: streamFn,
+      models: [replayModel()],
+    })
+    const model = modelRuntime.getModel('pi-studio-replay', 'pi-studio-eval-replay')
+    if (!model) throw new Error('failed to register replay model')
     const { session } = await createAgentSession({
       cwd: request.workspacePath,
-      model: replayModel(),
+      model,
+      modelRuntime,
       thinkingLevel: 'off',
-      authStorage,
-      modelRegistry,
       resourceLoader: emptyResourceLoader(),
       tools: toolNames.length ? toolNames : ['read', 'edit', 'write', 'grep', 'find', 'ls'],
       sessionManager: SessionManager.inMemory(request.workspacePath),
@@ -283,7 +293,6 @@ export class PiReplayEvalEngine implements EvalEngine {
       }),
     })
     this.activeSession = session
-    session.agent.streamFn = streamFn
     const tracker = new SessionProjectionTracker()
     tracker.beginLoad(request.workspacePath, null, request.sessionId)
     const unsubscribe = session.subscribe((runtimeEvent) => {
