@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
   PiRunTimeoutError,
@@ -6,6 +7,15 @@ import {
   startPiRuntimeCancellable,
 } from './pi-runtime'
 import type { CompiledRunProfile } from './run-profile'
+
+/**
+ * 引擎版本闸门(pi-runtime.ts 的 SUPPORTED_ENGINE_VERSION)跟着实际依赖走。
+ * 写死版本号的话,每次升 pi 这里都会红一片,而失败信息又跟版本毫无关系
+ * (0.82→0.84 那次就一口气挂了 12 个),排查成本远超收益。
+ */
+const ENGINE_VERSION = `${JSON.parse(
+  readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+).dependencies['@earendil-works/pi-coding-agent'].replace(/^[\^~]/, '')}-test`
 
 describe('runPromptToSettled', () => {
   it('does not complete a headless run until Pi reports idle', async () => {
@@ -143,7 +153,7 @@ describe('startPiRuntime', () => {
       loadClient: async () => FakeRpcClient,
       runtimePath: () => 'C:\\electron.exe',
       nodeEnv: (env) => ({ ...env, ELECTRON_RUN_AS_NODE: '1' }),
-      engineVersion: () => '0.84.2-test',
+      engineVersion: () => ENGINE_VERSION,
       runtimeId: () => 'runtime-1',
     })
 
@@ -151,7 +161,7 @@ describe('startPiRuntime', () => {
     expect(client.id).toBe('runtime-1')
     expect(client.capabilities).toMatchObject({
       engine: 'pi',
-      engineVersion: '0.84.2-test',
+      engineVersion: ENGINE_VERSION,
       protocolVersion: 'rpc-v1',
       sessionFormatVersion: 'pi-jsonl-v1',
       handshake: { verified: true, state: true, messages: true, commands: true },
@@ -215,7 +225,7 @@ describe('startPiRuntime', () => {
         loadClient: async () => StartingRpcClient,
         runtimePath: () => 'C:\\electron.exe',
         nodeEnv: (env) => env,
-        engineVersion: () => '0.84.2-test',
+        engineVersion: () => ENGINE_VERSION,
         runtimeId: () => 'runtime-1',
       },
       onOwned: (cleanup) => { ownedCleanup = cleanup },
@@ -261,7 +271,7 @@ describe('startPiRuntime', () => {
     const handle = await startPiRuntime(profile, {
       loadClient: async () => ProcessRpcClient,
       runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test', runtimeId: () => 'runtime-1',
+      engineVersion: () => ENGINE_VERSION, runtimeId: () => 'runtime-1',
     })
 
     const disposal = handle.forceDispose().then(() => { forceDisposed = true })
@@ -304,7 +314,7 @@ describe('startPiRuntime', () => {
     const handle = await startPiRuntime(profile, {
       loadClient: async () => TreeProcessRpcClient,
       runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test', runtimeId: () => 'runtime-1', terminateTree,
+      engineVersion: () => ENGINE_VERSION, runtimeId: () => 'runtime-1', terminateTree,
     })
 
     await handle.forceDispose()
@@ -342,7 +352,7 @@ describe('startPiRuntime', () => {
     const handle = await startPiRuntime(profile, {
       loadClient: async () => SynchronousExitRpcClient,
       runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test', runtimeId: () => 'runtime-1',
+      engineVersion: () => ENGINE_VERSION, runtimeId: () => 'runtime-1',
     })
 
     await expect(handle.forceDispose()).resolves.toBeUndefined()
@@ -375,7 +385,7 @@ describe('startPiRuntime', () => {
     const handle = await startPiRuntime(profile, {
       loadClient: async () => RetryableRpcClient,
       runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test', runtimeId: () => 'runtime-1',
+      engineVersion: () => ENGINE_VERSION, runtimeId: () => 'runtime-1',
     })
 
     await expect(handle.forceDispose()).rejects.toThrow('stop failed')
@@ -413,7 +423,7 @@ describe('startPiRuntime', () => {
     const handle = await startPiRuntime(profile, {
       loadClient: async () => ProcessErrorRpcClient,
       runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test', runtimeId: () => 'runtime-1',
+      engineVersion: () => ENGINE_VERSION, runtimeId: () => 'runtime-1',
     })
 
     const disposal = handle.forceDispose()
@@ -446,7 +456,7 @@ describe('startPiRuntime', () => {
     const handle = await startPiRuntime(profile, {
       loadClient: async () => HungStopRpcClient,
       runtimePath: () => 'C:\\electron.exe', nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test', runtimeId: () => 'runtime-1',
+      engineVersion: () => ENGINE_VERSION, runtimeId: () => 'runtime-1',
     })
 
     const disposal = handle.forceDispose()
@@ -488,7 +498,7 @@ describe('startPiRuntime', () => {
         loadClient: async () => IncompleteRpcClient,
         runtimePath: () => 'C:\\electron.exe',
         nodeEnv: (env) => env,
-        engineVersion: () => '0.84.2-test',
+        engineVersion: () => ENGINE_VERSION,
         runtimeId: () => 'runtime-1',
       }),
     ).rejects.toThrow('missing required RPC capabilities')
@@ -531,7 +541,7 @@ describe('startPiRuntime', () => {
         loadClient: async () => FailingRpcClient,
         runtimePath: () => 'C:\\electron.exe',
         nodeEnv: (env) => env,
-        engineVersion: () => '0.84.2-test',
+        engineVersion: () => ENGINE_VERSION,
         runtimeId: () => 'runtime-1',
       }),
     ).rejects.toThrow('thinking rejected')
@@ -578,7 +588,7 @@ describe('startPiRuntime', () => {
         loadClient: async () => IncompatibleRpcClient,
         runtimePath: () => 'C:\\electron.exe',
         nodeEnv: (env) => env,
-        engineVersion: () => '0.84.2-test',
+        engineVersion: () => ENGINE_VERSION,
         runtimeId: () => 'runtime-1',
       }),
     ).rejects.toThrow('incompatible rpc-v1 state payload')
@@ -640,7 +650,7 @@ describe('unattended approval gate', () => {
       loadClient: async () => DialogRpcClient,
       runtimePath: () => 'C:\electron.exe',
       nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test',
+      engineVersion: () => ENGINE_VERSION,
       runtimeId: () => 'runtime-1',
     })
   }
@@ -715,7 +725,7 @@ describe('unattended approval delivery failures', () => {
       loadClient: async () => StdinlessRpcClient,
       runtimePath: () => 'C:\electron.exe',
       nodeEnv: (env) => env,
-      engineVersion: () => '0.84.2-test',
+      engineVersion: () => ENGINE_VERSION,
       runtimeId: () => 'runtime-1',
     })
     listener?.({ type: 'extension_ui_request', id: 'confirm-1', method: 'confirm', title: 'x', message: 'y' })
