@@ -1,6 +1,6 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { AgentStatusEvent } from './pi-client'
-import type { ExecutionSecuritySnapshot } from '../shared/ipc/contract'
+import type { ExecutionSecuritySnapshot, SandboxMode } from '../shared/ipc/contract'
 import { isBlockingExtensionUiMethod } from './extension-ui-ownership'
 
 /**
@@ -34,7 +34,7 @@ export type AgentRuntimeSnapshot = {
   workspacePath: string | null
   sessionId: string | null
   sessionFile: string | null
-  sandbox: 'wsl' | 'docker' | null
+  sandbox: SandboxMode | null
   security: ExecutionSecuritySnapshot | null
   profileDigest: string | null
   activeRun: { startedAt: number } | null

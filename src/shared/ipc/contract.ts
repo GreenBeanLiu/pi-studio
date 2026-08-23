@@ -562,11 +562,16 @@ export type ProviderModelListResult =
   | { ok: true; message: string; models: string[] }
   | { ok: false; message: string; details?: string }
 
+/** 沙箱后端:macOS 走系统自带 Seatbelt,Windows 首选 WSL2+bwrap,Docker 是历史回退。 */
+export type SandboxMode = 'wsl' | 'docker' | 'seatbelt'
+
 export type SandboxDetect = {
   docker: { cliFound: boolean; daemonRunning: boolean; version: string }
   /** 首选执行路径:pi-studio-sandbox WSL 发行版是否就绪 */
   wslSandboxReady: boolean
   wsl: { available: boolean; distros: string[] }
+  /** macOS 原生沙箱(sandbox-exec)是否可用 —— mac 上这是唯一路径,不走 Docker */
+  seatbelt: boolean
 }
 
 export type SandboxImageStatus = {
@@ -707,7 +712,7 @@ export type ExecutionSecuritySnapshot = {
   requested: 'confined' | 'full-access'
   filesystemMode: 'workspace-write' | 'danger-full-access'
   networkMode: 'allowlist' | 'unrestricted'
-  backend: 'wsl-bwrap' | 'docker' | 'host'
+  backend: 'wsl-bwrap' | 'docker' | 'macos-seatbelt' | 'host'
   enforcement: 'full' | 'partial' | 'none'
   hostCodeExecution: boolean
   reason: string
@@ -754,7 +759,7 @@ export type AgentRuntimeSnapshot = {
   workspacePath: string | null
   sessionId: string | null
   sessionFile: string | null
-  sandbox: 'wsl' | 'docker' | null
+  sandbox: SandboxMode | null
   security: ExecutionSecuritySnapshot | null
   profileDigest: string | null
   activeRun: { startedAt: number } | null
@@ -879,7 +884,7 @@ export type AgentStatusEvent =
       restoredSession: boolean
       sessionId?: string
       sessionFile?: string
-      sandbox?: 'wsl' | 'docker'
+      sandbox?: SandboxMode
       security?: ExecutionSecuritySnapshot
       profileDigest?: string
     }

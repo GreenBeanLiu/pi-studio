@@ -9,6 +9,7 @@ import type {
   ExecutionSecuritySnapshot,
   ExtensionUiResponse,
   PiRuntimeEvent,
+  SandboxMode,
 } from '../shared/ipc/contract'
 import {
   loadRpcClient,
@@ -43,7 +44,7 @@ export type AgentStatusEvent =
       sessionId?: string
       sessionFile?: string
       /** 本工作区的 agent 是否跑在沙箱里(WSL bubblewrap / Docker 回退) */
-      sandbox?: 'wsl' | 'docker'
+      sandbox?: SandboxMode
       security?: ExecutionSecuritySnapshot
       profileDigest?: string
     }

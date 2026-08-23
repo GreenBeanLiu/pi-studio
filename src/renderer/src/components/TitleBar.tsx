@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createStyles } from 'antd-style'
 import { Tooltip } from 'antd'
 import { FolderOpen, ShieldCheck } from 'lucide-react'
-import { api, type ExecutionSecuritySnapshot, type Workspace } from '../lib/api'
+import { api, type ExecutionSecuritySnapshot, type SandboxMode, type Workspace } from '../lib/api'
 import appIcon from '../assets/app-icon.png'
 
 type UpdateState =
@@ -14,7 +14,7 @@ type UpdateState =
 type Props = {
   workspace: Workspace | null
   /** 当前工作区 agent 的沙箱运行模式;null = 直跑主机 */
-  sandboxMode: 'wsl' | 'docker' | null
+  sandboxMode: SandboxMode | null
   executionSecurity: ExecutionSecuritySnapshot | null
   update: UpdateState
   onInstall: () => void
@@ -262,9 +262,11 @@ export default function TitleBar({ workspace, sandboxMode, executionSecurity, up
               <ShieldCheck size={12} />
               {sandboxMode === 'wsl'
                 ? 'WSL 沙箱'
-                : sandboxMode === 'docker'
-                  ? 'Docker 部分隔离'
-                  : '主机权限'}
+                : sandboxMode === 'seatbelt'
+                  ? '沙箱·仅工作区可写'
+                  : sandboxMode === 'docker'
+                    ? 'Docker 部分隔离'
+                    : '主机权限'}
             </span>
           </Tooltip>
         )}

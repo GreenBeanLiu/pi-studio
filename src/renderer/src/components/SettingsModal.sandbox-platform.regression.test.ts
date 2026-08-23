@@ -11,19 +11,28 @@ describe('sandbox settings copy must match the platform', () => {
     expect(settingsModal).toContain("const sandboxOnWsl = api.platform === 'win32'")
   })
 
-  it('never promises the allowlist proxy off the WSL path', () => {
-    const promise = '网络收敛到主机侧域名白名单代理'
-    expect(settingsModal).toContain(promise)
-    // 这句话只能出现在 sandboxOnWsl 为真的那个分支里
-    const idx = settingsModal.indexOf(promise)
-    const branch = settingsModal.lastIndexOf('sandboxOnWsl', idx)
-    expect(branch).toBeGreaterThan(-1)
-    expect(settingsModal.slice(branch, idx)).not.toContain('</')
+  it('gives macOS its own branch instead of the Docker story', () => {
+    expect(settingsModal).toContain("const sandboxOnSeatbelt = api.platform === 'darwin'")
+    expect(settingsModal).toContain('沙箱模式（macOS 原生）')
+    expect(settingsModal).toContain('sandbox-exec')
   })
 
-  it('says out loud that the Docker fallback has no network confinement', () => {
-    expect(settingsModal).toContain('没有域名白名单代理')
-    expect(settingsModal).toContain('出站不受限')
+  it('admits on the seatbelt path that the network is not confined', () => {
+    // 只做文件隔离(2026-08-23 决定)。文案不能让人以为出站也被管了。
+    expect(settingsModal).toContain('网络不受限')
+  })
+
+  it('keeps the shelved-Docker warning for the platforms that still get Docker', () => {
+    expect(settingsModal).toContain('const sandboxUsesDocker = !sandboxOnWsl && !sandboxOnSeatbelt')
+    expect(settingsModal).toContain('这条链路已封存')
+    expect(settingsModal).toContain("type={sandboxUsesDocker ? 'warning' : 'info'}")
+  })
+
+  it('hides the Docker and image rows where Docker is not used', () => {
+    expect(settingsModal).toContain('{!sandboxOnSeatbelt && (')
+    expect(settingsModal).toContain(
+      '{!sandboxOnSeatbelt && sandboxDetect?.docker.daemonRunning && !sandboxImage?.exists && (',
+    )
   })
 
   it('hides the WSL distro row and prep hint on other platforms', () => {
