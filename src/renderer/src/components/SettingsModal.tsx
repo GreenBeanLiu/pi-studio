@@ -202,6 +202,10 @@ export default function SettingsModal({
   const [channelDraft, setChannelDraft] = useState<Channel | null>(null)
   const [channelTesting, setChannelTesting] = useState<string | null>(null)
   const [channelTestResult, setChannelTestResult] = useState<Record<string, string>>({})
+  // WSL + bwrap 那条路(整盘只读、白名单代理)只在 Windows 上存在;别的平台只有
+  // Docker 回退,隔离能力少一大截,文案不能照抄。
+  const sandboxOnWsl = api.platform === 'win32'
+  const sandboxFallbackWord = sandboxOnWsl ? '(回退)' : ''
   const [sandboxDetect, setSandboxDetect] = useState<SandboxDetect | null>(null)
   const [sandboxDetecting, setSandboxDetecting] = useState(false)
   const [sandboxImage, setSandboxImage] = useState<SandboxImageStatus | null>(null)
@@ -997,12 +1001,14 @@ export default function SettingsModal({
 
               <div className={styles.section}>
                 <span className={styles.label}>
-                  沙箱模式（WSL2 + bubblewrap）
+                  {sandboxOnWsl ? '沙箱模式（WSL2 + bubblewrap）' : '沙箱模式（Docker）'}
                   <Tag color="orange" style={{ marginLeft: 8 }}>
                     实验性
                   </Tag>
                   <span className={styles.labelHint}>
-                    agent 跑在隔离的 WSL 发行版里:文件只写工作区,出站经主机白名单代理
+                    {sandboxOnWsl
+                      ? 'agent 跑在隔离的 WSL 发行版里:文件只写工作区,出站经主机白名单代理'
+                      : 'agent 跑在 Docker 容器里:只挂载工作区与 agent 目录'}
                   </span>
                 </span>
                 <div className={styles.actionRow}>
@@ -1016,10 +1022,18 @@ export default function SettingsModal({
                   </span>
                 </div>
                 <Alert
-                  type="info"
+                  type={sandboxOnWsl ? 'info' : 'warning'}
                   showIcon
-                  message="pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。"
-                  description="bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理(mirrored 或 NAT 网络模式均自动适配)。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。"
+                  message={
+                    sandboxOnWsl
+                      ? 'pi-studio-sandbox 发行版就绪即自动使用 WSL 沙箱;否则回退 Docker(旧方案)。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。'
+                      : '本平台没有 WSL,只能走 Docker 回退,需要 Docker daemon 在跑且镜像已构建。保存后自动重启当前工作区生效,沙箱运行中时标题栏有「沙箱」标识。'
+                  }
+                  description={
+                    sandboxOnWsl
+                      ? 'bwrap 隔离:整盘只读、仅工作区与 agent 目录可写;网络收敛到主机侧域名白名单代理(mirrored 或 NAT 网络模式均自动适配)。注意沙箱内是 Linux 环境,跑不了 Windows 构建。发行版准备命令与方案详见 docs/sandbox-mode-plan.md。'
+                      : 'Docker 回退只有文件隔离(仅挂载工作区与 agent 目录),没有域名白名单代理 —— 那套是 WSL/bwrap 专属,容器拿的是默认网络,出站不受限。而且这条链路 2026-07-15 已封存:当时容器出网不通,聊天每轮都 Connection error,此后未再验证。注意沙箱内是 Linux 环境。详见 docs/sandbox-mode-plan.md。'
+                  }
                 />
                 <div className={styles.actionRow}>
                   <span className={styles.label}>环境</span>
@@ -1028,31 +1042,33 @@ export default function SettingsModal({
                   </Button>
                 </div>
                 <div className={styles.actionRow}>
-                  <Tag color={sandboxDetect?.wslSandboxReady ? 'green' : 'default'}>
-                    {sandboxDetect
-                      ? sandboxDetect.wslSandboxReady
-                        ? 'WSL 沙箱发行版就绪(pi-studio-sandbox)'
-                        : 'WSL 沙箱发行版未准备'
-                      : 'WSL 检测中…'}
-                  </Tag>
+                  {sandboxOnWsl && (
+                    <Tag color={sandboxDetect?.wslSandboxReady ? 'green' : 'default'}>
+                      {sandboxDetect
+                        ? sandboxDetect.wslSandboxReady
+                          ? 'WSL 沙箱发行版就绪(pi-studio-sandbox)'
+                          : 'WSL 沙箱发行版未准备'
+                        : 'WSL 检测中…'}
+                    </Tag>
+                  )}
                   <Tag color={sandboxDetect?.docker.daemonRunning ? 'green' : 'default'}>
                     {sandboxDetect
                       ? sandboxDetect.docker.daemonRunning
-                        ? `Docker 回退可用 v${sandboxDetect.docker.version}`
+                        ? `Docker${sandboxFallbackWord}可用 v${sandboxDetect.docker.version}`
                         : sandboxDetect.docker.cliFound
-                          ? 'Docker(回退)未运行'
-                          : '无 Docker(回退)'
+                          ? `Docker${sandboxFallbackWord}未运行`
+                          : `无 Docker${sandboxFallbackWord}`
                       : 'Docker 检测中…'}
                   </Tag>
                   <Tag color={sandboxImage?.exists ? 'green' : 'default'}>
                     {sandboxImage
                       ? sandboxImage.exists
-                        ? `回退镜像已就绪`
-                        : '回退镜像未构建'
+                        ? '沙箱镜像已就绪'
+                        : '沙箱镜像未构建'
                       : '镜像检测中…'}
                   </Tag>
                 </div>
-                {sandboxDetect && !sandboxDetect.wslSandboxReady && (
+                {sandboxOnWsl && sandboxDetect && !sandboxDetect.wslSandboxReady && (
                   <span className={styles.labelHint}>
                     准备发行版(一次性,约 1 分钟):详见 docs/sandbox-mode-plan.md 或
                     src/main/sandbox-wsl.ts 头注释里的三条命令。

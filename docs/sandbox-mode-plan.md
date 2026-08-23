@@ -159,3 +159,87 @@ Clash 代理对比、node 与 electron-as-node 双运行时手跑 pi CLI(全通)
    `HTTP_PROXY/HTTPS_PROXY` 指向 pi-studio 内置的白名单代理(只放行 LLM 网关等认可域名)。
    非强制隔离(恶意代码可绕),但对"agent 犯傻乱连"够用,与 securityPolicy 设置天然衔接;
    将来切 srt 时这个代理直接升级为 WFP 背后的代理,投资不浪费。
+
+---
+
+## macOS 沙箱现状与选型（2026-08-23 实测）
+
+### 现状:mac 上开沙箱等于开 Docker,而 Docker 这条是封存的
+
+- `sandbox.ts` 的 WSL 探测在非 Windows 直接返回不可用,所以 mac 只会走 **Docker 回退**。
+- 设置页那段「整盘只读 + 域名白名单代理」的文案描述的是 **WSL/bwrap 专属**能力
+  (`sandbox-wsl.ts` + `sandbox-proxy.ts`)。`buildSandboxDockerArgs` 里**一个网络参数都没有**,
+  容器拿默认 bridge 网络,**出站完全不受限**。文案已按平台分支(2026-08-23)。
+- 而 Docker 链路正是上面复盘里封存的那条:容器出网不通、聊天每轮 Connection error,
+  从未通过 E2E。**在 mac 上开沙箱,大概率直接把聊天弄挂。**
+
+结论:**现阶段 mac 上不要开这个开关**,除非要跑不信任的代码且愿意自己趟 Docker。
+
+### macOS 原生沙箱是有的:Seatbelt(`sandbox-exec`)
+
+macOS 自带 `/usr/bin/sandbox-exec`,能力与 Linux 的 bwrap 对位。本机实测
+(macOS 26.5.1 / Darwin 25.5,profile 见下)全部通过:
+
+| 验证项 | 结果 |
+|---|---|
+| 工作区内写入 | ✅ 允许 |
+| 工作区外写入 | ✅ 被拒(`Operation not permitted`),原文件未被改动 |
+| 系统路径读取 | ✅ 允许(等价 bwrap `--ro-bind / /`) |
+| `(deny network*)` 后直连外网 | ✅ 被拒(curl 返回 000) |
+| 只放行 `localhost:<代理端口>` | ✅ 该端口通,外网不通,**其它 localhost 端口也不通** |
+
+最后一行是关键:**WSL 那套「出站强制走主机侧白名单代理」的设计,在 mac 上原样成立**,
+`sandbox-proxy.ts` 可以直接复用,不用重写。
+
+实测用的 profile 骨架:
+
+```scheme
+(version 1)
+(deny default)
+(import "system.sb")
+(allow process-exec* process-fork)
+(allow file-read*)                                  ; 整盘可读
+(allow file-write* (subpath (param "WS")))          ; 只写工作区(agent 目录同理再加一条)
+(deny network*)
+(allow network-outbound (remote ip "localhost:18923"))  ; 只放行白名单代理端口
+```
+
+注意:`sandbox-exec` 的 man page 标了 deprecated,但系统仍在用它(Chrome、Claude Code
+都走这条),短期不会消失。
+
+### 选项对比
+
+| 方案 | 文件隔离 | 网络管控 | 依赖 | 启动开销 | 评价 |
+|---|---|---|---|---|---|
+| **不开(现状)** | 无 | 无 | 无 | 0 | 功能不受影响,只是没隔离。当前默认 |
+| **Docker 回退** | 有(只挂工作区+agent 目录) | **无** | Docker daemon + 构建镜像 | 每次开工作区一次 `docker run` | 已封存,出网问题未解,不推荐 |
+| **srt(推荐)** | 有 | **有**(域名白名单代理) | mac 侧只要 ripgrep | 进程级,无虚机 | 见下 |
+| **自写 Seatbelt profile** | 有 | 有(自接 `sandbox-proxy.ts`) | 无 | 进程级 | 可行但要自己维护 profile |
+
+### 推荐:srt(anthropic-experimental/sandbox-runtime)
+
+[sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime) 就是 Claude Code
+自己那套,上面复盘里已经为 Windows 记过一笔。**它在 mac 上的实现正是本节实测的形状**:
+
+- macOS:`sandbox-exec` + 动态生成 Seatbelt profile;
+- 网络:HTTP 代理做域名白名单 + SOCKS5 兜其它 TCP,**macOS 侧就是限制到 localhost 端口**;
+- Linux:bubblewrap;Windows:alpha,专用本地账户 + WFP;
+- **mac 依赖只有 ripgrep**——没有 daemon、没有虚机、没有镜像构建;
+- 提供 CLI(`srt`)和 TS 库(`SandboxManager`)两种接法。
+
+对 pi-studio 的接法与现有架构一致:中继 shim 不动,把 `docker run …` 换成
+`srt … pi --mode rpc …`(或用 `SandboxManager` 在 main 里包一层),
+`sandbox-proxy.ts` 的白名单代理继续用。
+
+### 若要落地,待办
+
+1. `sandbox.ts` 增加第三条路径 `darwin → srt`,`sandboxMode` 加 `'srt'`;
+   探测项从「WSL 发行版 + Docker daemon + 镜像」换成「srt 可用 + ripgrep」。
+2. 复用 `sandbox-proxy.ts`,把代理端口写进 Seatbelt 的 `network-outbound` 允许项。
+3. 标题栏沙箱徽标、`ExecutionSecuritySnapshot` 的 enforcement 上报补 srt 分支。
+4. E2E 三项(照 WSL 的验收标准):工作区可写、系统路径只读、非白名单出站被拦。
+5. 注意 `sandboxSessionPathToContainer` 的 `.toLowerCase()` 路径比较——
+   APFS 默认大小写不敏感一般无碍,大小写敏感卷需留意(见 MACOS_PORTING.md §3)。
+
+**优先级**:与 Windows 侧一致——等 Routines 无人值守成为核心用法、或开始对外分发时再做。
+在那之前 mac 保持沙箱关闭是合理的。
