@@ -18,7 +18,7 @@ import {
   PRODUCTION_CONTENT_SECURITY_POLICY,
 } from './network-policy'
 import { cleanupStaleRunChangeTempDirs } from './run-change-set'
-import { syncBundledSkills } from './sculptor-skill'
+import { syncBundledExtensions, syncBundledSkills } from './bundled-agent-resources'
 
 // 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
 if (process.env.PI_REMOTE_DEBUG_PORT)
@@ -253,6 +253,7 @@ app.whenReady().then(() => {
 
   registerIpcHandlers()
   syncBundledSkills()
+  syncBundledExtensions()
   piClientManager.warmup()
   // 上次开着远程控制就自动重连中转
   if (loadSettings().remoteEnabled) void remoteControl.enable()
