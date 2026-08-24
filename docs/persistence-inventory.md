@@ -15,6 +15,10 @@ Pi session files, the selected workspace, Docker, and remote integrations.
 | `userData/security-policies.json` | Default/workspace command and write policies | Yes | No |
 | `userData/pi-agent/sessions/**` | Pi conversation JSONL and session metadata | Yes; Pi is source of truth | Index only, do not duplicate full messages |
 | `userData/pi-agent/models.json` | Generated provider/model override | Yes; generated file | No |
+| `userData/pi-agent/shared-memory.sqlite3` | Cross-agent shared memory with an FTS5 index | No | Current local source of truth |
+| `userData/pi-agent/shared-memory.json` | First-run import source for shared memory | Yes, until imported | Imported once |
+| `userData/pi-agent/shared-memory.snapshot.json` | Read-only mirror for sandboxed agents that cannot reach 127.0.0.1 | Regenerable | No |
+| `userData/pi-agent/shared-memory.connection.json` | Local memory service port and bearer token | Regenerable; removed on quit | No |
 | `userData/logs/**` | Application diagnostics | Yes, with retention limit | No |
 | `userData/sandbox/**` | Generated Dockerfile and RPC shim | Regenerable | No |
 | `<workspace>/.pi-studio/memory.md` | Workspace memory maintained with the project | Yes | No |
@@ -44,6 +48,12 @@ runtime without `node:sqlite` can continue with the JSON store and a durable JSO
 JSON-mode deletions use a small recovery journal so the store removal and delete intent finish together
 after a crash. Once SQLite exists it is the only source of truth; initialization failures stop workflow
 storage instead of falling back to a stale JSON copy.
+
+Shared memory follows the same one-way migration: `shared-memory.json` is imported in one transaction,
+copied to `shared-memory.json.backup-v1`, and never read again. The SQLite database has exactly one
+writer (the Electron main process, behind the local HTTP service). Sandboxed agents that cannot reach
+`127.0.0.1` read `shared-memory.snapshot.json`, a mirror rewritten after every save or delete; writes
+have no degraded path and fail loudly instead of racing the database.
 
 The initial migration is `database/migrations/001_pi_studio_core.sql` and uses an isolated
 `pi_studio` schema in the existing `trailai` database:

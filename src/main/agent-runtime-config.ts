@@ -4,9 +4,7 @@ import type { LlmProviderProfile } from './llm-gateway'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { agentConfigDir, loadSettings } from './settings'
 import { selectRuntimeModelRoute } from '../shared/model-route'
-import {
-  sharedMemoryPath,
-} from './workspace-memory'
+import { sharedMemoryPath, sharedMemorySnapshotPath } from './workspace-memory'
 import { getSharedMemoryConnection, startSharedMemoryService } from './shared-memory'
 
 export type AgentRuntimeConfig = {
@@ -45,7 +43,11 @@ export async function prepareAgentRuntime(cwd?: string): Promise<AgentRuntimeCon
     throw new Error('请先在云端模型线路中添加可用模型')
   }
 
-  const memory = getSharedMemoryConnection() ?? await startSharedMemoryService(sharedMemoryPath())
+  const memory =
+    getSharedMemoryConnection() ??
+    (await startSharedMemoryService(sharedMemoryPath(), (message, error) => {
+      appendAppLog('warn', 'memory.snapshot', message, normalizeError(error))
+    }))
   const cloud = getCloudConnection()
   const cloudEnv: Record<string, string> = cloud.available
     ? { PI_CLOUD_IMAGE_RELAY: cloud.relay, PI_CLOUD_IMAGE_KEY: cloud.key }
@@ -59,7 +61,8 @@ export async function prepareAgentRuntime(cwd?: string): Promise<AgentRuntimeCon
       PI_CODING_AGENT_DIR: agentConfigDir(),
       PI_STUDIO_MEMORY_URL: memory.url,
       PI_STUDIO_MEMORY_TOKEN: memory.token,
-      PI_STUDIO_MEMORY_FILE: sharedMemoryPath(),
+      // 降级读的是只读快照,不是 SQLite 库本体 —— 库只有 main 一个写者
+      PI_STUDIO_MEMORY_FILE: sharedMemorySnapshotPath(),
       ...(cwd ? { PI_STUDIO_MEMORY_WORKSPACE_PATH: cwd } : {}),
       ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
       ...cloudEnv,

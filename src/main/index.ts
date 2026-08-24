@@ -254,7 +254,9 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
-  void startSharedMemoryService(sharedMemoryPath()).catch((error) => {
+  void startSharedMemoryService(sharedMemoryPath(), (message, error) => {
+    appendAppLog('warn', 'memory.snapshot', message, normalizeError(error))
+  }).catch((error) => {
     appendAppLog('warn', 'memory.service', 'Shared memory service failed to start', normalizeError(error))
   })
   syncBundledSkills()

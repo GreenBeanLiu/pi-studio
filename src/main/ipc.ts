@@ -601,8 +601,12 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('memory:sharedStatus', async () => {
     try {
-      const memory = getSharedMemoryConnection() ?? await startSharedMemoryService(sharedMemoryPath())
-      return { ok: true, url: memory.url, file: memory.file, count: getSharedMemoryStore(memory.file).count() }
+      const memory =
+        getSharedMemoryConnection() ??
+        (await startSharedMemoryService(sharedMemoryPath(), (message, error) => {
+          appendAppLog('warn', 'memory.snapshot', message, normalizeError(error))
+        }))
+      return { ok: true, url: memory.url, file: memory.file, count: getSharedMemoryStore()?.count() ?? 0 }
     } catch (err) {
       return { error: (err as Error).message ?? '共享记忆服务不可用' }
     }

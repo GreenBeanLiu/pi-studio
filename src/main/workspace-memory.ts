@@ -10,7 +10,9 @@ export type WorkspaceMemory = {
 
 const MEMORY_DIR = '.pi-studio'
 const MEMORY_FILE = 'memory.md'
-const SHARED_MEMORY_FILE = 'shared-memory.json'
+const SHARED_MEMORY_FILE = 'shared-memory.sqlite3'
+/** 只读镜像,给沙箱里够不到 127.0.0.1 的扩展降级读;写入永远只走 HTTP。 */
+const SHARED_MEMORY_SNAPSHOT_FILE = 'shared-memory.snapshot.json'
 
 export const DEFAULT_WORKSPACE_MEMORY = `# Workspace Memory
 
@@ -62,39 +64,77 @@ function memoryConfig(): { url: string; token: string; file?: string; workspaceP
   return url && token ? { url, token, file, workspacePath } : file ? { url: '', token: '', file, workspacePath } : null
 }
 
-function directMemoryRequest<T>(config: { file?: string }, method: string, pathname: string, payload?: Record<string, unknown>): T {
+const CJK = /[\\u3400-\\u4dbf\\u4e00-\\u9fff\\u3040-\\u30ff\\uac00-\\ud7af\\uf900-\\ufaff]/
+
+/** 和 main 的 normalizeWorkspacePath 逐字一致,否则 Windows 上大小写对不上、workspace 记忆全看不见。 */
+function normalizeWorkspace(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const raw = value.trim()
+  const windows = /^[A-Za-z]:[\\\\/]/.test(raw) || raw.startsWith('\\\\')
+  const normalized = windows ? path.win32.resolve(raw) : path.resolve(raw)
+  return process.platform === 'win32' || windows ? normalized.toLowerCase() : normalized
+}
+
+function queryTokens(value: string): string[] {
+  const out = new Set<string>()
+  for (const chunk of String(value).split(/([\\u3400-\\u4dbf\\u4e00-\\u9fff\\u3040-\\u30ff\\uac00-\\ud7af\\uf900-\\ufaff]+)/)) {
+    if (!chunk) continue
+    if (CJK.test(chunk[0])) {
+      // 和主库 FTS 索引同口径:连续汉字切重叠二元组,否则「怎么打包」搜不到「打包命令」
+      if (chunk.length === 1) out.add(chunk)
+      for (let i = 0; i + 1 < chunk.length; i++) out.add(chunk.slice(i, i + 2))
+    } else {
+      for (const word of chunk.toLocaleLowerCase().match(/[\\p{L}\\p{N}_]+/gu) || []) out.add(word)
+    }
+  }
+  return [...out]
+}
+
+/**
+ * 沙箱里 agent 够不到 127.0.0.1,只能降级读 main 写出来的只读快照
+ * (PI_STUDIO_MEMORY_FILE 指向 shared-memory.snapshot.json)。
+ * 写入不再有降级路径 —— SQLite 库只有 main 一个写者,扩展绕过服务直接落盘
+ * 只会被下一次快照覆盖掉,不如明确失败。
+ */
+function snapshotRequest<T>(config: { file?: string }, method: string, pathname: string, payload?: Record<string, unknown>): T {
+  const query = new URL(pathname, 'http://memory.local')
+  if (method !== 'GET' && !(method === 'POST' && query.pathname === '/v1/search')) {
+    throw new Error('Shared memory service is unreachable; only reads are available from the local snapshot')
+  }
   if (!config.file) throw new Error('Shared memory service is not configured')
   let database: { version: number; entries: SearchResult['entry'][] } = { version: 1, entries: [] }
   try { database = JSON.parse(fs.readFileSync(config.file, 'utf8')) as typeof database } catch {}
-  const query = new URL(pathname, 'http://memory.local')
-  if (method === 'POST' && query.pathname === '/v1/search') {
-    const words = String(payload?.query || '').toLocaleLowerCase().split(/\\s+/).filter(Boolean)
-    const entries = (database.entries || []).filter((entry) => {
-      if (!entry?.content) return false
-      if (entry.scope === 'workspace' && entry.workspacePath !== payload?.workspacePath) return false
-      const text = entry.content.toLocaleLowerCase() + ' ' + (entry.tags || []).join(' ').toLocaleLowerCase()
-      return words.length === 0 || words.some((word) => text.includes(word))
-    }).slice(0, Number(payload?.limit) || 8)
-    return { results: entries.map((entry) => ({ entry, score: 1, snippet: entry?.content })) } as T
+  const visible = (entry: SearchResult['entry'], workspacePath: unknown): boolean => {
+    if (!entry?.content) return false
+    if (entry.scope === 'global') return true
+    const cwd = normalizeWorkspace(workspacePath)
+    return !!cwd && normalizeWorkspace((entry as { workspacePath?: string }).workspacePath) === cwd
   }
-  if (method === 'GET' && query.pathname === '/v1/memories') {
-    return { entries: (database.entries || []).filter((entry) => entry?.scope === 'global' || entry?.workspacePath === query.searchParams.get('workspacePath')).slice(0, Number(query.searchParams.get('limit')) || 50) } as T
+
+  if (query.pathname === '/v1/search') {
+    const tokens = queryTokens(String(payload?.query || ''))
+    const scored = (database.entries || [])
+      .filter((entry) => visible(entry, payload?.workspacePath))
+      .map((entry) => {
+        const text = (entry?.content + ' ' + (entry?.tags || []).join(' ')).toLocaleLowerCase()
+        return { entry, score: tokens.filter((token) => text.includes(token)).length, snippet: entry?.content }
+      })
+      .filter((result) => tokens.length === 0 || result.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Number(payload?.limit) || 8)
+    return { results: scored } as T
   }
-  if (method === 'POST' && query.pathname === '/v1/memories') {
-    const now = new Date().toISOString()
-    const entry = { id: 'file-' + Date.now(), content: String(payload?.content || '').trim(), scope: payload?.scope || 'workspace', workspacePath: payload?.workspacePath || null, tags: payload?.tags || [], source: payload?.source || 'pi-studio', createdAt: now, updatedAt: now, accessCount: 0 }
-    database.entries = [...(database.entries || []), entry]
-    fs.mkdirSync(path.dirname(config.file), { recursive: true })
-    fs.writeFileSync(config.file, JSON.stringify(database, null, 2), 'utf8')
-    return { entry } as T
+  if (query.pathname === '/v1/memories') {
+    const workspacePath = query.searchParams.get('workspacePath')
+    return { entries: (database.entries || []).filter((entry) => visible(entry, workspacePath)).slice(0, Number(query.searchParams.get('limit')) || 50) } as T
   }
-  throw new Error('Unsupported direct memory request')
+  throw new Error('Unsupported snapshot memory request')
 }
 
 async function memoryRequest<T>(method: string, pathname: string, payload?: Record<string, unknown>): Promise<T> {
   const config = memoryConfig()
   if (!config) throw new Error('Shared memory service is not configured')
-  if (!config.url) return directMemoryRequest<T>(config, method, pathname, payload)
+  if (!config.url) return snapshotRequest<T>(config, method, pathname, payload)
   try {
     const response = await fetch(config.url + pathname, {
       method,
@@ -106,7 +146,7 @@ async function memoryRequest<T>(method: string, pathname: string, payload?: Reco
     if (!response.ok) throw new Error(json.error || 'Shared memory request failed (' + response.status + ')')
     return json
   } catch (error) {
-    if (config.file) return directMemoryRequest<T>(config, method, pathname, payload)
+    if (config.file) return snapshotRequest<T>(config, method, pathname, payload)
     throw error
   }
 }
@@ -222,6 +262,10 @@ export function workspaceMemoryPath(workspacePath: string): string {
 
 export function sharedMemoryPath(): string {
   return join(agentConfigDir(), SHARED_MEMORY_FILE)
+}
+
+export function sharedMemorySnapshotPath(): string {
+  return join(agentConfigDir(), SHARED_MEMORY_SNAPSHOT_FILE)
 }
 
 export function loadWorkspaceMemory(workspacePath: string): WorkspaceMemory {
