@@ -1,366 +1,180 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { LlmProfileSavePayload, SettingsSaveInput } from '../shared/contracts'
-import type {
-  AgentRuntimeSnapshot,
-  AgentRunStatusSnapshot,
-  AgentStatusEvent,
-  DesktopApi,
-  ImageModel,
-  Model3DOptions,
-  Model3DProvider,
-  PiRuntimeEvent,
-  RemoteControlSnapshot,
-  RoutineReviewRequest,
-  RoutineRun,
-  RoutineStepProgress,
-  SessionActivity,
-  SessionProjectionSnapshot,
-} from '../shared/ipc/contract'
+import type { DesktopApi } from '../shared/ipc/contract'
 
+/**
+ * 跨进程桥不再逐个手写。
+ *
+ * channel 名一律由「命名空间 + 方法名」推导(`settings.save` → `settings:save`),
+ * 这里只留一份方法清单。清单受 `DesktopApi` 反向约束:漏一个方法、写错一个名字
+ * 都在编译期爆,和以前 `satisfies DesktopApi` 的保证等价。
+ *
+ * 顺带干掉了一整类 bug —— 手写的 channel 字符串拼错只会在运行时炸,
+ * 现在 channel 是推导出来的,拼不错。
+ *
+ * 为什么不是惰性 Proxy:`contextBridge.exposeInMainWorld` 在 expose 时枚举 own keys,
+ * `new Proxy({}, { get })` 过去就是个空对象。方法必须在暴露前真建出来。
+ */
+
+/** platform 是常量字段,不走 IPC,不参与桥接 */
+type Namespaces = Omit<DesktopApi, 'platform'>
+
+type MethodList = { readonly [K in keyof Namespaces]: readonly (keyof Namespaces[K])[] }
+
+const METHODS = {
+  win: ['minimize', 'maximize', 'close', 'flash'],
+  app: ['version', 'piVersion'],
+  clipboard: ['writeText'],
+  diagnostics: ['getLogs', 'save'],
+  settings: ['load', 'save', 'listCloudModels', 'onChanged'],
+  llmProfiles: ['list', 'save', 'delete', 'refreshModels'],
+  modelCatalog: ['loadProviderLabels'],
+  sandbox: ['detect', 'imageStatus', 'buildImage', 'onBuildProgress'],
+  remote: ['getStatus', 'setEnabled', 'generatePairingCode', 'resetPairings', 'onStatus'],
+  workspace: ['list', 'pickDirectory', 'open', 'remove'],
+  memory: ['load', 'save', 'sharedStatus'],
+  sessions: ['list', 'switch', 'rename', 'delete', 'exportCurrent'],
+  git: ['diff', 'acceptChanges', 'discardChanges', 'showFile'],
+  pi: [
+    'prompt',
+    'steer',
+    'followUp',
+    'abort',
+    'bash',
+    'extensionUiResponse',
+    'newSession',
+    'getState',
+    'getMessages',
+    'getArtifactChunk',
+    'getAvailableModels',
+    'getCommands',
+    'setModel',
+    'setThinkingLevel',
+    'setSteeringMode',
+    'setFollowUpMode',
+    'setAutoCompaction',
+    'compact',
+    'getRuntimeSnapshot',
+    'getAgentStatusSnapshot',
+    'getCapabilities',
+    'getSessionProjection',
+    'getSessionChanges',
+    'onEvent',
+    'onStatus',
+    'onSessionActivity',
+    'onRuntime',
+    'onAgentStatusSnapshot',
+    'onSessionProjection',
+  ],
+  routines: [
+    'list',
+    'save',
+    'delete',
+    'toggle',
+    'runNow',
+    'cancel',
+    'state',
+    'reviewRespond',
+    'onRunFinished',
+    'onStepProgress',
+    'onReviewRequested',
+    'onReviewCancelled',
+  ],
+  channels: ['list', 'save', 'test'],
+  imageGen: ['health', 'generate', 'history', 'historyDelete', 'historyDeleteBatch', 'uploadReference'],
+  model3d: [
+    'health',
+    'generate',
+    'generateCode',
+    'generateBlender',
+    'blenderHealth',
+    'blenderStatus',
+    'setupBlender',
+    'history',
+    'historyDelete',
+    'saveThumbnail',
+    'reviewRound',
+    'onProgress',
+    'onScored',
+  ],
+  dressup: ['health', 'generate', 'workflow', 'history', 'historyDelete', 'onProgress'],
+  videoGen: ['health', 'generate', 'history', 'historyDelete', 'onProgress'],
+  update: ['onAvailable', 'onDownloaded', 'onError', 'install'],
+} as const satisfies MethodList
+
+/**
+ * 安全网。`satisfies MethodList` 只挡住「多写/写错」,挡不住「漏写」——
+ * 下面这行把漏掉的方法名算出来,不为 never 就编译失败,报错里直接点名是哪个。
+ */
+type MissingFromBridge = {
+  [K in keyof Namespaces]: Exclude<keyof Namespaces[K], (typeof METHODS)[K][number]>
+}[keyof Namespaces]
+
+const allMethodsBridged: [MissingFromBridge] extends [never] ? true : MissingFromBridge = true
+void allMethodsBridged
+
+/** DesktopApi 里返回 void 的那几个:只发不等回复 */
+const SEND_ONLY = new Set<string>([
+  'win.minimize',
+  'win.maximize',
+  'win.close',
+  'win.flash',
+  'update.install',
+])
+
+/**
+ * on* 订阅默认订 `ns:事件名`(`routines.onStepProgress` → `routines:stepProgress`)。
+ * 这三个是例外:主进程把 agent 生命周期事件发在 `agent:` 下,不在 `pi:` 里。
+ */
+const EVENT_CHANNEL_OVERRIDES: Record<string, string> = {
+  'pi.onStatus': 'agent:status',
+  'pi.onRuntime': 'agent:runtime',
+  'pi.onAgentStatusSnapshot': 'agent:statusSnapshot',
+}
+
+/** `open` 不是订阅,所以要求 on 后面跟大写 */
+const isSubscription = (method: string): boolean => /^on[A-Z]/.test(method)
+
+const eventChannel = (path: string, ns: string, method: string): string =>
+  EVENT_CHANNEL_OVERRIDES[path] ?? `${ns}:${method[2].toLowerCase()}${method.slice(3)}`
+
+const subscription =
+  (channel: string) =>
+  (cb: (...payload: unknown[]) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, ...payload: unknown[]): void => cb(...payload)
+    ipcRenderer.on(channel, handler)
+    return () => ipcRenderer.off(channel, handler)
+  }
+
+function buildBridge(): Record<string, unknown> {
+  const bridge: Record<string, unknown> = {}
+  for (const [ns, methods] of Object.entries(METHODS) as [string, readonly string[]][]) {
+    const namespace: Record<string, unknown> = {}
+    for (const method of methods) {
+      const path = `${ns}.${method}`
+      const channel = `${ns}:${method}`
+      if (isSubscription(method)) {
+        namespace[method] = subscription(eventChannel(path, ns, method))
+      } else if (SEND_ONLY.has(path)) {
+        namespace[method] = (...args: unknown[]): void => ipcRenderer.send(channel, ...args)
+      } else {
+        namespace[method] = (...args: unknown[]): Promise<unknown> =>
+          ipcRenderer.invoke(channel, ...args)
+      }
+    }
+    bridge[ns] = namespace
+  }
+  return bridge
+}
+
+/**
+ * 这次 cast 只兜「签名」,不兜「有没有」—— 方法齐不齐由上面的 MissingFromBridge 保证。
+ * 签名本身不会漂:invoke 原样转发实参,on* 原样转发事件负载,没有中间加工。
+ */
 const api = {
   platform: process.platform,
-
-  // 窗口控制
-  win: {
-    minimize: () => ipcRenderer.send('win:minimize'),
-    maximize: () => ipcRenderer.send('win:maximize'),
-    close: () => ipcRenderer.send('win:close'),
-    flash: () => ipcRenderer.send('win:flash'),
-  },
-
-  app: {
-    version: () => ipcRenderer.invoke('app:version'),
-    piVersion: () => ipcRenderer.invoke('app:piVersion'),
-  },
-
-  clipboard: {
-    writeText: (value: string) => ipcRenderer.invoke('clipboard:writeText', value),
-  },
-
-  diagnostics: {
-    getLogs: () => ipcRenderer.invoke('diagnostics:getLogs'),
-    save: (payload: { defaultPath: string; content: string }) => ipcRenderer.invoke('diagnostics:save', payload),
-  },
-
-  settings: {
-    load: () => ipcRenderer.invoke('settings:load'),
-    save: (s: SettingsSaveInput) => ipcRenderer.invoke('settings:save', s),
-    listCloudModels: (s: unknown) => ipcRenderer.invoke('settings:listCloudModels', s),
-    onChanged: (cb: () => void) => {
-      const handler = (): void => cb()
-      ipcRenderer.on('settings:changed', handler)
-      return () => ipcRenderer.off('settings:changed', handler)
-    },
-  },
-
-  llmProfiles: {
-    list: () => ipcRenderer.invoke('llmProfiles:list'),
-    save: (payload: LlmProfileSavePayload) => ipcRenderer.invoke('llmProfiles:save', payload),
-    delete: (id: string) => ipcRenderer.invoke('llmProfiles:delete', id),
-    refreshModels: (id: string) => ipcRenderer.invoke('llmProfiles:refreshModels', id),
-  },
-
-  modelCatalog: {
-    loadProviderLabels: () => ipcRenderer.invoke('modelCatalog:loadProviderLabels'),
-  },
-
-  sandbox: {
-    detect: () => ipcRenderer.invoke('sandbox:detect'),
-    imageStatus: () => ipcRenderer.invoke('sandbox:imageStatus'),
-    buildImage: () => ipcRenderer.invoke('sandbox:buildImage'),
-    onBuildProgress: (cb: (line: string) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, line: string): void => cb(line)
-      ipcRenderer.on('sandbox:buildProgress', handler)
-      return () => ipcRenderer.off('sandbox:buildProgress', handler)
-    },
-  },
-
-  remote: {
-    getStatus: () => ipcRenderer.invoke('remote:getStatus'),
-    setEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:setEnabled', enabled),
-    generatePairingCode: () => ipcRenderer.invoke('remote:generatePairingCode'),
-    resetPairings: () => ipcRenderer.invoke('remote:resetPairings'),
-    onStatus: (cb: (snap: RemoteControlSnapshot) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, snap: RemoteControlSnapshot): void => cb(snap)
-      ipcRenderer.on('remote:status', handler)
-      return () => ipcRenderer.off('remote:status', handler)
-    },
-  },
-
-  workspace: {
-    list: () => ipcRenderer.invoke('workspace:list'),
-    pickDirectory: () => ipcRenderer.invoke('workspace:pickDirectory'),
-    open: (path: string) => ipcRenderer.invoke('workspace:open', path),
-    remove: (path: string) => ipcRenderer.invoke('workspace:remove', path),
-  },
-
-  memory: {
-    load: () => ipcRenderer.invoke('memory:load'),
-    save: (content: string) => ipcRenderer.invoke('memory:save', content),
-    sharedStatus: () => ipcRenderer.invoke('memory:sharedStatus'),
-  },
-
-  sessions: {
-    list: () => ipcRenderer.invoke('sessions:list'),
-    switch: (sessionPath: string) => ipcRenderer.invoke('sessions:switch', sessionPath),
-    rename: (name: string) => ipcRenderer.invoke('sessions:rename', name),
-    delete: (sessionPath: string) => ipcRenderer.invoke('sessions:delete', sessionPath),
-    exportCurrent: (format: 'markdown' | 'json') => ipcRenderer.invoke('sessions:exportCurrent', format),
-  },
-
-  git: {
-    diff: () => ipcRenderer.invoke('git:diff'),
-    acceptChanges: () => ipcRenderer.invoke('git:acceptChanges'),
-    discardChanges: () => ipcRenderer.invoke('git:discardChanges'),
-    showFile: (path: string) => ipcRenderer.invoke('git:showFile', path),
-  },
-
-  pi: {
-    prompt: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:prompt', message, images),
-    steer: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:steer', message, images),
-    followUp: (message: string, images?: unknown[]) => ipcRenderer.invoke('pi:followUp', message, images),
-    abort: () => ipcRenderer.invoke('pi:abort'),
-    bash: (command: string) => ipcRenderer.invoke('pi:bash', command),
-    extensionUiResponse: (response: {
-      type: 'extension_ui_response'
-      id: string
-      value?: string
-      confirmed?: boolean
-      cancelled?: true
-    }) => ipcRenderer.invoke('pi:extensionUiResponse', response),
-    newSession: () => ipcRenderer.invoke('pi:newSession'),
-    getState: () => ipcRenderer.invoke('pi:getState'),
-    getMessages: () => ipcRenderer.invoke('pi:getMessages'),
-    getArtifactChunk: (artifactId: string, offsetChars: number) =>
-      ipcRenderer.invoke('pi:getArtifactChunk', artifactId, offsetChars),
-    getAvailableModels: () => ipcRenderer.invoke('pi:getAvailableModels'),
-    getCommands: () => ipcRenderer.invoke('pi:getCommands'),
-    setModel: (provider: string, modelId: string) => ipcRenderer.invoke('pi:setModel', provider, modelId),
-    setThinkingLevel: (level: string) => ipcRenderer.invoke('pi:setThinkingLevel', level),
-    setSteeringMode: (mode: string) => ipcRenderer.invoke('pi:setSteeringMode', mode),
-    setFollowUpMode: (mode: string) => ipcRenderer.invoke('pi:setFollowUpMode', mode),
-    setAutoCompaction: (enabled: boolean) => ipcRenderer.invoke('pi:setAutoCompaction', enabled),
-    compact: () => ipcRenderer.invoke('pi:compact'),
-    onEvent: (cb: (event: PiRuntimeEvent) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: PiRuntimeEvent) => cb(data)
-      ipcRenderer.on('pi:event', handler)
-      return () => ipcRenderer.off('pi:event', handler)
-    },
-    onStatus: (cb: (event: AgentStatusEvent) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: AgentStatusEvent) => cb(data)
-      ipcRenderer.on('agent:status', handler)
-      return () => ipcRenderer.off('agent:status', handler)
-    },
-    onSessionActivity: (cb: (event: SessionActivity) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: SessionActivity) => cb(data)
-      ipcRenderer.on('pi:sessionActivity', handler)
-      return () => ipcRenderer.off('pi:sessionActivity', handler)
-    },
-    getRuntimeSnapshot: () => ipcRenderer.invoke('pi:getRuntimeSnapshot'),
-    getAgentStatusSnapshot: () => ipcRenderer.invoke('pi:getAgentStatusSnapshot'),
-    getCapabilities: () => ipcRenderer.invoke('pi:getCapabilities'),
-    onRuntime: (cb: (snapshot: AgentRuntimeSnapshot) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: AgentRuntimeSnapshot) => cb(data)
-      ipcRenderer.on('agent:runtime', handler)
-      return () => ipcRenderer.off('agent:runtime', handler)
-    },
-    onAgentStatusSnapshot: (cb: (snapshot: AgentRunStatusSnapshot | null) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: AgentRunStatusSnapshot | null) => cb(data)
-      ipcRenderer.on('agent:statusSnapshot', handler)
-      return () => ipcRenderer.off('agent:statusSnapshot', handler)
-    },
-    getSessionProjection: () => ipcRenderer.invoke('pi:getSessionProjection'),
-    getSessionChanges: (sessionId: string | null, afterSeq: number) =>
-      ipcRenderer.invoke('pi:getSessionChanges', sessionId, afterSeq),
-    onSessionProjection: (cb: (snapshot: SessionProjectionSnapshot) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: SessionProjectionSnapshot) => cb(data)
-      ipcRenderer.on('pi:sessionProjection', handler)
-      return () => ipcRenderer.off('pi:sessionProjection', handler)
-    },
-  },
-
-  routines: {
-    list: () => ipcRenderer.invoke('routines:list'),
-    save: (routine: unknown) => ipcRenderer.invoke('routines:save', routine),
-    delete: (id: string) => ipcRenderer.invoke('routines:delete', id),
-    toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('routines:toggle', id, enabled),
-    runNow: (id: string) => ipcRenderer.invoke('routines:runNow', id),
-    cancel: (id: string) => ipcRenderer.invoke('routines:cancel', id),
-    state: () => ipcRenderer.invoke('routines:state'),
-    onRunFinished: (cb: (run: RoutineRun) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: RoutineRun) => cb(data)
-      ipcRenderer.on('routines:runFinished', handler)
-      return () => ipcRenderer.off('routines:runFinished', handler)
-    },
-    onStepProgress: (cb: (progress: RoutineStepProgress) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: RoutineStepProgress) => cb(data)
-      ipcRenderer.on('routines:stepProgress', handler)
-      return () => ipcRenderer.off('routines:stepProgress', handler)
-    },
-    reviewRespond: (reviewId: string, decision: 'approve' | 'reject', comment?: string) =>
-      ipcRenderer.invoke('routines:reviewRespond', reviewId, decision, comment),
-    onReviewRequested: (cb: (request: RoutineReviewRequest) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: RoutineReviewRequest) => cb(data)
-      ipcRenderer.on('routines:reviewRequested', handler)
-      return () => ipcRenderer.off('routines:reviewRequested', handler)
-    },
-    onReviewCancelled: (cb: (payload: { reviewId: string; routineId: string; reason: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: { reviewId: string; routineId: string; reason: string }) =>
-        cb(data)
-      ipcRenderer.on('routines:reviewCancelled', handler)
-      return () => ipcRenderer.off('routines:reviewCancelled', handler)
-    },
-  },
-
-  channels: {
-    list: () => ipcRenderer.invoke('channels:list'),
-    save: (channels: unknown[]) => ipcRenderer.invoke('channels:save', channels),
-    test: (channel: unknown) => ipcRenderer.invoke('channels:test', channel),
-  },
-
-  imageGen: {
-    health: () => ipcRenderer.invoke('imageGen:health'),
-    generate: (payload: {
-      prompt: string
-      engine: 'openai' | 'gemini' | 'grok'
-      batchId?: string
-      referenceUrls?: string[]
-      maskDataUrl?: string
-      size?: '256x256' | '512x512' | '1024x1024' | '1024x1536' | '1536x1024' | '1024x1792' | '1792x1024' | 'auto'
-      aspectRatio?:
-        | '1:1'
-        | '2:3'
-        | '3:2'
-        | '3:4'
-        | '4:3'
-        | '4:5'
-        | '5:4'
-        | '9:16'
-        | '16:9'
-        | '21:9'
-        | '2:1'
-        | '1:2'
-        | '19.5:9'
-        | '9:19.5'
-        | '20:9'
-        | '9:20'
-        | 'auto'
-      imageSize?: '1K' | '2K' | '4K'
-      n?: number
-      quality?: 'low' | 'medium' | 'high' | 'auto' | 'standard' | 'hd'
-      background?: 'auto' | 'transparent' | 'opaque'
-      outputFormat?: 'png' | 'jpeg' | 'webp'
-      outputCompression?: number
-      moderation?: 'auto' | 'low'
-      responseFormat?: 'b64_json' | 'url'
-      model?: ImageModel
-      user?: string
-    }) => ipcRenderer.invoke('imageGen:generate', payload),
-    history: (limit?: number) => ipcRenderer.invoke('imageGen:history', limit),
-    historyDelete: (id: string) => ipcRenderer.invoke('imageGen:historyDelete', id),
-    historyDeleteBatch: (batchId: string) => ipcRenderer.invoke('imageGen:historyDeleteBatch', batchId),
-    uploadReference: (dataUrl: string) => ipcRenderer.invoke('imageGen:uploadReference', dataUrl),
-  },
-
-  model3d: {
-    health: () => ipcRenderer.invoke('model3d:health'),
-    generate: (payload: {
-      mode: 'text' | 'image' | 'code' | 'blender'
-      prompt: string
-      imageDataUrl?: string
-      aiImage?: boolean
-      provider?: Model3DProvider
-      options?: Model3DOptions
-    }) => ipcRenderer.invoke('model3d:generate', payload),
-    generateCode: (payload: { prompt: string; sourceId?: string }) =>
-      ipcRenderer.invoke('model3d:generateCode', payload),
-    generateBlender: (payload: { prompt: string; sourceId?: string }) =>
-      ipcRenderer.invoke('model3d:generateBlender', payload),
-    blenderHealth: () => ipcRenderer.invoke('model3d:blenderHealth'),
-    blenderStatus: () => ipcRenderer.invoke('model3d:blenderStatus'),
-    setupBlender: () => ipcRenderer.invoke('model3d:setupBlender'),
-    history: () => ipcRenderer.invoke('model3d:history'),
-    historyDelete: (id: string) => ipcRenderer.invoke('model3d:historyDelete', id),
-    saveThumbnail: (payload: { id: string; dataUrl: string }) => ipcRenderer.invoke('model3d:saveThumbnail', payload),
-    reviewRound: (payload: { id: string; dataUrl: string; prompt: string }) =>
-      ipcRenderer.invoke('model3d:reviewRound', payload),
-    onProgress: (
-      cb: (data: { id: string; status: string; progress: number; prompt?: string; mode?: 'text' | 'image' }) => void,
-    ) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('model3d:progress', handler)
-      return () => ipcRenderer.off('model3d:progress', handler)
-    },
-    onScored: (cb: (data: { id: string; fidelity: { score: number; notes: string; model: string } }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('model3d:scored', handler)
-      return () => ipcRenderer.off('model3d:scored', handler)
-    },
-  },
-
-  dressup: {
-    health: () => ipcRenderer.invoke('dressup:health'),
-    generate: (payload: {
-      firstFrameDataUrl: string
-      tailFrameDataUrl: string
-      prompt?: string
-      mode?: 'std' | 'pro'
-      duration?: '5' | '10'
-      model?: string
-    }) => ipcRenderer.invoke('dressup:generate', payload),
-    workflow: (payload: {
-      personDataUrl: string
-      garmentDataUrl: string
-      firstFrameDataUrl: string
-      prompt?: string
-    }) => ipcRenderer.invoke('dressup:workflow', payload),
-    history: () => ipcRenderer.invoke('dressup:history'),
-    historyDelete: (id: string) => ipcRenderer.invoke('dressup:historyDelete', id),
-    onProgress: (cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('dressup:progress', handler)
-      return () => ipcRenderer.off('dressup:progress', handler)
-    },
-  },
-
-  videoGen: {
-    health: () => ipcRenderer.invoke('videoGen:health'),
-    generate: (payload: {
-      prompt: string
-      imageDataUrl?: string
-      duration?: 5 | 10 | 15
-      aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
-      resolution?: '480p' | '720p'
-    }) => ipcRenderer.invoke('videoGen:generate', payload),
-    history: () => ipcRenderer.invoke('videoGen:history'),
-    historyDelete: (id: string) => ipcRenderer.invoke('videoGen:historyDelete', id),
-    onProgress: (cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('videoGen:progress', handler)
-      return () => ipcRenderer.off('videoGen:progress', handler)
-    },
-  },
-
-  update: {
-    onAvailable: (cb: (data: { version: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('update:available', handler)
-      return () => ipcRenderer.off('update:available', handler)
-    },
-    onDownloaded: (cb: (data: { version: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('update:downloaded', handler)
-      return () => ipcRenderer.off('update:downloaded', handler)
-    },
-    onError: (cb: (data: { message: string }) => void) => {
-      const handler = (_e: Electron.IpcRendererEvent, data: unknown) => cb(data as never)
-      ipcRenderer.on('update:error', handler)
-      return () => ipcRenderer.off('update:error', handler)
-    },
-    install: () => ipcRenderer.send('update:install'),
-  },
-} satisfies DesktopApi
+  ...buildBridge(),
+} as DesktopApi
 
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('electron', electronAPI)

@@ -2,7 +2,7 @@
  * 单一 IPC 契约源(见 优化.md「建立单一 IPC 契约源」)。
  *
  * 这里是 DesktopApi 及其全部请求/响应类型的**唯一**定义处:
- *  - preload 用 `satisfies DesktopApi` 反向约束实现,少一个方法就编译失败;
+ *  - preload 的 METHODS 清单受它反向约束,漏一个方法就编译失败(桥由清单生成,不手写);
  *  - renderer 直接 `Window.api: DesktopApi`,不再手写一份;
  *  - renderer/src/lib/api.ts 只做兼容再导出,组件的 import 路径不用改。
  *
