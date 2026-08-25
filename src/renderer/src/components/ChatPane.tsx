@@ -1565,6 +1565,29 @@ export default function ChatPane({
     }
   }, [])
 
+  /**
+   * 后端相关的状态一起刷。
+   *
+   * 「当前模型」和「后端能力」是同一件事的两个面 —— 之前它俩由不同路径更新:
+   * 挂载时取 capabilities,而 pickModel 直接把 setModel 的返回值塞进 currentModel。
+   * 于是在下拉里选一个外部 agent(那会换掉整个后端、但组件不重挂载)之后,
+   * chip 上有 agent 名却没有模型名。分开刷就迟早会不一致。
+   */
+  const refreshBackendState = useCallback(async (): Promise<void> => {
+    const [caps, state] = await Promise.allSettled([api.pi.getCapabilities(), api.pi.getState()])
+    setRuntimeCapabilities(caps.status === 'fulfilled' ? caps.value : null)
+    if (state.status !== 'fulfilled' || !state.value) return
+    const s = state.value
+    setCurrentModel(s.model ? { provider: s.model.provider, id: s.model.id } : null)
+    if (s.thinkingLevel) setThinking(s.thinkingLevel as ThinkingLevel)
+    if (s.steeringMode) setSteeringMode(s.steeringMode)
+    if (s.followUpMode) setFollowUpMode(s.followUpMode)
+    if (typeof s.autoCompactionEnabled === 'boolean') setAutoCompaction(s.autoCompactionEnabled)
+    // 组件重挂载(切视图/切会话)时从 agent 恢复真实运行状态,
+    // 否则 agent 还在跑但停止按钮消失、新输入被误当成新提问直发。
+    if (typeof s.isStreaming === 'boolean') setSending(s.isStreaming)
+  }, [])
+
   useEffect(() => {
     if (!agentIssue) return
     setSending(false)
@@ -1628,24 +1651,10 @@ export default function ChatPane({
       .catch(() => {})
     api.pi.getAgentStatusSnapshot().then(setAgentStatus).catch(() => setAgentStatus(null))
     api.pi.getAvailableModels().then(setModels).catch(() => {})
-    api.pi.getCapabilities().then(setRuntimeCapabilities).catch(() => setRuntimeCapabilities(null))
     api.pi.getCommands().then(setCommands).catch(() => {})
     void refreshModelSwitcherState()
-    api.pi
-      .getState()
-      .then((s) => {
-        if (!s) return
-        setCurrentModel(s.model ? { provider: s.model.provider, id: s.model.id } : null)
-        if (s.thinkingLevel) setThinking(s.thinkingLevel as ThinkingLevel)
-        if (s.steeringMode) setSteeringMode(s.steeringMode)
-        if (s.followUpMode) setFollowUpMode(s.followUpMode)
-        if (typeof s.autoCompactionEnabled === 'boolean') setAutoCompaction(s.autoCompactionEnabled)
-        // 组件重挂载(切视图/切会话)时从 agent 恢复真实运行状态,
-        // 否则 agent 还在跑但停止按钮消失、新输入被误当成新提问直发。
-        if (typeof s.isStreaming === 'boolean') setSending(s.isStreaming)
-      })
-      .catch(() => {})
-  }, [workspace?.path, refreshModelSwitcherState])
+    void refreshBackendState()
+  }, [workspace?.path, refreshModelSwitcherState, refreshBackendState])
 
   useEffect(() => {
     return api.pi.onAgentStatusSnapshot(setAgentStatus)
@@ -2704,8 +2713,10 @@ export default function ChatPane({
   async function pickModel(key: string) {
     const sep = key.indexOf('::')
     try {
-      const result = await api.pi.setModel(key.slice(0, sep), key.slice(sep + 2))
-      setCurrentModel(result)
+      await api.pi.setModel(key.slice(0, sep), key.slice(sep + 2))
+      // 选外部 agent 会换掉整个后端(能力、模型、推理档全变),组件又不重挂载,
+      // 所以这里必须重新取,不能只把返回值塞进 currentModel。
+      await refreshBackendState()
       // 选完就收起。弹层赖着不走的话,得点旁边空白处才关,像是"没选上"。
       setParamsOpen(false)
     } catch (err) {

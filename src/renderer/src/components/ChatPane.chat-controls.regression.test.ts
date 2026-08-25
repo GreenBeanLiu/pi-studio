@@ -10,12 +10,17 @@ describe('chat pane controls', () => {
     expect(chatPane).toContain('const [paramsOpen, setParamsOpen] = useState(false)')
     expect(chatPane).toContain('open={paramsOpen}')
     expect(chatPane).toContain('onOpenChange={setParamsOpen}')
-    // 切换成功之后才收起,失败要留在原地让用户重选
+    // 切换成功之后才收起,失败要留在原地让用户重选。
+    // 2026-08-25:原来这里是 setCurrentModel(setModel 的返回值),但选外部 agent
+    // 会换掉整个后端而组件不重挂载 —— 只更新 currentModel 的话,能力和模型名都还是
+    // 上一个后端的。现在统一走 refreshBackendState()。
     const pickModel = chatPane.slice(chatPane.indexOf('async function pickModel'))
-    const setModelAt = pickModel.indexOf('setCurrentModel(result)')
+    const refreshAt = pickModel.indexOf('await refreshBackendState()')
     const closeAt = pickModel.indexOf('setParamsOpen(false)')
-    expect(setModelAt).toBeGreaterThan(-1)
-    expect(closeAt).toBeGreaterThan(setModelAt)
+    expect(refreshAt).toBeGreaterThan(-1)
+    expect(closeAt).toBeGreaterThan(refreshAt)
+    // 收起必须在 try 里 —— 失败要留在原地
+    expect(pickModel.indexOf('catch')).toBeGreaterThan(closeAt)
   })
 
   it('keeps the scroll-to-bottom button clear of the input toolbar', () => {
