@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { agent as createAgent, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk'
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { PiRuntimeEvent } from '../shared/ipc/contract'
-import { AcpConnection, AcpAuthRequiredError, acpCapabilities } from './acp-connection'
+import { AcpConnection, AcpAuthRequiredError, acpCapabilities, acpCurrentModel } from './acp-connection'
 
 /**
  * 进程内的假 ACP agent。SDK 的 app 可以直接对接(内存流对),于是整条链路
@@ -204,6 +204,39 @@ describe('acpCapabilities', () => {
     })
     expect(caps.engineVersion).toBe('claude-acp@0.70.0')
     expect(caps.features).toMatchObject({ resume: true, fork: true, listSessions: true, images: true })
+  })
+
+  // 问模型「你是哪个模型」不可信:它只知道训练时的身份。codex-acp 实测自称
+  // 「GPT-5」,而 session/new 报的是 gpt-5.6-sol[medium]。以协议为准。
+  it('reads the current model the agent reported', () => {
+    const session = {
+      sessionId: 's1',
+      models: {
+        currentModelId: 'gpt-5.6-sol[medium]',
+        availableModels: [
+          { modelId: 'gpt-5.6-sol[low]', name: 'GPT-5.6-Sol (low)' },
+          { modelId: 'gpt-5.6-sol[medium]', name: 'GPT-5.6-Sol (medium)' },
+        ],
+      },
+    }
+    expect(acpCurrentModel(session)).toEqual({
+      id: 'gpt-5.6-sol[medium]',
+      name: 'GPT-5.6-Sol (medium)',
+    })
+    expect(acpCapabilities('codex-acp', {}, session).model?.id).toBe('gpt-5.6-sol[medium]')
+  })
+
+  it('keeps the id when the agent lists no display name for it', () => {
+    expect(acpCurrentModel({ models: { currentModelId: 'x' } })).toEqual({ id: 'x', name: undefined })
+  })
+
+  // claude-agent-acp 实测不报 models,不能因此就编一个出来。
+  it('reports no model when the agent does not say', () => {
+    expect(acpCurrentModel({ sessionId: 's1' })).toBeNull()
+    expect(acpCurrentModel({ models: {} })).toBeNull()
+    expect(acpCurrentModel({ models: { currentModelId: '' } })).toBeNull()
+    expect(acpCurrentModel(null)).toBeNull()
+    expect(acpCapabilities('claude-acp', {}, { sessionId: 's1' }).model).toBeNull()
   })
 
   it('survives a garbage initialize payload', () => {

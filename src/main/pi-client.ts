@@ -461,6 +461,10 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
    */
   private acpSessionState(entry: AgentEntry): Awaited<ReturnType<RpcClient['getState']>> {
     return {
+      // 界面按 state.model 给模型菜单里那一行打勾,所以这里放 agentId
+      // (菜单项的 key 就是 acp::<agentId>)。具体跑的哪个模型在 capabilities.model 里,
+      // 那是 agent 自己报的。
+      model: { provider: 'acp', id: entry.acp?.agentId ?? 'acp' } as never,
       thinkingLevel: 'medium',
       isStreaming: entry.job.isRunActive(),
       isCompacting: false,

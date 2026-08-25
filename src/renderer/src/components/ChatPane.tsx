@@ -2628,6 +2628,11 @@ export default function ChatPane({
   }
 
   // ── Model switcher ───────────────────────────────────────────────
+  /** 后端自己上报的当前模型;pi 会话是 null(它的模型在 currentModel 里)。 */
+  const backendModel = runtimeCapabilities?.model ?? null
+  const backendModelTitle = backendModel
+    ? `模型与参数 · 当前由 ${backendModel.name ?? backendModel.id} 驱动`
+    : '模型与参数'
   // 分组规则(收藏过滤、ACP 组豁免)抽在 model-menu.ts 里,那边有测试。
   const modelMenuItems = useMemo(
     () => buildModelMenuGroups({ models, favoriteModels, providerLabels, currentModel }),
@@ -3547,9 +3552,14 @@ export default function ChatPane({
                   onOpenChange={setParamsOpen}
                   content={paramsPanel}
                 >
-                  <button className={styles.modelChip} title="模型与参数">
+                  <button className={styles.modelChip} title={backendModelTitle}>
                     <SlidersHorizontal size={11} />
                     {currentModel ? currentModel.id : '默认模型'}
+                    {/* 外部 agent 跑的是它自己的模型,问模型本人不可信 —— 这里显示的是
+                        它在 session/new 里上报的那个。pi 会话没有这一段。 */}
+                    {backendModel && (
+                      <span style={{ opacity: 0.6 }}>· {backendModel.name ?? backendModel.id}</span>
+                    )}
                     <span style={{ opacity: 0.6 }}>· 推理：{thinkingLabel}</span>
                     <ChevronDown size={11} />
                   </button>

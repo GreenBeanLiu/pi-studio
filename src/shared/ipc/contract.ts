@@ -788,6 +788,14 @@ export type PiRuntimeCapabilities = {
     messages: boolean
     commands: boolean
   }
+  /**
+   * 后端当前在用的模型,由后端自己上报。
+   *
+   * pi 的模型在会话状态 `state.model` 里,这里是 null。外部 ACP agent 的模型
+   * 只有它自己知道(codex-acp 在 session/new 里报 currentModelId),问模型本人
+   * 是不可信的 —— 它只知道训练时的身份,不知道被部署成哪个版本。
+   */
+  model?: { id: string; name?: string } | null
   features: {
     listSessions: boolean
     resume: boolean

@@ -118,7 +118,24 @@ function presentAt(source: unknown, ...path: string[]): boolean {
  * 由 initialize 的应答推出这个后端能干什么。界面按 features 灰按钮,
  * 所以宁可报 false 也不要报一个做不到的 true。
  */
-export function acpCapabilities(agentId: string, init: unknown): PiRuntimeCapabilities {
+/** session/new 或 session/load 报的当前模型。没报就是 null(Claude 实测不报)。 */
+export function acpCurrentModel(session: unknown): { id: string; name?: string } | null {
+  const models = at(session, 'models')
+  const currentId = at(models, 'currentModelId')
+  if (typeof currentId !== 'string' || !currentId) return null
+  const available = at(models, 'availableModels')
+  const match = Array.isArray(available)
+    ? available.find((item) => isRecord(item) && item.modelId === currentId)
+    : undefined
+  const name = isRecord(match) && typeof match.name === 'string' ? match.name : undefined
+  return { id: currentId, name }
+}
+
+export function acpCapabilities(
+  agentId: string,
+  init: unknown,
+  session?: unknown,
+): PiRuntimeCapabilities {
   const capabilities = isRecord(init) ? init.agentCapabilities : undefined
   const version =
     (isRecord(init) && isRecord(init.agentInfo) && typeof init.agentInfo.version === 'string'
@@ -130,6 +147,7 @@ export function acpCapabilities(agentId: string, init: unknown): PiRuntimeCapabi
     protocolVersion: 'acp-v1' as const,
     // 会话由外部 agent 自己存,宿主读不到文件。
     sessionFormatVersion: null,
+    model: acpCurrentModel(session),
     handshake: Object.freeze({ verified: true, state: false, messages: false, commands: false }),
     features: Object.freeze({
       listSessions: presentAt(capabilities, 'sessionCapabilities', 'list'),
@@ -309,7 +327,7 @@ export class AcpConnection implements AgentBackend {
     self = new AcpConnection(
       options,
       cwd,
-      acpCapabilities(options.agentId, init),
+      acpCapabilities(options.agentId, init, session),
       sessionId,
       isRecord(init) && isRecord(init.agentInfo) ? (init.agentInfo as AcpAgentInfo) : null,
       isRecord(session) && isRecord(session.modes) ? (session.modes as AcpSessionModes) : null,
