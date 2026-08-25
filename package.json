@@ -24,7 +24,8 @@
     "@agentclientprotocol/sdk": "^1.4.0",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "electron-updater": "^6.8.3",
-    "qrcode.react": "^4.2.0"
+    "qrcode.react": "^4.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.84.2",
