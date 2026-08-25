@@ -35,12 +35,10 @@ describe('real codex-acp through the connection layer', () => {
     writeFileSync(join(cwd, 'hello.txt'), 'pi-studio ACP 端到端测试。\n')
 
     const events: PiRuntimeEvent[] = []
-    const conn = await AcpConnection.spawnAndOpen(resolved.spec, cwd, {
-      agentId: 'codex-acp',
-      emit: (e) => events.push(e),
-      requestPermission: async () => ({ outcome: 'cancelled' }),
-    })
+    const conn = await AcpConnection.spawnAndOpen(resolved.spec, cwd, { agentId: 'codex-acp' })
+    conn.onEvent((e) => events.push(e))
     console.log('握手 OK  sessionId=', conn.sessionId, ' agent=', JSON.stringify(conn.agentInfo))
+    console.log('capabilities =', JSON.stringify(conn.capabilities.features))
     console.log('modes  =', JSON.stringify(conn.modes?.availableModes?.map((m) => m.id)))
 
     await conn.prompt('用一句话说明 hello.txt 写了什么。不要修改任何文件。')

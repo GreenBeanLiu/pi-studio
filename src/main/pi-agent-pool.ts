@@ -126,6 +126,7 @@ export class AgentPool {
 
     const entry: AgentEntry = {
       client,
+      pi: client,
       job,
       sessionFile: null,
       sessionId: null,

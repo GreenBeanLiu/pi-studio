@@ -770,16 +770,23 @@ export type AgentRuntimeSnapshot = {
   error: { message: string } | null
 }
 
+/**
+ * 当前会话背后是哪种 agent 后端。`pi` 是自家的 pi-coding-agent 子进程,
+ * `acp` 是通过 Agent Client Protocol 接进来的外部 agent(Claude Code / Codex 等)。
+ */
+export type AgentEngine = 'pi' | 'acp'
+
 export type PiRuntimeCapabilities = {
-  engine: 'pi'
+  engine: AgentEngine
   engineVersion: string
-  protocolVersion: 'rpc-v1'
-  sessionFormatVersion: 'pi-jsonl-v1'
+  protocolVersion: 'rpc-v1' | 'acp-v1'
+  /** ACP 会话由外部 agent 自己存,宿主读不到,所以是 null。 */
+  sessionFormatVersion: 'pi-jsonl-v1' | null
   handshake: {
-    verified: true
-    state: true
-    messages: true
-    commands: true
+    verified: boolean
+    state: boolean
+    messages: boolean
+    commands: boolean
   }
   features: {
     listSessions: boolean

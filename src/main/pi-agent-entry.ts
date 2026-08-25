@@ -1,7 +1,10 @@
 import { resolve, win32 } from 'path'
 import type { CompiledRunProfile } from './run-profile'
+import type { ImageContent } from '@earendil-works/pi-ai'
 import type {
   ExecutionSecuritySnapshot,
+  ExtensionUiResponse,
+  PiRuntimeCapabilities,
   PiRuntimeEvent,
   SandboxMode,
 } from '../shared/ipc/contract'
@@ -12,6 +15,31 @@ import type { AgentStatusTracker } from './agent-status'
 import type { AgentLoopGuard } from './agent-loop-guard'
 
 export type RpcClient = PiAgentRunHandle
+
+/**
+ * 一个 agent 后端最小的共同面:自家的 pi 子进程和通过 ACP 接进来的外部 agent
+ * (Claude Code / Codex)都满足它。
+ *
+ * 进程层和投影层只依赖这一层。pi 独有的那一大票能力(bash、compact、
+ * setThinkingLevel、会话读写……)走 {@link AgentEntry.pi},ACP 后端那里是 null,
+ * 门面会明确报错而不是静默无效。界面按 `capabilities.features` 提前灰掉。
+ */
+export type AgentBackend = {
+  readonly capabilities: PiRuntimeCapabilities
+  send(message: string, images?: ImageContent[]): Promise<void>
+  cancel(reason?: string): Promise<void>
+  onEvent(listener: (event: PiRuntimeEvent) => void): () => void
+  /** 应答阻塞式 UI 请求。pi 转发给子进程,ACP 用它结算 session/request_permission。 */
+  respondExtensionUi(response: ExtensionUiResponse): void
+  observeProcess(listeners: {
+    stderr?: (chunk: Buffer | string) => void
+    exit?: (code: number | null, signal: string | null) => void
+    error?: (error: Error) => void
+  }): void
+  processId(): number | null
+  dispose(): Promise<void>
+  forceDispose(): Promise<void>
+}
 
 export type PiEventContext = {
   sessionId: string
@@ -97,7 +125,10 @@ export function pickEvictableAgent<T extends EvictionCandidate>(
 }
 
 export type AgentEntry = {
-  client: RpcClient
+  /** 后端的共同面。进程层和投影层只用这个。 */
+  client: AgentBackend
+  /** pi 独有的能力面;ACP 会话是 null。 */
+  pi: RpcClient | null
   /** 进程的所有权与生命周期都记在 job 上:状态、取消、以及"资源真的放掉了"的证据。 */
   job: AgentJob
   /** 会话文件在 agent 起来读到 state 之后才知道 */
@@ -116,6 +147,11 @@ export type AgentEntry = {
 }
 
 export type LaunchContext = CompiledRunProfile & { sandboxSessionPaths: boolean }
+
+/** pi 独有的能力在 ACP 会话上不可用时的错误文案。 */
+export function unsupportedByBackend(entry: AgentEntry, what: string): Error {
+  return new Error(`当前会话由 ${entry.client.capabilities.engine} agent 驱动,不支持${what}`)
+}
 
 /**
  * entry 对外的身份。sessionId 在 agent 读到 state 之前是空的,依次回退到会话文件、

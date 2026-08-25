@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { agent as createAgent, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk'
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { PiRuntimeEvent } from '../shared/ipc/contract'
-import { AcpConnection, AcpAuthRequiredError } from './acp-connection'
-import type { AcpPermissionOutcome, AcpRequestPermissionParams } from './acp-permission-bridge'
+import { AcpConnection, AcpAuthRequiredError, acpCapabilities } from './acp-connection'
 
 /**
  * 进程内的假 ACP agent。SDK 的 app 可以直接对接(内存流对),于是整条链路
@@ -56,27 +55,148 @@ function fakeAgent(options: FakeAgentOptions = {}) {
   return { app, cancelled }
 }
 
-async function connect(
-  options: FakeAgentOptions & {
-    requestPermission?: (params: AcpRequestPermissionParams) => Promise<AcpPermissionOutcome>
-  } = {},
-) {
+async function connect(options: FakeAgentOptions = {}) {
   const events: PiRuntimeEvent[] = []
   const { app, cancelled } = fakeAgent(options)
   let clock = 0
   const connection = await AcpConnection.open(app, '/tmp/workspace', {
     agentId: 'fake-acp',
-    emit: (event) => events.push(event),
-    requestPermission:
-      options.requestPermission ?? (async () => ({ outcome: 'cancelled' }) as AcpPermissionOutcome),
     now: () => ++clock,
   })
+  connection.onEvent((event) => events.push(event))
   return { connection, events, cancelled }
 }
 
 function types(events: readonly PiRuntimeEvent[]): string[] {
   return events.map((event) => event.type)
 }
+
+/** 等一个异步出现的东西(权限请求是 agent 那边发起的,不在我们的调用栈上)。 */
+async function waitFor<T>(probe: () => T | undefined): Promise<T> {
+  for (let i = 0; i < 200; i++) {
+    const value = probe()
+    if (value !== undefined) return value
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error('timed out waiting')
+}
+
+// 界面按 features 灰按钮,报一个做不到的 true 比报 false 更坏。
+describe('acpCapabilities', () => {
+  it('reports an acp engine with the version the agent gave', () => {
+    const caps = acpCapabilities('codex-acp', {
+      agentInfo: { name: '@agentclientprotocol/codex-acp', version: '1.6.2' },
+      agentCapabilities: {},
+    })
+    expect(caps.engine).toBe('acp')
+    expect(caps.engineVersion).toBe('codex-acp@1.6.2')
+    expect(caps.protocolVersion).toBe('acp-v1')
+    // 会话由外部 agent 自己存,宿主读不到文件
+    expect(caps.sessionFormatVersion).toBeNull()
+  })
+
+  it('turns off what an ACP backend genuinely cannot do', () => {
+    const caps = acpCapabilities('x', { agentCapabilities: {} })
+    expect(caps.features).toMatchObject({
+      // 子代理跑在外部 agent 内部,宿主观察不到血缘
+      subagents: false,
+      // 压缩是 agent 自己的事,宿主没有入口
+      compact: false,
+      // 宿主读不到外部 agent 的历史
+      sessionRead: false,
+      // session/request_permission 是 ACP 基线,一定有
+      approvals: true,
+    })
+  })
+
+  it('reads image support from the agent, not from wishful thinking', () => {
+    expect(acpCapabilities('x', { agentCapabilities: {} }).features.images).toBe(false)
+    expect(
+      acpCapabilities('x', { agentCapabilities: { promptCapabilities: { image: true } } }).features
+        .images,
+    ).toBe(true)
+  })
+
+  // sessionCapabilities.* 是「对象或 null」不是布尔:claude-agent-acp 实测给的是
+  // {"fork":{},"list":{},"resume":{}} —— 空对象就表示支持。拿 === true 去判会把
+  // 它支持的能力全报成不支持。
+  it('reads session capabilities as presence, not as booleans', () => {
+    const caps = acpCapabilities('claude-acp', {
+      agentCapabilities: {
+        loadSession: true,
+        sessionCapabilities: { list: {}, fork: {}, resume: {}, delete: null },
+      },
+    })
+    expect(caps.features.resume).toBe(true)
+    expect(caps.features.fork).toBe(true)
+    expect(caps.features.listSessions).toBe(true)
+  })
+
+  it('treats an explicit null capability as unsupported', () => {
+    const caps = acpCapabilities('x', {
+      agentCapabilities: { sessionCapabilities: { fork: null } },
+    })
+    expect(caps.features.fork).toBe(false)
+  })
+
+  // codex-acp 实测:没有 loadSession 布尔,但 sessionCapabilities.resume 在
+  it('accepts resume from either the boolean or the session capability', () => {
+    expect(acpCapabilities('x', { agentCapabilities: { loadSession: true } }).features.resume).toBe(true)
+    expect(
+      acpCapabilities('x', { agentCapabilities: { sessionCapabilities: { resume: {} } } }).features
+        .resume,
+    ).toBe(true)
+    expect(acpCapabilities('x', { agentCapabilities: {} }).features.resume).toBe(false)
+  })
+
+  // 2026-08-25 从两个 agent 真实抓下来的 initialize 应答。
+  it('reads codex-acp@1.6.2 correctly', () => {
+    const caps = acpCapabilities('codex-acp', {
+      agentInfo: { name: '@agentclientprotocol/codex-acp', title: 'Codex', version: '1.6.2' },
+      agentCapabilities: {
+        auth: { logout: {} },
+        providers: {},
+        loadSession: true,
+        promptCapabilities: { embeddedContext: true, image: true },
+        sessionCapabilities: { resume: {}, list: {}, close: {}, delete: {}, additionalDirectories: {} },
+        mcpCapabilities: { acp: false, http: true, sse: false },
+      },
+    })
+    expect(caps.features).toMatchObject({
+      resume: true,
+      listSessions: true,
+      images: true,
+      // codex 没声明 fork
+      fork: false,
+      compact: false,
+      sessionRead: false,
+    })
+  })
+
+  it('reads claude-agent-acp@0.70.0 correctly', () => {
+    const caps = acpCapabilities('claude-acp', {
+      agentInfo: { name: '@agentclientprotocol/claude-agent-acp', title: 'Claude Agent', version: '0.70.0' },
+      agentCapabilities: {
+        promptCapabilities: { image: true, embeddedContext: true },
+        mcpCapabilities: { http: true, sse: true },
+        auth: { logout: {} },
+        providers: {},
+        loadSession: true,
+        sessionCapabilities: {
+          additionalDirectories: {}, close: {}, delete: {}, fork: {}, list: {}, resume: {},
+        },
+      },
+    })
+    expect(caps.engineVersion).toBe('claude-acp@0.70.0')
+    expect(caps.features).toMatchObject({ resume: true, fork: true, listSessions: true, images: true })
+  })
+
+  it('survives a garbage initialize payload', () => {
+    const caps = acpCapabilities('x', null)
+    expect(caps.engineVersion).toBe('x@unknown')
+    expect(caps.features.images).toBe(false)
+  })
+})
 
 describe('handshake', () => {
   it('initializes, opens a session and keeps what the agent told us', async () => {
@@ -209,17 +329,11 @@ describe('a prompt turn', () => {
 })
 
 describe('permission requests', () => {
-  it('routes session/request_permission to the host and returns the outcome', async () => {
-    // 参数类型要写出来,否则 mock.calls[0] 是空元组,断不到收到的 params。
-    const requestPermission = vi.fn(
-      (params: AcpRequestPermissionParams): Promise<AcpPermissionOutcome> => {
-        void params
-        return Promise.resolve({ outcome: 'selected', optionId: 'allow' })
-      },
-    )
+  // 完整链路:agent 请求 → 投影成 extension_ui_request 推给界面 →
+  // 界面用 respondExtensionUi 应答 → agent 拿到 optionId。
+  it('projects the request to the UI and settles it from the response', async () => {
     let seen: unknown = null
-    const { connection } = await connect({
-      requestPermission,
+    const { connection, events } = await connect({
       onPrompt: async ({ client }) => {
         seen = await client.request('session/request_permission', {
           sessionId: 'sess-1',
@@ -230,12 +344,27 @@ describe('permission requests', () => {
             { optionId: 'allow', name: 'Allow Once', kind: 'allow_once' },
           ],
         })
-        return { stopReason: 'end_turn' }
+        return { stopReason: 'end_turn' as const }
       },
     })
-    await connection.prompt('write it')
-    expect(requestPermission).toHaveBeenCalledOnce()
-    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ toolCall: { title: 'Write hello.txt' } })
+
+    // prompt 会一直等到权限被应答,所以在后台等一个 UI 请求出现再回答。
+    const turn = connection.prompt('write it')
+    const request = await waitFor(() =>
+      events.find(
+        (event): event is Extract<PiRuntimeEvent, { type: 'extension_ui_request' }> =>
+          event.type === 'extension_ui_request',
+      ),
+    )
+    expect(request).toMatchObject({ method: 'select', title: 'Write hello.txt' })
+    expect(request.method === 'select' && request.options).toEqual(['Deny', 'Allow Once'])
+
+    connection.respondExtensionUi({
+      type: 'extension_ui_response',
+      id: request.id,
+      value: 'Allow Once',
+    })
+    await turn
     expect(seen).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
     await connection.dispose()
   })

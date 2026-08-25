@@ -12,6 +12,7 @@ import { AgentPool, type AgentPoolHost } from './pi-agent-pool'
 import { EventProjection, type EventProjectionHost } from './pi-event-projection'
 import {
   entryContext,
+  unsupportedByBackend,
   NO_WORKSPACE_ERROR,
   type AgentEntry,
   type AgentStatusEvent,
@@ -195,9 +196,14 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     return { released: true, running: false }
   }
 
-  private require(): RpcClient {
-    if (!this.active) throw new Error(NO_WORKSPACE_ERROR)
-    return this.active.client
+  /** pi 独有能力的入口。ACP 会话在这里明确报错,而不是静默无效。 */
+  private requirePi(what: string): RpcClient {
+    return this.piOf(this.requireEntry(), what)
+  }
+
+  private piOf(entry: AgentEntry, what: string): RpcClient {
+    if (!entry.pi) throw unsupportedByBackend(entry, what)
+    return entry.pi
   }
 
   private requireEntry(): AgentEntry {
@@ -241,7 +247,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
   steer(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
     const checkpoint = entry.status.prompt(message)
-    return entry.client.steer(message, images).catch((error) => {
+    return this.piOf(entry, '插话').steer(message, images).catch((error) => {
       entry.status.promptRejected(checkpoint)
       throw error
     })
@@ -250,7 +256,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
   followUp(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
     const checkpoint = entry.status.prompt(message)
-    return entry.client.followUp(message, images).catch((error) => {
+    return this.piOf(entry, '追问').followUp(message, images).catch((error) => {
       entry.status.promptRejected(checkpoint)
       throw error
     })
@@ -264,7 +270,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
   }
 
   bash(command: string): ReturnType<RpcClient['bash']> {
-    return this.require().bash(command)
+    return this.requirePi('执行 bash 命令').bash(command)
   }
 
   respondExtensionUi(response: ExtensionUiResponse): { remainingBlockingRequests: number } {
@@ -298,7 +304,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
 
   async getState(): Promise<Awaited<ReturnType<RpcClient['getState']>>> {
     const entry = this.requireEntry()
-    const state = await entry.client.getState()
+    const state = await this.piOf(entry, '读取会话状态').getState()
     entry.sessionId = state.sessionId
     const sessionFile = this.pool.toHostSessionPath(state.sessionFile ?? null)
     entry.sessionFile = sessionFile
@@ -313,56 +319,57 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     messages: AgentMessage[]
   } | null> {
     const entry = this.requireEntry()
-    const state = await entry.client.getState()
+    const pi = this.piOf(entry, '读取会话内容')
+    const state = await pi.getState()
     const sessionFile = this.pool.toHostSessionPath(state.sessionFile ?? null)
     entry.sessionId = state.sessionId
     entry.sessionFile = sessionFile
-    const messages = await entry.client.getMessages()
+    const messages = await pi.getMessages()
     if (this.active !== entry) return null
     this.lastSessionFile = sessionFile
     return { sessionId: state.sessionId, sessionFile, messages }
   }
 
   getMessages(): ReturnType<RpcClient['getMessages']> {
-    return this.require().getMessages()
+    return this.requirePi('读取会话内容').getMessages()
   }
 
   getAvailableModels(): ReturnType<RpcClient['getAvailableModels']> {
-    return this.require().getAvailableModels()
+    return this.requirePi('列出模型').getAvailableModels()
   }
 
   async setModel(provider: string, modelId: string): Promise<Awaited<ReturnType<RpcClient['setModel']>>> {
-    const selected = await this.require().setModel(provider, modelId)
+    const selected = await this.requirePi('切换模型').setModel(provider, modelId)
     saveSelectedModelRoute(provider, modelId)
     return selected
   }
 
   setThinkingLevel(level: Parameters<RpcClient['setThinkingLevel']>[0]): ReturnType<RpcClient['setThinkingLevel']> {
-    return this.require().setThinkingLevel(level)
+    return this.requirePi('调整推理深度').setThinkingLevel(level)
   }
 
   setSteeringMode(mode: Parameters<RpcClient['setSteeringMode']>[0]): ReturnType<RpcClient['setSteeringMode']> {
-    return this.require().setSteeringMode(mode)
+    return this.requirePi('设置插话模式').setSteeringMode(mode)
   }
 
   setFollowUpMode(mode: Parameters<RpcClient['setFollowUpMode']>[0]): ReturnType<RpcClient['setFollowUpMode']> {
-    return this.require().setFollowUpMode(mode)
+    return this.requirePi('设置追问模式').setFollowUpMode(mode)
   }
 
   setAutoCompaction(enabled: boolean): ReturnType<RpcClient['setAutoCompaction']> {
-    return this.require().setAutoCompaction(enabled)
+    return this.requirePi('设置自动压缩').setAutoCompaction(enabled)
   }
 
   compact(): ReturnType<RpcClient['compact']> {
-    return this.require().compact()
+    return this.requirePi('压缩上下文').compact()
   }
 
   getCommands(): ReturnType<RpcClient['getCommands']> {
-    return this.require().getCommands()
+    return this.requirePi('列出命令').getCommands()
   }
 
   setSessionName(name: string): ReturnType<RpcClient['setSessionName']> {
-    return this.require().setSessionName(name)
+    return this.requirePi('重命名会话').setSessionName(name)
   }
 }
 

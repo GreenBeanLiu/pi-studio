@@ -8,14 +8,20 @@ import {
   type ClientConnection,
   type Stream,
 } from '@agentclientprotocol/sdk'
+import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
-import type { PiRuntimeEvent } from '../shared/ipc/contract'
+import type {
+  ExtensionUiResponse,
+  PiRuntimeCapabilities,
+  PiRuntimeEvent,
+} from '../shared/ipc/contract'
+import type { AgentBackend } from './pi-agent-entry'
 import type { AcpLaunchSpec } from './acp-launch-spec'
 import { AcpTurnProjector, type AcpSessionUpdate, type AcpStopReason } from './acp-event-mapper'
-import type { AcpPermissionOutcome, AcpRequestPermissionParams } from './acp-permission-bridge'
+import { AcpPermissionBridge, type AcpRequestPermissionParams } from './acp-permission-bridge'
 
 /**
- * 一个外部 ACP agent 的连接。
+ * 一个外部 ACP agent 的连接,同时就是一个 {@link AgentBackend}。
  *
  * 声明 fs / terminal 能力位是实测无用的:codex-acp 和 claude-agent-acp 都在自己进程里
  * 读写文件、跑命令,只通过 session/update 事后上报。唯一的同步控制点是
@@ -41,16 +47,14 @@ export type AcpSessionModes = {
 
 export type AcpConnectionOptions = {
   agentId: string
-  /** 投影出来的 pi 事件往这里推。 */
-  emit: (event: PiRuntimeEvent) => void
-  /** session/request_permission 的应答方(见 AcpPermissionBridge)。 */
-  requestPermission: (params: AcpRequestPermissionParams) => Promise<AcpPermissionOutcome>
   now?: () => number
+  /** 权限请求的超时。默认不超时,和 pi 现有的交互式审批一致。 */
+  permissionTimeoutMs?: number
 }
 
 export type AcpProcessListeners = {
-  stderr?: (chunk: string) => void
-  exit?: (code: number | null, signal: NodeJS.Signals | null) => void
+  stderr?: (chunk: Buffer | string) => void
+  exit?: (code: number | null, signal: string | null) => void
   error?: (error: Error) => void
 }
 
@@ -81,19 +85,87 @@ function stopReasonOf(result: unknown): AcpStopReason {
   return typeof reason === 'string' ? (reason as AcpStopReason) : 'end_turn'
 }
 
-export class AcpConnection {
+function at(source: unknown, ...path: string[]): unknown {
+  let node: unknown = source
+  for (const key of path) {
+    if (!isRecord(node)) return undefined
+    node = node[key]
+  }
+  return node
+}
+
+/** loadSession 和 promptCapabilities.* 是布尔。 */
+function boolAt(source: unknown, ...path: string[]): boolean {
+  return at(source, ...path) === true
+}
+
+/**
+ * sessionCapabilities.* 不是布尔,是「对象或 null」—— 键存在且非 null 就表示支持
+ * (claude-agent-acp 实测给的是 `{"fork":{},"list":{},"resume":{}}`)。
+ * 拿 === true 去判会把它支持的能力全报成不支持。
+ */
+function presentAt(source: unknown, ...path: string[]): boolean {
+  const value = at(source, ...path)
+  return value !== undefined && value !== null
+}
+
+/**
+ * 由 initialize 的应答推出这个后端能干什么。界面按 features 灰按钮,
+ * 所以宁可报 false 也不要报一个做不到的 true。
+ */
+export function acpCapabilities(agentId: string, init: unknown): PiRuntimeCapabilities {
+  const capabilities = isRecord(init) ? init.agentCapabilities : undefined
+  const version =
+    (isRecord(init) && isRecord(init.agentInfo) && typeof init.agentInfo.version === 'string'
+      ? init.agentInfo.version
+      : null) ?? 'unknown'
+  return Object.freeze({
+    engine: 'acp' as const,
+    engineVersion: `${agentId}@${version}`,
+    protocolVersion: 'acp-v1' as const,
+    // 会话由外部 agent 自己存,宿主读不到文件。
+    sessionFormatVersion: null,
+    handshake: Object.freeze({ verified: true, state: false, messages: false, commands: false }),
+    features: Object.freeze({
+      listSessions: presentAt(capabilities, 'sessionCapabilities', 'list'),
+      resume:
+        boolAt(capabilities, 'loadSession') ||
+        presentAt(capabilities, 'sessionCapabilities', 'resume'),
+      fork: presentAt(capabilities, 'sessionCapabilities', 'fork'),
+      // 子代理跑在外部 agent 内部,宿主观察不到血缘。
+      subagents: false,
+      images: boolAt(capabilities, 'promptCapabilities', 'image'),
+      // 上下文压缩是 agent 自己的事,宿主没有入口。
+      compact: false,
+      // session/request_permission 是 ACP 的基线客户端方法,一定有。
+      approvals: true,
+      // 宿主读不到外部 agent 的历史,只能看自己投影出来的这一轮。
+      sessionRead: false,
+    }),
+  })
+}
+
+export class AcpConnection implements AgentBackend {
   private turn: AcpTurnProjector | null = null
   private child: ChildProcessWithoutNullStreams | null = null
-  private listeners: AcpProcessListeners = {}
+  private processListeners: AcpProcessListeners = {}
+  private readonly listeners = new Set<(event: PiRuntimeEvent) => void>()
+  private readonly permissions: AcpPermissionBridge
   private connection: ClientConnection | null = null
   private closed = false
 
   private constructor(
     private readonly options: AcpConnectionOptions,
+    readonly capabilities: PiRuntimeCapabilities,
     readonly sessionId: string,
     readonly agentInfo: AcpAgentInfo | null,
     readonly modes: AcpSessionModes | null,
-  ) {}
+  ) {
+    this.permissions = new AcpPermissionBridge({
+      present: (event) => this.emit(event),
+      timeoutMs: options.permissionTimeoutMs,
+    })
+  }
 
   /** 从一条 launch spec 起进程并握手。 */
   static async spawnAndOpen(
@@ -120,7 +192,7 @@ export class AcpConnection {
     }
   }
 
-  /** 握手 + 建会话。传 stream 是为了测试能接进程内的假 agent。 */
+  /** 握手 + 建会话。传 AgentApp 是为了测试能接进程内的假 agent。 */
   static async open(
     target: AcpConnectTarget,
     cwd: string,
@@ -132,7 +204,9 @@ export class AcpConnection {
         self?.onSessionUpdate(params as { update?: unknown })
       })
       .onRequest('session/request_permission', async ({ params }) => {
-        const outcome = await options.requestPermission(params as AcpRequestPermissionParams)
+        // 握手期间就来要权限的话没有会话可挂,直接拒。
+        if (!self) return { outcome: { outcome: 'cancelled' as const } }
+        const outcome = await self.permissions.request(params as AcpRequestPermissionParams)
         return { outcome }
       })
 
@@ -170,6 +244,7 @@ export class AcpConnection {
     }
     self = new AcpConnection(
       options,
+      acpCapabilities(options.agentId, init),
       sessionId,
       isRecord(init) && isRecord(init.agentInfo) ? (init.agentInfo as AcpAgentInfo) : null,
       isRecord(session) && isRecord(session.modes) ? (session.modes as AcpSessionModes) : null,
@@ -178,20 +253,47 @@ export class AcpConnection {
     return self
   }
 
-  private attachChild(child: ChildProcessWithoutNullStreams): void {
-    this.child = child
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => this.listeners.stderr?.(chunk))
-    child.on('exit', (code, signal) => this.listeners.exit?.(code, signal))
-    child.on('error', (error) => this.listeners.error?.(error))
+  // ---- AgentBackend ----
+
+  onEvent(listener: (event: PiRuntimeEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
   }
 
-  observeProcess(listeners: AcpProcessListeners): void {
-    this.listeners = listeners
+  /** 界面的应答。不是这个连接的待决权限就返回,让调用方接着往别处路由。 */
+  respondExtensionUi(response: ExtensionUiResponse): void {
+    this.permissions.settle(response)
+  }
+
+  send(message: string, images?: ImageContent[]): Promise<void> {
+    return this.prompt(message, images)
   }
 
   processId(): number | null {
     return this.child?.pid ?? null
+  }
+
+  observeProcess(listeners: AcpProcessListeners): void {
+    this.processListeners = listeners
+  }
+
+  forceDispose(): Promise<void> {
+    this.child?.kill('SIGKILL')
+    return this.dispose()
+  }
+
+  // ---- 内部 ----
+
+  private emit(event: PiRuntimeEvent): void {
+    for (const listener of this.listeners) listener(event)
+  }
+
+  private attachChild(child: ChildProcessWithoutNullStreams): void {
+    this.child = child
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => this.processListeners.stderr?.(chunk))
+    child.on('exit', (code, signal) => this.processListeners.exit?.(code, signal))
+    child.on('error', (error) => this.processListeners.error?.(error))
   }
 
   private onSessionUpdate(params: { update?: unknown }): void {
@@ -201,20 +303,28 @@ export class AcpConnection {
     // available_commands_update 之类的东西,那不属于任何一轮。
     const turn = this.turn
     if (!turn) return
-    for (const event of turn.apply(update as AcpSessionUpdate)) this.options.emit(event)
+    for (const event of turn.apply(update as AcpSessionUpdate)) this.emit(event)
   }
 
   /** 发一轮 prompt,把整轮投影成 pi 事件推出去。 */
-  async prompt(text: string): Promise<void> {
+  async prompt(text: string, images?: ImageContent[]): Promise<void> {
     if (this.closed) throw new Error('ACP connection is closed')
     if (this.turn) throw new Error('ACP session already has a turn in flight')
     const projector = new AcpTurnProjector(this.options.agentId, this.options.now)
     this.turn = projector
-    for (const event of projector.begin()) this.options.emit(event)
+    for (const event of projector.begin()) this.emit(event)
     try {
       const result = await this.connection!.agent.request('session/prompt', {
         sessionId: this.sessionId,
-        prompt: [{ type: 'text', text }],
+        prompt: [
+          { type: 'text', text },
+          // ACP 的图片块和 pi 的 ImageContent 字段一致,直接透传。
+          ...(images ?? []).map((image) => ({
+            type: 'image' as const,
+            data: image.data,
+            mimeType: image.mimeType,
+          })),
+        ],
       })
       this.settle(projector, () => projector.finish(stopReasonOf(result)))
     } catch (error) {
@@ -226,11 +336,14 @@ export class AcpConnection {
   private settle(projector: AcpTurnProjector, produce: () => PiRuntimeEvent[]): void {
     const events = produce()
     if (this.turn === projector) this.turn = null
-    for (const event of events) this.options.emit(event)
+    // 一轮结束后还挂着的审批没人会再回答了。
+    this.permissions.cancelSession(this.sessionId)
+    for (const event of events) this.emit(event)
   }
 
   /** 中止当前一轮。ACP 的 session/cancel 是通知,agent 之后会用 stopReason 回 prompt。 */
-  async cancel(): Promise<void> {
+  async cancel(reason?: string): Promise<void> {
+    void reason
     if (this.closed || !this.turn) return
     try {
       await this.connection!.agent.notify('session/cancel', { sessionId: this.sessionId })
@@ -242,11 +355,12 @@ export class AcpConnection {
   async dispose(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.permissions.cancelSession(this.sessionId)
     // 还挂着的一轮要收尾,否则界面永远停在运行中。
     const projector = this.turn
     if (projector) {
       this.turn = null
-      for (const event of projector.finish('cancelled')) this.options.emit(event)
+      for (const event of projector.finish('cancelled')) this.emit(event)
     }
     try {
       this.connection?.close()
@@ -254,5 +368,6 @@ export class AcpConnection {
       appendAppLog('warn', 'acp.dispose', 'Failed to close ACP connection', normalizeError(error))
     }
     this.child?.kill('SIGTERM')
+    this.listeners.clear()
   }
 }
