@@ -21,7 +21,7 @@ import type { AcpLaunchSpec } from './acp-launch-spec'
 import { AcpTurnProjector, type AcpSessionUpdate, type AcpStopReason } from './acp-event-mapper'
 import { projectAcpHistory } from './acp-history'
 import { AcpPermissionBridge, type AcpRequestPermissionParams } from './acp-permission-bridge'
-import { userPath } from './shell-path'
+import { userShellEnv } from './shell-env'
 
 /**
  * 一个外部 ACP agent 的连接,同时就是一个 {@link AgentBackend}。
@@ -210,9 +210,10 @@ export class AcpConnection implements AgentBackend {
     const child = spawn(spec.command, spec.args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      // Finder / Dock 启动的 app 只有 /usr/bin:/bin:/usr/sbin:/sbin,
-      // npx 装在 /opt/homebrew/bin 之类的地方 —— 不补 PATH 就是 ENOENT。
-      env: { ...process.env, PATH: userPath(), ...spec.env },
+      // Finder / Dock 启动的 app 环境是极简的:PATH 里没有 /opt/homebrew/bin
+      // (npx 就在那儿,不补就是 ENOENT),代理变量也全丢
+      // (靠本地代理访问上游的话,直连会被上游按地区拒掉)。
+      env: { ...process.env, ...userShellEnv(), ...spec.env },
     })
 
     // 握手期间进程就死掉的话,SDK 只会报一句「连接断了」,什么线索都没有。
