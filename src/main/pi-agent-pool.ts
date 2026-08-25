@@ -91,6 +91,11 @@ export class AgentPool {
     })
   }
 
+  /** 还活着的外部 agent 会话。会话列表只列这些 —— 断了的没法恢复,列出来点不开。 */
+  acpEntries(): AgentEntry[] {
+    return this.entries.filter((entry) => entry.acp !== null)
+  }
+
   toHostSessionPath(sessionFile: string | null): string | null {
     if (!sessionFile) return null
     return this.launch?.sandboxSessionPaths ? sandboxSessionPathToHost(sessionFile) : sessionFile
@@ -129,6 +134,8 @@ export class AgentPool {
     const entry: AgentEntry = {
       client,
       pi: client,
+      acp: null,
+      firstMessage: null,
       job,
       sessionFile: null,
       sessionId: null,
@@ -188,7 +195,7 @@ export class AgentPool {
    * entry.pi 是 null(pi 独有的能力用不了)、以及没有 restore —— ACP 的会话恢复
    * 要走 session/load,那是下一步的事。其余生命周期记账完全一样。
    */
-  async spawnAcp(agentId: string, spec: AcpLaunchSpec): Promise<AgentEntry> {
+  async spawnAcp(agentId: string, agentName: string, spec: AcpLaunchSpec): Promise<AgentEntry> {
     const launch = this.launch
     if (!launch) throw new Error(NO_WORKSPACE_ERROR)
 
@@ -207,6 +214,8 @@ export class AgentPool {
     const entry: AgentEntry = {
       client: connection,
       pi: null,
+      acp: { agentId, agentName },
+      firstMessage: null,
       job,
       // 外部 agent 自己存会话,宿主没有对应的 jsonl 可指。
       sessionFile: null,

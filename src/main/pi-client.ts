@@ -1,9 +1,16 @@
+import { dirname } from 'path'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
 import { saveSelectedModelRoute } from './settings'
 import type { CompiledRunProfile } from './run-profile'
-import type { ExtensionUiResponse, ModelInfo, PiRuntimeEvent } from '../shared/ipc/contract'
+import type {
+  ExtensionUiResponse,
+  ModelInfo,
+  PiRuntimeEvent,
+  SessionInfo,
+} from '../shared/ipc/contract'
+import { acpSessionKey, parseAcpSessionKey } from '../shared/acp-session-key'
 import { loadRpcClient } from './pi-process'
 import type { BlockingExtensionUiMethod } from './extension-ui-ownership'
 import type { AgentJob, AgentJobSnapshot } from './agent-job-registry'
@@ -76,6 +83,15 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
    * 但用户仍然要能切回自己的模型 —— 宁可给一份缓存的,也不能让那一组整个消失。
    */
   private lastPiModels: ModelInfo[] = []
+  /**
+   * 本工作区的会话目录。
+   *
+   * 它原来是每次都从「当前会话的 sessionFile」现推的,但 ACP 会话没有 sessionFile ——
+   * 那样一来只要当前会话是外部 agent,整个会话列表就空了(不是少一条,是全没)。
+   * 目录是工作区级的,而且编码规则在 pi 内部(自己重算很脆),所以从 pi 那里
+   * 学到一次就记住。
+   */
+  private sessionDir: string | null = null
 
   // ---- AgentPoolHost / EventProjectionHost ----
 
@@ -168,9 +184,19 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     })
   }
 
+  private rememberSessionDir(sessionFile: string | null): void {
+    if (sessionFile) this.sessionDir = dirname(sessionFile)
+  }
+
+  /** 本工作区的 pi 会话目录;工作区还没起过 pi 会话时是 null。 */
+  getSessionDir(): string | null {
+    return this.sessionDir
+  }
+
   private activate(entry: AgentEntry): void {
     this.active = entry
     entry.job.touch()
+    this.rememberSessionDir(entry.sessionFile)
     this.lastSessionFile = entry.sessionFile
     this.onActivated?.(entryContext(entry))
     const pending = entry.pendingUi.splice(0)
@@ -181,6 +207,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     await this.pool.stopAll('workspace closed')
     this.active = null
     this.workspacePath = null
+    this.sessionDir = null
     this.onActivated = null
   }
 
@@ -251,6 +278,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
 
   prompt(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
+    entry.firstMessage ??= message
     const checkpoint = entry.status.prompt(message)
     return entry.client.send(message, images).catch((error) => {
       entry.status.promptRejected(checkpoint)
@@ -293,6 +321,57 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     entry.outstandingUi.delete(response.id)
     entry.status.approvalResolved()
     return { remainingBlockingRequests: entry.outstandingUi.size }
+  }
+
+  /**
+   * 还活着的外部 agent 会话,投影成会话列表项。
+   *
+   * 只列活着的:ACP 的会话存在 agent 那边,连接断了就恢复不了(要走 session/load,
+   * 还没做)。列一条点不开的条目比不列更糟。
+   */
+  listAcpSessions(): SessionInfo[] {
+    const cwd = this.workspacePath ?? ''
+    return this.pool
+      .acpEntries()
+      .map((entry) => ({
+        path: acpSessionKey(entry.acp!.agentId, entry.sessionId ?? entry.job.id),
+        id: entry.sessionId ?? entry.job.id,
+        cwd,
+        name: entry.acp!.agentName,
+        firstMessage: entry.firstMessage ?? '(还没有消息)',
+        messageCount: entry.firstMessage ? 1 : 0,
+        modified: new Date(entry.job.activatedAt()).toISOString(),
+      }))
+      .sort((a, b) => b.modified.localeCompare(a.modified))
+  }
+
+  private findAcpEntry(key: string): AgentEntry | undefined {
+    const parts = parseAcpSessionKey(key)
+    if (!parts) return undefined
+    return this.pool
+      .acpEntries()
+      .find(
+        (entry) =>
+          entry.acp?.agentId === parts.agentId &&
+          (entry.sessionId ?? entry.job.id) === parts.sessionId,
+      )
+  }
+
+  /** 切到一个还活着的外部 agent 会话。连接已经没了就明说,别静默失败。 */
+  switchAcpSession(key: string): { cancelled: boolean; error?: string } {
+    const entry = this.findAcpEntry(key)
+    if (!entry) return { cancelled: true, error: '该外部 agent 会话已经结束了,请重新开一个' }
+    this.activate(entry)
+    return { cancelled: false }
+  }
+
+  /** 关掉一个外部 agent 会话。正在跑的一轮不给关,和 pi 会话一个口径。 */
+  async closeAcpSession(key: string): Promise<{ ok: true } | { error: string }> {
+    const entry = this.findAcpEntry(key)
+    if (!entry) return { error: '该外部 agent 会话已经结束了' }
+    if (entry.job.isRunActive()) return { error: '该会话正在运行，先停止再关闭' }
+    await this.pool.stopEntry(entry, 'session closed')
+    return { ok: true }
   }
 
   /** 新聊天 = 新进程,当前会话该跑还跑。 */
@@ -343,6 +422,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     entry.sessionId = state.sessionId
     const sessionFile = this.pool.toHostSessionPath(state.sessionFile ?? null)
     entry.sessionFile = sessionFile
+    this.rememberSessionDir(sessionFile)
     if (this.active === entry) this.lastSessionFile = sessionFile
     if (!state?.sessionFile) return state
     return sessionFile === state.sessionFile ? state : { ...state, sessionFile: sessionFile! }
@@ -365,6 +445,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     const sessionFile = this.pool.toHostSessionPath(state.sessionFile ?? null)
     entry.sessionId = state.sessionId
     entry.sessionFile = sessionFile
+    this.rememberSessionDir(sessionFile)
     const messages = await pi.getMessages()
     if (this.active !== entry) return null
     this.lastSessionFile = sessionFile
@@ -410,7 +491,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     if (!agent) throw new Error(`ACP 目录里没有 ${agentId}`)
     const resolved = resolveAcpLaunchSpec(agent)
     if (!resolved.ok) throw new Error(resolved.error.message)
-    const entry = await this.pool.spawnAcp(agentId, resolved.spec)
+    const entry = await this.pool.spawnAcp(agentId, agent.name, resolved.spec)
     this.activate(entry)
     appendAppLog('info', 'acp.session', 'Started an ACP-backed session', {
       cwd: this.workspacePath,

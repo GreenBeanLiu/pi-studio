@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createStyles } from 'antd-style'
 import { SquarePen, Trash2, Pencil, Check, X } from 'lucide-react'
 import { api, type Workspace, type SessionInfo } from '../lib/api'
+import { isAcpSessionKey } from '../../../shared/acp-session-key'
 
 type Props = {
   workspace: Workspace
@@ -326,6 +327,9 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
         {sessions.map((s) => {
           const isActive = s.path === activePath
           const isRunning = !isActive && runningSessions.has(s.path)
+          // 外部 agent 的会话没有 jsonl 可改名(会话存在 agent 那边),
+          // 「删除」实际是把连接收掉。
+          const isAcp = isAcpSessionKey(s.path)
           return (
             <div
               key={s.path}
@@ -395,12 +399,18 @@ export default function SessionSidebar({ workspace, onSessionChanged }: Props) {
                       </button>
                     </>
                   ) : (
-                    <button className={styles.actionBtn} onClick={(e) => startRename(s, e)} title="重命名">
-                      <Pencil size={12} />
-                    </button>
+                    !isAcp && (
+                      <button className={styles.actionBtn} onClick={(e) => startRename(s, e)} title="重命名">
+                        <Pencil size={12} />
+                      </button>
+                    )
                   )
                 ) : (
-                  <button className={styles.actionBtn} onClick={(e) => handleDelete(s, e)} title="删除">
+                  <button
+                    className={styles.actionBtn}
+                    onClick={(e) => handleDelete(s, e)}
+                    title={isAcp ? '关闭' : '删除'}
+                  >
                     <Trash2 size={12} />
                   </button>
                 )}

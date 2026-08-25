@@ -57,6 +57,7 @@ import {
   parseWorkspacePath,
   requiredString,
 } from '../shared/ipc/validators'
+import { isAcpSessionKey } from '../shared/acp-session-key'
 import type { Workspace } from '../shared/contracts'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
@@ -616,16 +617,30 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('sessions:list', async () => {
     const cwd = piClientManager.getWorkspacePath()
     if (!cwd) return []
-    const state = await piClientManager.getState()
-    if (!state.sessionFile) return []
-    return listSessions(dirname(state.sessionFile), cwd)
+    // 目录取工作区级的缓存,不再从「当前会话的 sessionFile」现推 ——
+    // ACP 会话没有 sessionFile,那样会让整个列表空掉。
+    const acp = piClientManager.listAcpSessions()
+    const sessionDir = piClientManager.getSessionDir()
+    if (!sessionDir) return acp
+    const pi = await listSessions(sessionDir, cwd)
+    // 外部 agent 的会话排在一起按时间归并,列表里就是同一批东西。
+    return [...pi, ...acp].sort((a, b) => b.modified.localeCompare(a.modified))
   })
   ipcMain.handle('sessions:switch', async (_e, sessionPath: unknown) => {
-    const state = await piClientManager.getState()
-    if (!state.sessionFile) return { cancelled: true }
+    // 外部 agent 会话不是文件路径,先分流再做路径校验。
+    if (isAcpSessionKey(sessionPath)) {
+      const result = piClientManager.switchAcpSession(sessionPath)
+      if (!result.cancelled) {
+        selectActiveSessionProjection()
+        refreshSessionProjectionInBackground()
+      }
+      return { cancelled: result.cancelled }
+    }
+    const sessionDir = piClientManager.getSessionDir()
+    if (!sessionDir) return { cancelled: true }
     try {
       const result = await piClientManager.switchSession(
-        parseSessionPath(sessionPath, dirname(state.sessionFile)),
+        parseSessionPath(sessionPath, sessionDir),
       )
       if (!result.cancelled) {
         selectActiveSessionProjection()
@@ -641,19 +656,25 @@ export function registerIpcHandlers(): void {
     piClientManager.setSessionName(requiredString(name, '会话名称')),
   )
   ipcMain.handle('sessions:delete', async (_e, sessionPath: unknown) => {
-    const state = await piClientManager.getState()
-    if (!state.sessionFile) return { error: '当前没有会话' }
+    // 外部 agent 会话没有文件可删,"删除"就是把连接收掉。
+    if (isAcpSessionKey(sessionPath)) return piClientManager.closeAcpSession(sessionPath)
+    const sessionDir = piClientManager.getSessionDir()
+    if (!sessionDir) return { error: '当前没有会话' }
     // 路径由 main 判定:必须是本工作区会话目录下的 .jsonl,
     // 否则这个接口等于把 unlinkSync 暴露给了 renderer。
     let target: string
     try {
-      target = parseSessionPath(sessionPath, dirname(state.sessionFile))
+      target = parseSessionPath(sessionPath, sessionDir)
     } catch (err) {
       appendAppLog('warn', 'ipc.contract', 'Rejected sessions:delete', normalizeError(err))
       return { error: (err as Error).message }
     }
-    // Never delete the file the running agent is writing to
-    if (resolve(state.sessionFile) === target) return { error: '不能删除当前会话' }
+    // Never delete the file the running agent is writing to。取前台会话的身份而不是
+    // getState:当前会话是 ACP 时 getState 没有 sessionFile,这条保护会失效。
+    const activeSessionFile = piClientManager.getActiveSessionIdentity()?.sessionFile
+    if (activeSessionFile && resolve(activeSessionFile) === target) {
+      return { error: '不能删除当前会话' }
+    }
     // 后台会话也各自占着一个 agent 进程,先收掉它再删文件
     const release = await piClientManager.releaseSession(target)
     if (!release.released) return { error: '该会话正在后台运行，先停止再删除' }

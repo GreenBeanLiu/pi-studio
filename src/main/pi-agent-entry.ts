@@ -129,6 +129,15 @@ export type AgentEntry = {
   client: AgentBackend
   /** pi 独有的能力面;ACP 会话是 null。 */
   pi: RpcClient | null
+  /** 外部 agent 的身份;pi 会话是 null。会话列表要用它显示是哪个 agent。 */
+  acp: { agentId: string; agentName: string } | null
+  /**
+   * 这个会话的第一条用户消息,用作列表里的预览。
+   *
+   * pi 的会话能从 jsonl 里读回来,ACP 的读不到(会话存在 agent 那边),
+   * 所以发的时候顺手记一份。
+   */
+  firstMessage: string | null
   /** 进程的所有权与生命周期都记在 job 上:状态、取消、以及"资源真的放掉了"的证据。 */
   job: AgentJob
   /** 会话文件在 agent 起来读到 state 之后才知道 */
