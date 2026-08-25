@@ -210,12 +210,13 @@ describe('an ACP session must not break the read paths', () => {
     expect(getState.slice(0, 200)).toContain('if (!entry.pi) return this.acpSessionState(entry)')
   })
 
-  it('returns an empty projection instead of throwing', () => {
+  it('returns a projection instead of throwing', () => {
     const source = client()
     const projection = source.slice(source.indexOf('async readActiveProjection('))
     const guard = projection.indexOf('if (!entry.pi)')
     expect(guard).toBeGreaterThan(-1)
-    expect(projection.slice(guard, guard + 400)).toContain('messages: []')
+    // 外部 agent 的历史读不到文件,由连接自己从回放和本轮的 update 投影出来
+    expect(projection.slice(guard, guard + 400)).toContain('entry.client.conversation()')
   })
 
   // 这两个反过来:pi 独有的能力就该明确报错,不能静默无效。

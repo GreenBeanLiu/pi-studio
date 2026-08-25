@@ -191,15 +191,24 @@ export class AgentPool {
   /**
    * 起一个由外部 ACP agent 驱动的会话。
    *
-   * 和 pi 那条路的区别只有三处:没有会话文件(会话在外部 agent 那边,宿主读不到)、
-   * entry.pi 是 null(pi 独有的能力用不了)、以及没有 restore —— ACP 的会话恢复
-   * 要走 session/load,那是下一步的事。其余生命周期记账完全一样。
+   * 和 pi 那条路的区别只有两处:没有会话文件(会话在外部 agent 那边,宿主读不到)、
+   * entry.pi 是 null(pi 独有的能力用不了)。其余生命周期记账完全一样。
+   *
+   * resumeSessionId 非空时不新建会话,让 agent 回放那个会话的历史。
    */
-  async spawnAcp(agentId: string, agentName: string, spec: AcpLaunchSpec): Promise<AgentEntry> {
+  async spawnAcp(
+    agentId: string,
+    agentName: string,
+    spec: AcpLaunchSpec,
+    resumeSessionId?: string,
+  ): Promise<AgentEntry> {
     const launch = this.launch
     if (!launch) throw new Error(NO_WORKSPACE_ERROR)
 
-    const connection = await AcpConnection.spawnAndOpen(spec, launch.cwd, { agentId })
+    const connection = await AcpConnection.spawnAndOpen(spec, launch.cwd, {
+      agentId,
+      resumeSessionId,
+    })
     const job = this.jobs.register({
       kind: 'chat',
       owner: { sessionFile: null },

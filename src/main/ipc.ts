@@ -629,7 +629,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('sessions:switch', async (_e, sessionPath: unknown) => {
     // 外部 agent 会话不是文件路径,先分流再做路径校验。
     if (isAcpSessionKey(sessionPath)) {
-      const result = piClientManager.switchAcpSession(sessionPath)
+      const result = await piClientManager.switchAcpSession(sessionPath)
       if (!result.cancelled) {
         selectActiveSessionProjection()
         refreshSessionProjectionInBackground()

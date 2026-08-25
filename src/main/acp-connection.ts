@@ -8,6 +8,7 @@ import {
   type ClientConnection,
   type Stream,
 } from '@agentclientprotocol/sdk'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { appendAppLog, normalizeError } from './app-log'
 import type {
@@ -18,6 +19,7 @@ import type {
 import type { AgentBackend } from './pi-agent-entry'
 import type { AcpLaunchSpec } from './acp-launch-spec'
 import { AcpTurnProjector, type AcpSessionUpdate, type AcpStopReason } from './acp-event-mapper'
+import { projectAcpHistory } from './acp-history'
 import { AcpPermissionBridge, type AcpRequestPermissionParams } from './acp-permission-bridge'
 
 /**
@@ -50,6 +52,8 @@ export type AcpConnectionOptions = {
   now?: () => number
   /** 权限请求的超时。默认不超时,和 pi 现有的交互式审批一致。 */
   permissionTimeoutMs?: number
+  /** 非空时不新建会话,而是让 agent 回放这个会话的历史。 */
+  resumeSessionId?: string
 }
 
 export type AcpProcessListeners = {
@@ -153,9 +157,20 @@ export class AcpConnection implements AgentBackend {
   private readonly permissions: AcpPermissionBridge
   private connection: ClientConnection | null = null
   private closed = false
+  /**
+   * 这个会话见过的所有 session/update,回放来的和实时的都在里面,
+   * 我们自己发出去的 prompt 也按 user_message_chunk 记一条。
+   *
+   * 对话记录随时从它投影出来 —— 恢复和实时走的是同一个投影函数,
+   * 两边不会长出两套不一致的实现。
+   */
+  private readonly updates: AcpSessionUpdate[] = []
+  /** session/load 回放期间为 true:那时的 update 是历史,不该投影成正在跑的一轮。 */
+  private replaying = false
 
   private constructor(
     private readonly options: AcpConnectionOptions,
+    private readonly cwd: string,
     readonly capabilities: PiRuntimeCapabilities,
     readonly sessionId: string,
     readonly agentInfo: AcpAgentInfo | null,
@@ -221,13 +236,11 @@ export class AcpConnection implements AgentBackend {
       clientInfo: { name: 'pi-studio', version: '1' },
     })
 
-    let session: unknown
-    try {
-      session = await agent.request('session/new', { cwd, mcpServers: [] })
-    } catch (error) {
-      connection.close()
+    // 认证失败和「agent 挂了」要能分开:前者带 data.authMethods,界面该引导登录。
+    const asAuthError = (error: unknown): never => {
       const authMethods =
-        authMethodsOf(error) ?? (isRecord(init) && Array.isArray(init.authMethods) ? init.authMethods : null)
+        authMethodsOf(error) ??
+        (isRecord(init) && Array.isArray(init.authMethods) ? init.authMethods : null)
       if (authMethods?.length) {
         throw new AcpAuthRequiredError(
           error instanceof Error ? error.message : String(error),
@@ -237,19 +250,41 @@ export class AcpConnection implements AgentBackend {
       throw error
     }
 
-    const sessionId = isRecord(session) && typeof session.sessionId === 'string' ? session.sessionId : ''
+    let session: unknown = null
+    if (!options.resumeSessionId) {
+      try {
+        session = await agent.request('session/new', { cwd, mcpServers: [] })
+      } catch (error) {
+        connection.close()
+        asAuthError(error)
+      }
+    }
+
+    const sessionId =
+      options.resumeSessionId ??
+      (isRecord(session) && typeof session.sessionId === 'string' ? session.sessionId : '')
     if (!sessionId) {
       connection.close()
       throw new Error('ACP agent did not return a sessionId')
     }
     self = new AcpConnection(
       options,
+      cwd,
       acpCapabilities(options.agentId, init),
       sessionId,
       isRecord(init) && isRecord(init.agentInfo) ? (init.agentInfo as AcpAgentInfo) : null,
       isRecord(session) && isRecord(session.modes) ? (session.modes as AcpSessionModes) : null,
     )
     self.connection = connection
+    // 回放要在 self 就绪之后跑 —— 通知处理器要靠它把 update 收进去。
+    if (options.resumeSessionId) {
+      try {
+        await self.load(options.resumeSessionId)
+      } catch (error) {
+        connection.close()
+        asAuthError(error)
+      }
+    }
     return self
   }
 
@@ -267,6 +302,28 @@ export class AcpConnection implements AgentBackend {
 
   send(message: string, images?: ImageContent[]): Promise<void> {
     return this.prompt(message, images)
+  }
+
+  /** 把攒下来的 update 投影成对话记录。 */
+  conversation(): AgentMessage[] {
+    return projectAcpHistory(this.updates, { modelId: this.options.agentId })
+  }
+
+  /**
+   * 恢复一个已有会话:让 agent 把整段历史回放过来。
+   *
+   * 回放不是「一轮」—— 不能走 AcpTurnProjector,那会 emit agent_start/agent_settled,
+   * 界面会以为有一轮正在跑。这里只把 update 收进 updates,之后 conversation()
+   * 自然就有内容了。
+   */
+  async load(sessionId: string): Promise<void> {
+    if (this.closed) throw new Error('ACP connection is closed')
+    this.replaying = true
+    try {
+      await this.connection!.agent.request('session/load', { sessionId, cwd: this.cwd, mcpServers: [] })
+    } finally {
+      this.replaying = false
+    }
   }
 
   processId(): number | null {
@@ -301,6 +358,9 @@ export class AcpConnection implements AgentBackend {
     if (!isRecord(update) || typeof update.sessionUpdate !== 'string') return
     // 没有正在进行的一轮就丢掉:agent 有时会在 prompt 之外推
     // available_commands_update 之类的东西,那不属于任何一轮。
+    this.updates.push(update as AcpSessionUpdate)
+    // 回放期间只收不投:那是历史,不是正在发生的一轮。
+    if (this.replaying) return
     const turn = this.turn
     if (!turn) return
     for (const event of turn.apply(update as AcpSessionUpdate)) this.emit(event)
@@ -310,6 +370,8 @@ export class AcpConnection implements AgentBackend {
   async prompt(text: string, images?: ImageContent[]): Promise<void> {
     if (this.closed) throw new Error('ACP connection is closed')
     if (this.turn) throw new Error('ACP session already has a turn in flight')
+    // 我们发出去的这句也要进历史 —— agent 不会把它回放给我们。
+    this.updates.push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text } })
     const projector = new AcpTurnProjector(this.options.agentId, this.options.now)
     this.turn = projector
     for (const event of projector.begin()) this.emit(event)

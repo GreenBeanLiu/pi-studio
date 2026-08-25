@@ -16,12 +16,15 @@ type FakeAgentOptions = {
     sessionId: string
   }) => Promise<PromptResult | void>
   failNewSession?: { message: string; data?: unknown }
+  /** session/load 时回放的历史。 */
+  replay?: Array<Record<string, unknown>>
   /** AuthMethodAgent 的结构:SDK 的具名类型没从入口导出,按 schema 写。 */
   authMethods?: Array<{ id: string; name: string; description?: string }>
 }
 
 function fakeAgent(options: FakeAgentOptions = {}) {
   const cancelled: string[] = []
+  const newSessionCalls: string[] = []
   const app = createAgent({ name: 'fake-acp' })
     .onRequest('initialize', async () => ({
       protocolVersion: PROTOCOL_VERSION,
@@ -30,6 +33,7 @@ function fakeAgent(options: FakeAgentOptions = {}) {
       authMethods: options.authMethods ?? [],
     }))
     .onRequest('session/new', async () => {
+      newSessionCalls.push('new')
       if (options.failNewSession) {
         // 真 agent 发的是带 data 的 JSON-RPC 错误(pi-acp 实测 -32000 + data.authMethods);
         // 抛普通 Error 会被压成 "Internal error" 并丢掉 data。
@@ -49,22 +53,33 @@ function fakeAgent(options: FakeAgentOptions = {}) {
       })
       return result ?? { stopReason: 'end_turn' as const }
     })
+    .onRequest('session/load', async (ctx) => {
+      newSessionCalls.push('load')
+      for (const update of options.replay ?? []) {
+        await (ctx.client as never as { notify: (m: string, p: unknown) => Promise<unknown> }).notify(
+          'session/update',
+          { sessionId: 'sess-1', update },
+        )
+      }
+      return {}
+    })
     .onNotification('session/cancel', async () => {
       cancelled.push('sess-1')
     })
-  return { app, cancelled }
+  return { app, cancelled, newSessionCalls }
 }
 
-async function connect(options: FakeAgentOptions = {}) {
+async function connect(options: FakeAgentOptions & { resumeSessionId?: string } = {}) {
   const events: PiRuntimeEvent[] = []
-  const { app, cancelled } = fakeAgent(options)
+  const { app, cancelled, newSessionCalls } = fakeAgent(options)
   let clock = 0
   const connection = await AcpConnection.open(app, '/tmp/workspace', {
     agentId: 'fake-acp',
     now: () => ++clock,
+    resumeSessionId: options.resumeSessionId,
   })
   connection.onEvent((event) => events.push(event))
-  return { connection, events, cancelled }
+  return { connection, events, cancelled, newSessionCalls }
 }
 
 function types(events: readonly PiRuntimeEvent[]): string[] {
@@ -422,5 +437,67 @@ describe('cancel and dispose', () => {
     const { connection } = await connect()
     await connection.dispose()
     await expect(connection.dispose()).resolves.toBeUndefined()
+  })
+})
+
+// session/load 把整段历史回放过来。那不是「一轮」—— 走轮次投影的话会 emit
+// agent_start / agent_settled,界面会以为有一轮正在跑。
+describe('resuming an existing session', () => {
+  const REPLAY = [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: '读一下 hello.txt' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '好的' } },
+    { sessionUpdate: 'tool_call', toolCallId: 'c1', name: 'read', status: 'pending', rawInput: { path: 'hello.txt' } },
+    { sessionUpdate: 'tool_call_update', toolCallId: 'c1', status: 'completed', rawOutput: 'hi' },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '里面是 hi' } },
+  ]
+
+  it('loads instead of creating a new session', async () => {
+    const { connection, newSessionCalls } = await connect({ resumeSessionId: 'sess-1', replay: REPLAY })
+    expect(newSessionCalls).toEqual(['load'])
+    expect(connection.sessionId).toBe('sess-1')
+    await connection.dispose()
+  })
+
+  it('rebuilds the conversation from the replay', async () => {
+    const { connection } = await connect({ resumeSessionId: 'sess-1', replay: REPLAY })
+    const roles = connection.conversation().map((m) => (m as { role: string }).role)
+    expect(roles).toEqual(['user', 'assistant', 'toolResult', 'assistant'])
+    await connection.dispose()
+  })
+
+  it('emits no turn events while replaying', async () => {
+    const { connection, events } = await connect({ resumeSessionId: 'sess-1', replay: REPLAY })
+    // onEvent 是 open 之后才订阅的,但即便如此也要确认回放没把一轮跑起来
+    expect(events).toEqual([])
+    await connection.dispose()
+  })
+
+  // 恢复之后接着聊,历史要连上去,不能只剩新的那轮。
+  it('appends a live turn on top of the replayed history', async () => {
+    const { connection } = await connect({
+      resumeSessionId: 'sess-1',
+      replay: REPLAY,
+      onPrompt: async ({ client }) => {
+        await client.notify('session/update', {
+          sessionId: 'sess-1',
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '好的' } },
+        })
+        return { stopReason: 'end_turn' as const }
+      },
+    })
+    await connection.prompt('再看一次')
+    const messages = connection.conversation()
+    expect(messages.map((m) => (m as { role: string }).role)).toEqual([
+      'user', 'assistant', 'toolResult', 'assistant', 'user', 'assistant',
+    ])
+    // 我们自己发的那句 agent 不会回放,要靠连接自己记
+    expect((messages[4] as { content: string }).content).toBe('再看一次')
+    await connection.dispose()
+  })
+
+  it('reports a live session with no history as an empty conversation', async () => {
+    const { connection } = await connect()
+    expect(connection.conversation()).toEqual([])
+    await connection.dispose()
   })
 })

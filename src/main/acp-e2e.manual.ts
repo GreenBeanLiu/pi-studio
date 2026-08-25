@@ -11,6 +11,9 @@
  * 2026-08-25 实测通过,投影骨架:
  *   agent_start → turn_start → message_start → tool_execution_start
  *   → tool_execution_end → message_end → turn_end → agent_end → agent_settled
+ *
+ * 同日 session/load 恢复也实测通过:第一个连接让它记住 4271,dispose 掉进程,
+ * 新连接 resume 之后历史回放正确,追问仍答出 4271 —— agent 那边的上下文确实还在。
  */
 import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -64,5 +67,43 @@ describe('real codex-acp through the connection layer', () => {
     const starts = events.filter((e) => e.type === 'tool_execution_start').length
     const ends = events.filter((e) => e.type === 'tool_execution_end').length
     expect(starts).toBe(ends)
+  })
+})
+
+describe('real codex-acp session/load', () => {
+  it('replays a conversation into a fresh connection', { timeout: 240_000 }, async () => {
+    const raw = await fetch(
+      'https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json',
+    ).then((r) => r.json())
+    const agent = parseAcpRegistry(raw).find((a) => a.id === 'codex-acp')!
+    const resolved = resolveAcpLaunchSpec(agent, { platformKey: 'darwin-aarch64' })
+    if (!resolved.ok) throw new Error('unresolvable')
+
+    const cwd = mkdtempSync(join(tmpdir(), 'acp-resume-'))
+    writeFileSync(join(cwd, 'hello.txt'), 'ACP 恢复测试的内容。\n')
+
+    // ① 起一个会话,给它一个只有它知道的事实
+    const first = await AcpConnection.spawnAndOpen(resolved.spec, cwd, { agentId: 'codex-acp' })
+    const sessionId = first.sessionId
+    await first.prompt('记住一个数字:4271。只回复"好"。')
+    console.log('① 对话记录:', first.conversation().map((m) => (m as { role: string }).role).join(' → '))
+    await first.dispose()
+
+    // ② 全新连接 + session/load
+    const second = await AcpConnection.spawnAndOpen(resolved.spec, cwd, {
+      agentId: 'codex-acp',
+      resumeSessionId: sessionId,
+    })
+    const after = second.conversation()
+    console.log('② 恢复出的记录:', after.map((m) => (m as { role: string }).role).join(' → '))
+    expect(after.length).toBeGreaterThan(0)
+
+    // ③ 上下文真的还在吗
+    await second.prompt('我刚让你记的数字是多少?只回数字。')
+    const last = second.conversation().at(-1) as { content: Array<{ type: string; text?: string }> }
+    const answer = last.content.filter((b) => b.type === 'text').map((b) => b.text).join('')
+    console.log('③ 追问答案:', answer.replace(/\n/g, ' ').slice(0, 80))
+    await second.dispose()
+    expect(answer).toContain('4271')
   })
 })

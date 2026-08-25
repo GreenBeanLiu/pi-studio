@@ -419,6 +419,11 @@ export class PiAgentRunHandle {
     this.detachApprovalGate = null
   }
 
+  /** pi 的历史在 jsonl 里,走 getMessages 读,不从这里给。 */
+  conversation(): null {
+    return null
+  }
+
   processId(): number | null {
     return (this.client as unknown as { process?: RuntimeProcess }).process?.pid ?? null
   }

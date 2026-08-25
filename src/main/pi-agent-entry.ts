@@ -1,5 +1,6 @@
 import { resolve, win32 } from 'path'
 import type { CompiledRunProfile } from './run-profile'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type {
   ExecutionSecuritySnapshot,
@@ -31,6 +32,14 @@ export type AgentBackend = {
   onEvent(listener: (event: PiRuntimeEvent) => void): () => void
   /** 应答阻塞式 UI 请求。pi 转发给子进程,ACP 用它结算 session/request_permission。 */
   respondExtensionUi(response: ExtensionUiResponse): void
+  /**
+   * 后端自己手里的对话记录。
+   *
+   * pi 的历史在 jsonl 里,走 getMessages 读,所以这里返回 null。
+   * ACP 的历史宿主读不到文件(存在 agent 那边),只能由连接把回放和本轮的
+   * update 投影出来 —— 恢复会话时界面就靠它。
+   */
+  conversation(): AgentMessage[] | null
   observeProcess(listeners: {
     stderr?: (chunk: Buffer | string) => void
     exit?: (code: number | null, signal: string | null) => void
