@@ -170,8 +170,11 @@ export function defaultShellPathDependencies(): ShellPathDependencies {
     },
     readSystemProxy: () => {
       try {
+        // 绝对路径:GUI 进程的 PATH 里未必有 /usr/sbin。PATH 为空时 execvp 退到
+        // 的默认路径也只有 /usr/bin:/bin —— 按名字找就会静默失败,
+        // 结果是代理悄悄没配上,表现成上游 403。
         return parseScutilProxy(
-          execFileSync('scutil', ['--proxy'], {
+          execFileSync('/usr/sbin/scutil', ['--proxy'], {
             encoding: 'utf8',
             timeout: 3_000,
             stdio: ['ignore', 'pipe', 'ignore'],
@@ -211,6 +214,14 @@ export function computeUserPath(deps: ShellPathDependencies): string {
   return mergePathEntries(fromShell, deps.env.PATH, commonBinDirs(deps.home).join(delimiter))
 }
 
+function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
 /** 代理这类变量:登录 shell 里有就用它,否则看当前进程还有没有。 */
 export function computeInheritedEnv(deps: ShellPathDependencies): Record<string, string> {
   if (deps.platform === 'win32') return {}
@@ -234,7 +245,10 @@ export function computeInheritedEnv(deps: ShellPathDependencies): Record<string,
   }
   const result: Record<string, string> = {}
   for (const key of INHERITED_ENV_KEYS) {
-    const value = fromShell[key] ?? deps.env[key] ?? fromSystem[key]
+    // 必须按「非空」挑而不是 ?? —— 空字符串对 ?? 是有效值,
+    // 环境里一个 `HTTPS_PROXY=` 就会把系统代理那层整个挡掉,
+    // 然后自己又被下面的判空丢弃,结果是代理悄无声息地没了。
+    const value = firstNonEmpty(fromShell[key], deps.env[key], fromSystem[key])
     if (value) result[key] = value
   }
   return result

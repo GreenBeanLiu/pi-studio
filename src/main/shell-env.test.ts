@@ -316,6 +316,31 @@ describe('系统代理垫底', () => {
     expect(vars.HTTPS_PROXY).toBe('http://explicit:1')
   })
 
+  // 环境里一个空的 HTTPS_PROXY= 就会把系统代理那层挡掉:?? 认为空字符串是有效值,
+  // 挡完之后它自己又被判空丢弃 —— 代理悄无声息地没了,表现成上游 403。
+  it('an empty env var must not shadow the system proxy', () => {
+    const vars = computeInheritedEnv(
+      deps({
+        env: { HTTPS_PROXY: '', HTTP_PROXY: '   ' },
+        readLoginShellVars: () => ({}),
+        readSystemProxy: () => parseScutilProxy(SCUTIL),
+      }),
+    )
+    expect(vars.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
+    expect(vars.HTTP_PROXY).toBe('http://127.0.0.1:7890')
+  })
+
+  it('an empty login-shell value must not shadow the rest either', () => {
+    const vars = computeInheritedEnv(
+      deps({
+        env: {},
+        readLoginShellVars: () => ({ HTTPS_PROXY: '' }),
+        readSystemProxy: () => parseScutilProxy(SCUTIL),
+      }),
+    )
+    expect(vars.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
+  })
+
   it('survives scutil throwing', () => {
     const vars = computeInheritedEnv(
       deps({

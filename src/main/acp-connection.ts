@@ -207,13 +207,22 @@ export class AcpConnection implements AgentBackend {
     cwd: string,
     options: AcpConnectionOptions,
   ): Promise<AcpConnection> {
+    const shellEnv = userShellEnv()
+    // 这两条是 GUI 启动时最容易缺、又最难从症状反推的东西,记下来好排查:
+    // 缺 PATH → ENOENT,缺代理 → 上游按地区拒(403),都不长得像环境问题。
+    appendAppLog('info', 'acp.spawn', 'Starting an ACP agent', {
+      agentId: options.agentId,
+      command: `${spec.command} ${spec.args.join(' ')}`,
+      pathEntries: shellEnv.PATH.split(':').length,
+      proxy: shellEnv.HTTPS_PROXY ?? shellEnv.HTTP_PROXY ?? shellEnv.ALL_PROXY ?? null,
+    })
     const child = spawn(spec.command, spec.args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       // Finder / Dock 启动的 app 环境是极简的:PATH 里没有 /opt/homebrew/bin
       // (npx 就在那儿,不补就是 ENOENT),代理变量也全丢
       // (靠本地代理访问上游的话,直连会被上游按地区拒掉)。
-      env: { ...process.env, ...userShellEnv(), ...spec.env },
+      env: { ...process.env, ...shellEnv, ...spec.env },
     })
 
     // 握手期间进程就死掉的话,SDK 只会报一句「连接断了」,什么线索都没有。

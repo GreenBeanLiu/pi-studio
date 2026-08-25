@@ -1699,6 +1699,8 @@ export default function ChatPane({
   // so it reads the current workspace through a ref.
   const workspaceRef = useRef(workspace)
   workspaceRef.current = workspace
+  /** 正在切模型。选外部 agent 会起进程,不能让连点变成开一堆。 */
+  const switchingModelRef = useRef(false)
   const currentModelRef = useRef(currentModel)
   currentModelRef.current = currentModel
   const thinkingRef = useRef(thinking)
@@ -2711,6 +2713,10 @@ export default function ChatPane({
 
 
   async function pickModel(key: string) {
+    // 防重入。选外部 agent 会真的起一个进程,连点几下就攒下几个 ——
+    // 日志里见过一次点击起三个 agent 的。
+    if (switchingModelRef.current) return
+    switchingModelRef.current = true
     const sep = key.indexOf('::')
     try {
       await api.pi.setModel(key.slice(0, sep), key.slice(sep + 2))
@@ -2721,6 +2727,8 @@ export default function ChatPane({
       setParamsOpen(false)
     } catch (err) {
       setError((err as Error).message ?? '切换模型失败')
+    } finally {
+      switchingModelRef.current = false
     }
   }
 

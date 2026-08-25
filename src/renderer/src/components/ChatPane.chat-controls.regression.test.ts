@@ -21,6 +21,12 @@ describe('chat pane controls', () => {
     expect(closeAt).toBeGreaterThan(refreshAt)
     // 收起必须在 try 里 —— 失败要留在原地
     expect(pickModel.indexOf('catch')).toBeGreaterThan(closeAt)
+    // 选外部 agent 会真的起一个进程:连点几下不能攒出好几个。
+    // 日志里见过一次点击起三个 agent 的。
+    expect(pickModel).toContain('if (switchingModelRef.current) return')
+    expect(pickModel.indexOf('switchingModelRef.current = false')).toBeGreaterThan(
+      pickModel.indexOf('finally'),
+    )
   })
 
   it('keeps the scroll-to-bottom button clear of the input toolbar', () => {
