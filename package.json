@@ -21,6 +21,7 @@
     "release:dry": "node scripts/release-local.js --dry-run --skip-build"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "electron-updater": "^6.8.3",
     "qrcode.react": "^4.2.0"
@@ -83,7 +84,10 @@
       "icon": "build/icon.ico"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.png",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,

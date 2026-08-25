@@ -16,6 +16,9 @@ importers:
 
   .:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^1.4.0
+        version: 1.4.0(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.2
         version: 0.84.2(patch_hash=69863772691606af063439cadca482c34a8213f1a99a7463fb0753cf94fac7d0)(ws@8.21.1)(zod@4.4.3)
@@ -118,6 +121,11 @@ importers:
         version: 2.1.9(@types/node@20.19.43)(lightningcss@1.32.0)
 
 packages:
+
+  '@agentclientprotocol/sdk@1.4.0':
+    resolution: {integrity: sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@ant-design/colors@8.0.1':
     resolution: {integrity: sha512-foPVl0+SWIslGUtD/xBr1p9U4AKzPhNYEseXYRRo5QSzGACYZrQbe11AYJbYfAWnWSpGBx6JjBmSeugUsD9vqQ==}
@@ -5263,6 +5271,10 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@agentclientprotocol/sdk@1.4.0(zod@4.4.3)':
+    dependencies:
+      zod: 4.4.3
 
   '@ant-design/colors@8.0.1':
     dependencies:
@@ -11386,8 +11398,7 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod@4.4.3:
-    optional: true
+  zod@4.4.3: {}
 
   zustand@3.7.2(react@19.2.7):
     optionalDependencies:
