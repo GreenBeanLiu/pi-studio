@@ -21,6 +21,7 @@ import type { AcpLaunchSpec } from './acp-launch-spec'
 import { AcpTurnProjector, type AcpSessionUpdate, type AcpStopReason } from './acp-event-mapper'
 import { projectAcpHistory } from './acp-history'
 import { AcpPermissionBridge, type AcpRequestPermissionParams } from './acp-permission-bridge'
+import { userPath } from './shell-path'
 
 /**
  * 一个外部 ACP agent 的连接,同时就是一个 {@link AgentBackend}。
@@ -191,17 +192,55 @@ export class AcpConnection implements AgentBackend {
     const child = spawn(spec.command, spec.args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...spec.env },
+      // Finder / Dock 启动的 app 只有 /usr/bin:/bin:/usr/sbin:/sbin,
+      // npx 装在 /opt/homebrew/bin 之类的地方 —— 不补 PATH 就是 ENOENT。
+      env: { ...process.env, PATH: userPath(), ...spec.env },
     })
+
+    // 握手期间进程就死掉的话,SDK 只会报一句「连接断了」,什么线索都没有。
+    // 这里把 stderr 和退出码接住,拼成一条能定位的错。
+    let stderr = ''
+    let died: string | null = null
+    let onDied: (() => void) | null = null
+    const note = (reason: string): void => {
+      died ??= reason
+      onDied?.()
+    }
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-4000)
+    })
+    child.once('error', (error: NodeJS.ErrnoException) => {
+      note(
+        error.code === 'ENOENT'
+          ? `找不到命令 ${spec.command} —— 请确认它已安装,或在设置里改用自定义命令`
+          : `启动 ${spec.command} 失败:${error.message}`,
+      )
+    })
+    child.once('exit', (code, signal) => {
+      note(`${spec.command} 在握手完成前就退出了(code=${code} signal=${signal})`)
+    })
+
+    const failed = new Promise<never>((_resolve, reject) => {
+      const fail = () => {
+        const detail = stderr.trim()
+        reject(new Error(detail ? `${died}\n${detail}` : String(died)))
+      }
+      if (died) fail()
+      else onDied = fail
+    })
+
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     )
     try {
-      const connection = await AcpConnection.open(stream, cwd, options)
+      const connection = await Promise.race([AcpConnection.open(stream, cwd, options), failed])
+      onDied = null
       connection.attachChild(child)
       return connection
     } catch (error) {
+      onDied = null
       child.kill('SIGTERM')
       throw error
     }
