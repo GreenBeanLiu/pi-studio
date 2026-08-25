@@ -1,5 +1,20 @@
 import { DEFAULT_MODEL_ROUTE } from './agent-defaults'
 
+/**
+ * 外部 ACP agent(Claude Code / Codex 等)在模型选择器里共用的 provider。
+ *
+ * 放在 shared 是因为 main 要用它投影目录、renderer 要用它把这一组单独对待:
+ * ACP 是一小撮外部 agent,不该被「模型切换列表」那套收藏过滤掉。
+ */
+export const ACP_MODEL_PROVIDER = 'acp'
+
+/** 这一组在界面上的名字。providerLabels 来自网关 profile,不会有 acp。 */
+export const ACP_PROVIDER_LABEL = '外部 Agent (ACP)'
+
+export function isAcpModelRoute(provider: string): boolean {
+  return provider === ACP_MODEL_PROVIDER
+}
+
 export type ModelRoute = {
   provider: string
   model: string

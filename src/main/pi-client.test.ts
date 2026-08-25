@@ -197,6 +197,36 @@ process.stdin.on('data', (chunk) => {
   })
 })
 
+// ACP 会话没有 pi 的会话状态。这两个入口如果抛错,界面会整块坏掉 ——
+// 会话侧栏是 Promise.all([sessions.list(), pi.getState()]),一抛错整个列表加载失败;
+// 聊天区的初始投影同理。所以要合成一份返回,而不是走 requirePi。
+describe('an ACP session must not break the read paths', () => {
+  const client = () => readAgentLayerFile('pi-client.ts')
+
+  it('synthesises session state instead of throwing', () => {
+    const source = client()
+    expect(source).toContain('private acpSessionState(')
+    const getState = source.slice(source.indexOf('async getState('))
+    expect(getState.slice(0, 200)).toContain('if (!entry.pi) return this.acpSessionState(entry)')
+  })
+
+  it('returns an empty projection instead of throwing', () => {
+    const source = client()
+    const projection = source.slice(source.indexOf('async readActiveProjection('))
+    const guard = projection.indexOf('if (!entry.pi)')
+    expect(guard).toBeGreaterThan(-1)
+    expect(projection.slice(guard, guard + 400)).toContain('messages: []')
+  })
+
+  // 这两个反过来:pi 独有的能力就该明确报错,不能静默无效。
+  it('still refuses pi-only capabilities outright', () => {
+    const source = client()
+    expect(source).toContain("this.requirePi('压缩上下文')")
+    expect(source).toContain("this.requirePi('执行 bash 命令')")
+    expect(source).toContain('unsupportedByBackend(entry, what)')
+  })
+})
+
 // 后台 agent 和子代理都登记成 job:owner、血缘、终态和"资源真的放掉了"的证据都在
 // registry 上,而不是散在 AgentEntry 数组和界面的前后台概念里。
 describe('agent processes are owned by jobs', () => {

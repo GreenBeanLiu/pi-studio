@@ -47,7 +47,8 @@ import {
   type ToolCall,
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
-import { favoriteRouteKey, type ModelRoute } from '../../../shared/model-route'
+import { type ModelRoute } from '../../../shared/model-route'
+import { buildModelMenuGroups } from './model-menu'
 import { DEFAULT_THINKING_LEVEL } from '../../../shared/agent-defaults'
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
@@ -2627,43 +2628,11 @@ export default function ChatPane({
   }
 
   // ── Model switcher ───────────────────────────────────────────────
-  const modelMenuItems = useMemo(() => {
-    const favSet = new Set(
-      favoriteModels.map((route) => favoriteRouteKey(route.provider, route.model)),
-    )
-    const byProvider = new Map<string, ModelInfo[]>()
-    for (const m of models) {
-      const list = byProvider.get(m.provider) ?? []
-      list.push(m)
-      byProvider.set(m.provider, list)
-    }
-    // 配了「模型切换列表」就只显示列表里的模型——没被点名的 provider 组整组消失
-    // (registry 里的历史注册/本地直连残留不再刷屏);完全没配时才回退每组最新 8 个。
-    const anyFavorites = favSet.size > 0
-    return [...byProvider.entries()]
-      .map(([provider, list]) => {
-        const providerFavorites = list.filter((m) =>
-          favSet.has(favoriteRouteKey(m.provider, m.id)),
-        )
-        let shown = anyFavorites ? providerFavorites : list.slice(-8).reverse()
-        // 当前在用的模型不在列表里也要能看见(否则不知道自己用的什么)
-        if (anyFavorites && currentModel && currentModel.provider === provider) {
-          const cur = list.find((m) => m.id === currentModel.id)
-          if (cur && !shown.includes(cur)) shown = [cur, ...shown]
-        }
-        return {
-          type: 'group' as const,
-          label: providerLabels[provider] ?? provider,
-          provider,
-          children: shown.map((m) => ({
-            key: `${m.provider}::${m.id}`,
-            label: m.id,
-            info: m,
-          })),
-        }
-      })
-      .filter((g) => g.children.length > 0)
-  }, [models, favoriteModels, providerLabels, currentModel])
+  // 分组规则(收藏过滤、ACP 组豁免)抽在 model-menu.ts 里,那边有测试。
+  const modelMenuItems = useMemo(
+    () => buildModelMenuGroups({ models, favoriteModels, providerLabels, currentModel }),
+    [models, favoriteModels, providerLabels, currentModel],
+  )
 
   /** hover 模型行时展示的参数卡:字段来自 pi registry,缺啥就不显示啥。 */
   function modelParamsTooltip(m: ModelInfo): ReactNode {

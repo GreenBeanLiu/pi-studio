@@ -12,6 +12,8 @@ import {
   type AgentJobSnapshot,
 } from './agent-job-registry'
 import { AgentLoopGuard } from './agent-loop-guard'
+import { AcpConnection } from './acp-connection'
+import type { AcpLaunchSpec } from './acp-launch-spec'
 import { AgentStatusTracker } from './agent-status'
 import { artifactWorkspaceKey } from './agent-artifact'
 import {
@@ -173,6 +175,55 @@ export class AgentPool {
       appendAppLog('warn', 'agent.state', 'Failed to read initial agent state', normalizeError(err))
     }
     job.claim({ sessionId: entry.sessionId, sessionFile: entry.sessionFile })
+    job.ready()
+
+    await this.evictIfNeeded()
+    return entry
+  }
+
+  /**
+   * 起一个由外部 ACP agent 驱动的会话。
+   *
+   * 和 pi 那条路的区别只有三处:没有会话文件(会话在外部 agent 那边,宿主读不到)、
+   * entry.pi 是 null(pi 独有的能力用不了)、以及没有 restore —— ACP 的会话恢复
+   * 要走 session/load,那是下一步的事。其余生命周期记账完全一样。
+   */
+  async spawnAcp(agentId: string, spec: AcpLaunchSpec): Promise<AgentEntry> {
+    const launch = this.launch
+    if (!launch) throw new Error(NO_WORKSPACE_ERROR)
+
+    const connection = await AcpConnection.spawnAndOpen(spec, launch.cwd, { agentId })
+    const job = this.jobs.register({
+      kind: 'chat',
+      owner: { sessionFile: null },
+      resources: {
+        dispose: () => connection.dispose(),
+        forceDispose: () => connection.forceDispose(),
+        pid: connection.processId(),
+      },
+    })
+
+    const statusFile = join(agentConfigDir(), 'runtime-status', `${randomUUID()}.json`)
+    const entry: AgentEntry = {
+      client: connection,
+      pi: null,
+      job,
+      // 外部 agent 自己存会话,宿主没有对应的 jsonl 可指。
+      sessionFile: null,
+      sessionId: connection.sessionId,
+      unsubscribe: null,
+      pendingUi: [],
+      outstandingUi: new Map(),
+      subagentJobs: new Map(),
+      statusFile,
+      status: new AgentStatusTracker(statusFile, launch.cwd),
+      loopGuard: new AgentLoopGuard(),
+    }
+    entry.status.write()
+    this.attachAgentProcessLoggers(entry)
+    entry.unsubscribe = connection.onEvent((event) => this.host.handleRuntimeEvent(entry, event))
+    this.entries.push(entry)
+    job.claim({ sessionId: entry.sessionId, sessionFile: null })
     job.ready()
 
     await this.evictIfNeeded()

@@ -3,12 +3,20 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
 import { saveSelectedModelRoute } from './settings'
 import type { CompiledRunProfile } from './run-profile'
-import type { ExtensionUiResponse, PiRuntimeEvent } from '../shared/ipc/contract'
+import type { ExtensionUiResponse, ModelInfo, PiRuntimeEvent } from '../shared/ipc/contract'
 import { loadRpcClient } from './pi-process'
 import type { BlockingExtensionUiMethod } from './extension-ui-ownership'
 import type { AgentJob, AgentJobSnapshot } from './agent-job-registry'
 import type { AgentStatusSnapshot } from './agent-status'
 import { AgentPool, type AgentPoolHost } from './pi-agent-pool'
+import { AcpRegistry } from './acp-registry'
+import { resolveAcpLaunchSpec } from './acp-launch-spec'
+import {
+  ACP_MODEL_PROVIDER,
+  acpModelEntries,
+  isAcpModelRoute,
+  mergeModelEntries,
+} from './acp-model-entries'
 import { EventProjection, type EventProjectionHost } from './pi-event-projection'
 import {
   entryContext,
@@ -62,6 +70,12 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
   private onActivated: SessionActivatedListener | null = null
   private readonly pool = new AgentPool(this)
   private readonly projection = new EventProjection(this)
+  private readonly acpRegistry = new AcpRegistry()
+  /**
+   * 上一次从 pi 进程拿到的模型列表。当前会话是 ACP 时没有 pi 进程可问,
+   * 但用户仍然要能切回自己的模型 —— 宁可给一份缓存的,也不能让那一组整个消失。
+   */
+  private lastPiModels: ModelInfo[] = []
 
   // ---- AgentPoolHost / EventProjectionHost ----
 
@@ -302,9 +316,30 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     return { cancelled: false }
   }
 
+  /**
+   * ACP 会话没有 pi 的会话状态,但 sessionId 是知道的 —— 合成一份返回,不要抛。
+   *
+   * 会话侧栏是 `Promise.all([sessions.list(), pi.getState()])`,这里一抛错
+   * 整个列表就加载不出来:只要当前会话是外部 agent,侧栏就废了。
+   */
+  private acpSessionState(entry: AgentEntry): Awaited<ReturnType<RpcClient['getState']>> {
+    return {
+      thinkingLevel: 'medium',
+      isStreaming: entry.job.isRunActive(),
+      isCompacting: false,
+      steeringMode: 'all',
+      followUpMode: 'all',
+      sessionId: entry.sessionId ?? entry.job.id,
+      autoCompactionEnabled: false,
+      messageCount: 0,
+      pendingMessageCount: 0,
+    }
+  }
+
   async getState(): Promise<Awaited<ReturnType<RpcClient['getState']>>> {
     const entry = this.requireEntry()
-    const state = await this.piOf(entry, '读取会话状态').getState()
+    if (!entry.pi) return this.acpSessionState(entry)
+    const state = await entry.pi.getState()
     entry.sessionId = state.sessionId
     const sessionFile = this.pool.toHostSessionPath(state.sessionFile ?? null)
     entry.sessionFile = sessionFile
@@ -319,7 +354,13 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     messages: AgentMessage[]
   } | null> {
     const entry = this.requireEntry()
-    const pi = this.piOf(entry, '读取会话内容')
+    if (!entry.pi) {
+      // 外部 agent 的历史存在它自己那边,宿主读不到。当前这一轮由事件流驱动,
+      // 所以回一份空投影而不是抛错 —— 抛错会让聊天区整个加载失败。
+      if (this.active !== entry) return null
+      return { sessionId: entry.sessionId ?? entry.job.id, sessionFile: null, messages: [] }
+    }
+    const pi = entry.pi
     const state = await pi.getState()
     const sessionFile = this.pool.toHostSessionPath(state.sessionFile ?? null)
     entry.sessionId = state.sessionId
@@ -334,14 +375,50 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     return this.requirePi('读取会话内容').getMessages()
   }
 
-  getAvailableModels(): ReturnType<RpcClient['getAvailableModels']> {
-    return this.requirePi('列出模型').getAvailableModels()
+  /** pi 的模型 + 可用的 ACP agent。两边任意一边拉不到都不该让另一边消失。 */
+  async getAvailableModels(): Promise<ModelInfo[]> {
+    const entry = this.requireEntry()
+    if (entry.pi) {
+      try {
+        this.lastPiModels = (await entry.pi.getAvailableModels()) as ModelInfo[]
+      } catch (error) {
+        appendAppLog('warn', 'agent.models', 'Failed to list pi models', normalizeError(error))
+      }
+    }
+    let acp: ModelInfo[] = []
+    try {
+      acp = acpModelEntries(await this.acpRegistry.load())
+    } catch (error) {
+      // 目录拉不到只是少一组外部 agent,不该让整个模型选择器报错。
+      appendAppLog('warn', 'acp.registry', 'Failed to load the ACP agent registry', normalizeError(error))
+    }
+    return mergeModelEntries(this.lastPiModels, acp)
   }
 
-  async setModel(provider: string, modelId: string): Promise<Awaited<ReturnType<RpcClient['setModel']>>> {
+  /** 选中 ACP agent 不是「换个模型」,是用那个 agent 起一个新会话。 */
+  async setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
+    if (isAcpModelRoute(provider)) return this.startAcpSession(modelId)
     const selected = await this.requirePi('切换模型').setModel(provider, modelId)
     saveSelectedModelRoute(provider, modelId)
     return selected
+  }
+
+  private async startAcpSession(agentId: string): Promise<{ provider: string; id: string }> {
+    if (!this.pool.launchContext()) throw new Error(NO_WORKSPACE_ERROR)
+    const agents = await this.acpRegistry.load()
+    const agent = agents.find((candidate) => candidate.id === agentId)
+    if (!agent) throw new Error(`ACP 目录里没有 ${agentId}`)
+    const resolved = resolveAcpLaunchSpec(agent)
+    if (!resolved.ok) throw new Error(resolved.error.message)
+    const entry = await this.pool.spawnAcp(agentId, resolved.spec)
+    this.activate(entry)
+    appendAppLog('info', 'acp.session', 'Started an ACP-backed session', {
+      cwd: this.workspacePath,
+      agentId,
+      command: resolved.spec.command,
+      sessionId: entry.sessionId,
+    })
+    return { provider: ACP_MODEL_PROVIDER, id: agentId }
   }
 
   setThinkingLevel(level: Parameters<RpcClient['setThinkingLevel']>[0]): ReturnType<RpcClient['setThinkingLevel']> {
