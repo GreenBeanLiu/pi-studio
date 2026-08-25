@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { sandboxAgentPath } from './sandbox'
 
-const piClient = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
+// 恢复会话的 switchSession 现在归进程层(pi-agent-pool)。负向断言扫整个 agent 层 ——
+// 只盯一个文件的话,代码一搬断言就静默变成永真。
+const AGENT_LAYER_FILES = ['pi-client.ts', 'pi-agent-pool.ts', 'pi-event-projection.ts'] as const
+const agentPool = readFileSync(new URL('./pi-agent-pool.ts', import.meta.url), 'utf8')
+const agentLayer = AGENT_LAYER_FILES.map((name) =>
+  readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'),
+).join('\n')
 
 // 2026-08-24: seatbelt 沙箱下每次恢复会话都 warn:
 //   EPERM: operation not permitted, mkdir '/agent/sessions/--Users-glanger-Works--'
@@ -21,14 +27,14 @@ describe('agent paths must follow the sandbox mode', () => {
   })
 
   it('restores sessions through the mode-aware helper', () => {
-    const start = piClient.indexOf('await client.switchSession(')
+    const start = agentPool.indexOf('await client.switchSession(')
     expect(start).toBeGreaterThan(-1)
-    const body = piClient.slice(start, start + 260)
+    const body = agentPool.slice(start, start + 260)
     expect(body).toContain('sandboxAgentPath(restoreSessionFile, launch.sandboxMode)')
   })
 
-  it('never calls the docker-only mapper straight from pi-client', () => {
+  it('never calls the docker-only mapper straight from the agent layer', () => {
     // 它硬编码 /agent,对 seatbelt 和 wsl 都是错的
-    expect(piClient).not.toContain('sandboxSessionPathToContainer(')
+    expect(agentLayer).not.toContain('sandboxSessionPathToContainer(')
   })
 })

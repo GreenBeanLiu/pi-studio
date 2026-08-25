@@ -14,6 +14,21 @@ import {
   sessionKey,
 } from './pi-client'
 
+/**
+ * agent 层拆成了会话层(pi-client)、进程层(pi-agent-pool)和投影层
+ * (pi-event-projection)。下面几条守的是真实修过的 bug,断言按源码文本写 ——
+ * 所以负向断言必须扫全部三个文件:只盯一个的话,代码搬走断言就永真了。
+ */
+const AGENT_LAYER_FILES = ['pi-client.ts', 'pi-agent-pool.ts', 'pi-event-projection.ts'] as const
+
+function readAgentLayerFile(name: (typeof AGENT_LAYER_FILES)[number]): string {
+  return readFileSync(new URL(`./${name}`, import.meta.url), 'utf8')
+}
+
+function agentLayerSource(): string {
+  return AGENT_LAYER_FILES.map(readAgentLayerFile).join('\n')
+}
+
 // 2026-08-03:pi 的 new_session / switch_session 直接 dispose 当前会话。实测(本地假
 // SSE provider)正在跑的一轮会被掐断且一个事件都不发 —— message_end / turn_end /
 // agent_end / agent_settled 全没有,界面永远停在最后一步。所以改成一个聊天一个进程,
@@ -60,14 +75,16 @@ describe('one agent process per chat', () => {
   })
 
   it('switches by activating another process instead of tearing a session down', () => {
-    const source = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
     // 切换/新建都只是起进程或换激活对象:既不中止当前这轮,也不碰 pi 的 new_session
-    // (abort 本身还留着 —— 那是停止按钮用的)
-    expect(source).not.toContain('settleActiveRun')
-    expect(source).not.toContain('client.newSession()')
-    expect(source).toContain('const existing = this.entries.find')
+    // (abort 本身还留着 —— 那是停止按钮用的)。负向断言扫整个 agent 层 ——
+    // 只盯 pi-client 的话,代码一搬到池子里断言就会静默变成永真。
+    expect(agentLayerSource()).not.toContain('settleActiveRun')
+    expect(agentLayerSource()).not.toContain('client.newSession()')
+    // 已有进程的会话直接换激活对象,不重开
+    expect(readAgentLayerFile('pi-client.ts')).toContain('const existing = this.pool.find(sessionPath)')
+    expect(readAgentLayerFile('pi-agent-pool.ts')).toContain('return this.entries.find(')
     // 后台会话的审批请求要留到它回到前台再补发,否则没人应答会卡死
-    expect(source).toContain('entry.pendingUi.push(event)')
+    expect(readAgentLayerFile('pi-event-projection.ts')).toContain('entry.pendingUi.push(event)')
   })
 })
 
@@ -183,21 +200,22 @@ process.stdin.on('data', (chunk) => {
 // 后台 agent 和子代理都登记成 job:owner、血缘、终态和"资源真的放掉了"的证据都在
 // registry 上,而不是散在 AgentEntry 数组和界面的前后台概念里。
 describe('agent processes are owned by jobs', () => {
-  const source = readFileSync(new URL('./pi-client.ts', import.meta.url), 'utf8')
+  // 进程和 job registry 都归进程层(pi-agent-pool)所有。
+  const pool = () => readAgentLayerFile('pi-agent-pool.ts')
 
   it('releases a process through its job instead of an unbounded dispose', () => {
     // 旧写法 `entry.client.dispose().catch(() => {})` 会把停不下来的进程当成已回收:
     // 收尾要走 job.finish(),停不住就强杀,强杀也失败就留成 orphaned 带证据。
-    expect(source).not.toContain('entry.client.dispose()')
-    expect(source).toContain('await entry.job.finish(reason)')
+    expect(agentLayerSource()).not.toContain('entry.client.dispose()')
+    expect(pool()).toContain('await entry.job.finish(reason)')
   })
 
   it('counts liveness from the registry so an orphan is not reported as reclaimed', () => {
-    expect(source).toContain('return this.jobs.live().length')
+    expect(pool()).toContain('return this.jobs.live().length')
   })
 
   it('gives every subagent run a parent job', () => {
-    expect(source).toContain("kind: 'subagent'")
-    expect(source).toContain('parentId: entry.job.id')
+    expect(pool()).toContain("kind: 'subagent'")
+    expect(pool()).toContain('parentId: entry.job.id')
   })
 })
