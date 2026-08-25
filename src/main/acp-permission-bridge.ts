@@ -63,22 +63,33 @@ function permissionTitle(params: AcpRequestPermissionParams): string {
   return params.toolCall?.title?.trim() || 'Agent 请求执行一个操作'
 }
 
+/** 请求里除「允许一次」外还有什么档位,写进说明让用户知道自己放弃了什么。 */
+function permissionMessage(params: AcpRequestPermissionParams): string {
+  const names = params.options.map((option) => option.name).join(' / ')
+  return `外部 agent 请求执行:${permissionTitle(params)}\n可选项:${names}`
+}
+
 /**
  * 把 ACP 权限请求投影成 pi 的阻塞式 UI 请求。
  *
- * 用 select 而不是 confirm:ACP 给的是一组具名选项(Deny / Allow Once / Always Allow),
- * confirm 只有是非两档,会把「永久允许」丢掉。
+ * 必须用 confirm。ACP 给的是一组具名选项(Deny / Allow Once / Always Allow),
+ * select 看起来更贴切 —— 但 pi-studio 的界面从来没给 select / input / editor
+ * 做过 UI,ChatPane 收到就直接回 cancelled。用 select 的结果是:请求发出去、
+ * 界面秒拒、agent 报 "Tool use aborted"(实测)。
+ *
+ * confirm 是唯一真有审批弹窗的方法。代价是「永久允许」这一档拿不到 ——
+ * 是非两档只能映射到允许一次 / 拒绝一次。要那一档的话得先给 select 做界面。
  */
 export function toExtensionUiRequest(
   requestId: string,
   params: AcpRequestPermissionParams,
-): Extract<PiRuntimeEvent, { type: 'extension_ui_request'; method: 'select' }> {
+): Extract<PiRuntimeEvent, { type: 'extension_ui_request'; method: 'confirm' }> {
   return {
     type: 'extension_ui_request',
     id: requestId,
-    method: 'select',
+    method: 'confirm',
     title: permissionTitle(params),
-    options: params.options.map((option) => option.name),
+    message: permissionMessage(params),
   }
 }
 

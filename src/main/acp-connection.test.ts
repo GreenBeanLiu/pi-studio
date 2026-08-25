@@ -404,13 +404,14 @@ describe('permission requests', () => {
           event.type === 'extension_ui_request',
       ),
     )
-    expect(request).toMatchObject({ method: 'select', title: 'Write hello.txt' })
-    expect(request.method === 'select' && request.options).toEqual(['Deny', 'Allow Once'])
+    // confirm 是界面唯一真会弹窗的方法(select/input/editor 会被 ChatPane 秒拒)
+    expect(request).toMatchObject({ method: 'confirm', title: 'Write hello.txt' })
+    expect(request.method === 'confirm' && request.message).toContain('Deny / Allow Once')
 
     connection.respondExtensionUi({
       type: 'extension_ui_response',
       id: request.id,
-      value: 'Allow Once',
+      confirmed: true,
     })
     await turn
     expect(seen).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })

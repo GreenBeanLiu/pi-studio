@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { UnattendedApprovalGate } from './approval-gateway'
 import {
@@ -28,12 +29,19 @@ function bridge(overrides?: Partial<ConstructorParameters<typeof AcpPermissionBr
 }
 
 describe('projecting an ACP permission request onto pi的 UI 请求', () => {
-  // 用 select 而不是 confirm:confirm 只有是非两档,会把「永久允许」丢掉。
-  it('keeps every option the agent offered', () => {
+  // 只能用 confirm。pi-studio 的界面从来没给 select / input / editor 做过 UI,
+  // ChatPane 收到就直接回 cancelled —— 实测结果是 agent 报 "Tool use aborted"。
+  it('uses confirm, the only method the UI actually prompts for', () => {
     const event = toExtensionUiRequest('acp-perm:1', CLAUDE_REQUEST)
-    expect(event.method).toBe('select')
+    expect(event.method).toBe('confirm')
     expect(event.title).toBe('Write hello.txt')
-    expect(event.options).toEqual(['Deny', 'Allow Once', 'Always Allow'])
+  })
+
+  // 是非两档拿不到「永久允许」,至少让用户在说明里看见自己放弃了什么。
+  it('lists the options the agent offered in the message', () => {
+    const event = toExtensionUiRequest('acp-perm:1', CLAUDE_REQUEST)
+    expect(event.message).toContain('Deny / Allow Once / Always Allow')
+    expect(event.message).toContain('Write hello.txt')
   })
 
   it('falls back to a readable title when the agent gives none', () => {
@@ -50,7 +58,8 @@ describe('projecting an ACP permission request onto pi的 UI 请求', () => {
 })
 
 describe('AcpPermissionBridge settlement', () => {
-  it('maps the chosen option text back to its optionId', async () => {
+  // value 形状现在界面不会发,但桥仍然认 —— 以后给 select 做了界面就能直接用。
+  it('still maps a chosen option text back to its optionId', async () => {
     const { instance, presented } = bridge()
     const pending = instance.request(CLAUDE_REQUEST)
     const settled = instance.settle({
@@ -172,6 +181,32 @@ describe('unattended runs deny ACP approvals for free', () => {
     expect(instance.settle(answered!.response)).toBe(true)
     await expect(pending).resolves.toEqual({ outcome: 'cancelled' })
     expect(gate.denied()).toHaveLength(1)
-    expect(gate.denied()[0]?.method).toBe('select')
+    expect(gate.denied()[0]?.method).toBe('confirm')
+  })
+})
+
+// 2026-08-25:第一版用 select 投影权限请求 —— 看起来更贴切(ACP 给的是一组具名
+// 选项),但 ChatPane 对 select / input / editor 是「收到即回 cancelled」,
+// pi-studio 从来没给这三种做过界面。结果:请求发出去、界面秒拒、
+// agent 报 "Tool use aborted",用户看到的是工具凭空失败。
+//
+// 这条守的是那个耦合:只要 ChatPane 还在自动取消 select,桥就必须用 confirm。
+describe('权限请求的方法必须是界面真会弹窗的那个', () => {
+  const chatPane = readFileSync(
+    new URL('../renderer/src/components/ChatPane.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('ChatPane 仍然自动取消 select / input / editor', () => {
+    const branch = chatPane.slice(
+      chatPane.indexOf("event.method === 'input'"),
+      chatPane.indexOf("event.method === 'input'") + 400,
+    )
+    expect(branch).toContain("event.method === 'select'")
+    expect(branch).toContain('cancelled: true')
+  })
+
+  it('所以桥投影出来的必须是 confirm', () => {
+    expect(toExtensionUiRequest('acp-perm:1', CLAUDE_REQUEST).method).toBe('confirm')
   })
 })
