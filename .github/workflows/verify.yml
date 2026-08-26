@@ -10,7 +10,12 @@ permissions:
 
 jobs:
   verify:
-    runs-on: windows-latest
+    strategy:
+      # 一个平台红了,另一个也要跑完 —— 平台分叉正是要看的东西。
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     env:
       CI: 'true'
       npm_config_confirm_modules_purge: 'false'
@@ -26,3 +31,37 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run verify
+
+  # 打包产物的启动冒烟。verify 全绿也挡不住「装好之后一点就崩」——
+  # 2026-08-25 真踩过:zod 是 ACP SDK 的 peerDependency,pnpm 不把 peer 提到顶层,
+  # electron-builder 只拷贝顶层看得见的包,打出来的 app 一启动就 ERR_MODULE_NOT_FOUND。
+  # typecheck / lint / 测试 / build 一个都没响。
+  smoke:
+    needs: verify
+    runs-on: macos-latest
+    env:
+      CI: 'true'
+      # 没有 Developer ID 就别让 electron-builder 去找签名,脚本自己打 ad-hoc。
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      # 只出 app 包,不做 DMG —— 冒烟要的是能启动,不是安装器。
+      - run: pnpm exec electron-builder --mac dir --arm64 --publish never
+      - run: node scripts/smoke-launch.mjs dist/mac-arm64/pi-studio.app --seconds 40
+      - name: 失败时把 app 日志捞出来
+        if: failure()
+        run: cat "$HOME/Library/Application Support/pi-studio/logs/pi-studio.log" || true
