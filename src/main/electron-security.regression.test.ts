@@ -19,4 +19,13 @@ describe('Electron renderer security', () => {
     expect(preload).not.toContain("exposeInMainWorld('electron'")
     expect(preload).not.toContain('process.env')
   })
+
+  it('backs up persistent state before stores are opened', () => {
+    const backup = main.indexOf('const backup = createStartupDataBackup(')
+    const ipcRegistration = main.indexOf('registerIpcHandlers()')
+    const memoryService = main.indexOf('startSharedMemoryService(')
+    expect(backup).toBeGreaterThan(-1)
+    expect(backup).toBeLessThan(ipcRegistration)
+    expect(backup).toBeLessThan(memoryService)
+  })
 })

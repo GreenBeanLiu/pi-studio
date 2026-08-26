@@ -21,6 +21,7 @@ import { cleanupStaleRunChangeTempDirs } from './run-change-set'
 import { syncBundledExtensions, syncBundledSkills } from './bundled-agent-resources'
 import { startSharedMemoryService, stopSharedMemoryService } from './shared-memory'
 import { sharedMemoryPath } from './workspace-memory'
+import { createStartupDataBackup } from './local-data-backup'
 
 // 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
 if (process.env.PI_REMOTE_DEBUG_PORT)
@@ -242,6 +243,14 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   installProcessLoggers()
+  try {
+    const backup = createStartupDataBackup(app.getPath('userData'), { appVersion: app.getVersion() })
+    if (backup.status === 'created') {
+      appendAppLog('info', 'backup', 'Created startup data backup', backup)
+    }
+  } catch (error) {
+    appendAppLog('warn', 'backup', 'Startup data backup failed', normalizeError(error))
+  }
   const cleanedSnapshots = cleanupStaleRunChangeTempDirs()
   appendAppLog('info', 'app', 'App ready', { version: app.getVersion() })
   if (cleanedSnapshots > 0) {
