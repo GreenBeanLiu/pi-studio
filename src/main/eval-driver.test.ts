@@ -12,12 +12,30 @@ function fixture(): string {
   return workspace
 }
 
-describe('EvalDriver', () => {
+/**
+ * 这个文件的超时统一放宽到 60 秒。
+ *
+ * 里面凡是跑 command grader 的用例,在 Windows 上都要走 scripts/eval-command-job.ps1,
+ * 那个脚本用 Add-Type 运行时编译 C#(为了建 Job Object),而且每 spawn 一次编译一次。
+ * 开发机上几百毫秒;GitHub Windows runner 上 2026-08-26 实测每条 ~23 秒
+ * (csc 冷启动 + Defender 实时扫描)。全局 testTimeout 是 30 秒 —— 只剩 6 秒余量,
+ * 下一次 runner 慢一点就是一片红,而且报出来会是「Test timed out」这种毫无线索的错。
+ *
+ * 放宽的是这一个文件,不动全局的 30 秒 —— 别的 94 个文件没有这条慢路径,
+ * 守卫该留着。
+ */
+describe('EvalDriver', { timeout: 60_000 }, () => {
   // 全套 grader 都跑一遍(file + command + diff + pi),是这个文件里最重的一条。
   // Windows 上 command grader 要过 eval-command-job.ps1,那个脚本 Add-Type 运行时
   // 编译 C#(为了建 Job Object),冷 runner 上一次就好几秒;diff grader 还要起 git。
   // 2026-08-26 CI 实测这一条在 Windows 上 30 秒不够,单独给它更长的。
-  it('isolates the fixture and grades files, commands, diffs, and artifacts', { timeout: 120_000 }, async () => {
+  // 超时给得很宽,是因为这条要在 Windows 上真起一次 command grader,而那条路径
+  // 走 scripts/eval-command-job.ps1 —— 里面用 Add-Type 运行时编译 C# 来建 Job Object。
+  // 开发机上几百毫秒,GitHub Windows runner 上实测 48.6 秒(csc 冷启动 + Defender 实时扫描)。
+  // grader 自己的默认上限就是 60 秒,48.6 秒贴着天花板,2026-08-26 已经翻车过一次
+  // (60087ms,报出来只是 report.passed 为 false)。所以 grader 显式给 120 秒、
+  // 用例给 180 秒 —— 这条测的是 grader 干不干活,不是它多快。
+  it('isolates the fixture and grades files, commands, diffs, and artifacts', { timeout: 180_000 }, async () => {
     const source = fixture()
     const engine: EvalEngine = {
       async run(request, emit) {
@@ -34,13 +52,17 @@ describe('EvalDriver', () => {
       graders: [
         { type: 'exit-code', expected: 0 },
         { type: 'file', path: 'result.txt', equals: 'done' },
-        { type: 'command', executable: process.execPath, args: ['-e', "process.exit(require('fs').existsSync('result.txt') ? 0 : 1)"] },
+        { type: 'command', executable: process.execPath, args: ['-e', "process.exit(require('fs').existsSync('result.txt') ? 0 : 1)"], timeoutMs: 120_000 },
         { type: 'diff', allow: ['result.txt'], maxChangedFiles: 1 },
       ],
     })
 
     const report = await new EvalDriver(true).run(evalCase, engine)
 
+    // 先断言「没有失败的 grader」再断言总体通过:report.passed 是个布尔,挂了只会说
+    // expected false to be true,看不出是哪个 grader、为什么。把失败的那条整个摊开,
+    // stderr 和 kind 都在里面 —— CI 上没法本地复现时,这就是唯一的线索。
+    expect(report.graders.filter((grader) => !grader.passed)).toEqual([])
     expect(report.passed).toBe(true)
     expect(report.workspacePath).not.toBe(source)
     expect(readFileSync(join(source, 'input.txt'), 'utf8')).toBe('before')
