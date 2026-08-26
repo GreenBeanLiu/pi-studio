@@ -21,9 +21,11 @@ jobs:
       npm_config_confirm_modules_purge: 'false'
     steps:
       - uses: actions/checkout@v4
+      # 不在这里钉版本:package.json 的 packageManager 已经钉了(pnpm@10.6.1),
+      # 两边都写而且对不上时 action-setup@v4 会直接拒绝 —— CI 从 3e6ba1a 加上
+      # packageManager 之后就一直挂在这一步,一次都没真正跑过。
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.9.0
           run_install: false
       - uses: actions/setup-node@v4
         with:
@@ -45,9 +47,11 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
+      # 不在这里钉版本:package.json 的 packageManager 已经钉了(pnpm@10.6.1),
+      # 两边都写而且对不上时 action-setup@v4 会直接拒绝 —— CI 从 3e6ba1a 加上
+      # packageManager 之后就一直挂在这一步,一次都没真正跑过。
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.9.0
           run_install: false
       - uses: actions/setup-node@v4
         with:

@@ -17,9 +17,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      # 版本由 package.json 的 packageManager 决定,这里不能再写一遍 ——
+      # 两边对不上时 action-setup@v4 会直接拒绝(verify.yml 同理)。
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.9.0
           run_install: false
       - uses: actions/setup-node@v4
         with:
