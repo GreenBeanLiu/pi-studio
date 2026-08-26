@@ -19,6 +19,10 @@ jobs:
     env:
       CI: 'true'
       npm_config_confirm_modules_purge: 'false'
+      # renderer 打出来 8MB+(mermaid / shiki 那一堆),rollup 吃内存。
+      # runner 上 Node 的默认堆按可用内存推,不够用 —— macOS 上实测
+      # `pnpm run build` 直接 FATAL ERROR: heap out of memory(exit 134)。
+      NODE_OPTIONS: '--max-old-space-size=6144'
     steps:
       - uses: actions/checkout@v4
       # 不在这里钉版本:package.json 的 packageManager 已经钉了(pnpm@10.6.1),
@@ -43,6 +47,7 @@ jobs:
     runs-on: macos-latest
     env:
       CI: 'true'
+      NODE_OPTIONS: '--max-old-space-size=6144'
       # 没有 Developer ID 就别让 electron-builder 去找签名,脚本自己打 ad-hoc。
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:

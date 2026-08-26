@@ -13,7 +13,11 @@ function fixture(): string {
 }
 
 describe('EvalDriver', () => {
-  it('isolates the fixture and grades files, commands, diffs, and artifacts', async () => {
+  // 全套 grader 都跑一遍(file + command + diff + pi),是这个文件里最重的一条。
+  // Windows 上 command grader 要过 eval-command-job.ps1,那个脚本 Add-Type 运行时
+  // 编译 C#(为了建 Job Object),冷 runner 上一次就好几秒;diff grader 还要起 git。
+  // 2026-08-26 CI 实测这一条在 Windows 上 30 秒不够,单独给它更长的。
+  it('isolates the fixture and grades files, commands, diffs, and artifacts', { timeout: 120_000 }, async () => {
     const source = fixture()
     const engine: EvalEngine = {
       async run(request, emit) {
