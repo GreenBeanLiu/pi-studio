@@ -88,6 +88,18 @@ export async function terminateProcessTree(
     return
   }
   if (options.detachedGroup) {
+    // 杀的是进程组,不是「整棵树」—— POSIX 上有两条消不掉的限制,调用方要知道:
+    //
+    // 1. 子孙自己调过 setsid()(Node 里就是 spawn 的 detached: true)就成了新的
+    //    会话和组长,这个信号到不了它。
+    // 2. 就算它留在组里,只要主进程已经退出,组就可能已经解散。2026-08-26 在
+    //    macOS 26.5 上实测:child 的 exit 事件 +391ms 时 kill(-pgid) 已经 ESRCH,
+    //    而残留的子孙还活着 —— 能动手的最早时机已经晚了。
+    //
+    // 所以这条路的实际保证是「主进程还活着时能把它那一组收干净」(超时、
+    // 用户中止都属于这种),而不是「正常退出后还能追杀脱离的子孙」。
+    // 后者要操作系统级的容器:Windows 走 Job Object(KILL_ON_JOB_CLOSE),
+    // Linux 的对等物是 cgroup —— 普通用户进程用不了。
     try {
       process.kill(-pid, 'SIGKILL')
     } catch (error) {
