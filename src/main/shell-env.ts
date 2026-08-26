@@ -1,7 +1,6 @@
 import { execFileSync } from 'child_process'
 import { homedir } from 'os'
-import { join } from 'path'
-import { delimiter } from 'path'
+import { posix } from 'path'
 
 /**
  * 从用户登录 shell 里捞回来的那部分环境。
@@ -28,10 +27,10 @@ export function commonBinDirs(home = homedir()): string[] {
     '/opt/homebrew/bin',
     '/opt/homebrew/sbin',
     '/usr/local/bin',
-    join(home, '.local', 'bin'),
-    join(home, '.volta', 'bin'),
-    join(home, '.bun', 'bin'),
-    join(home, '.cargo', 'bin'),
+    posix.join(home, '.local', 'bin'),
+    posix.join(home, '.volta', 'bin'),
+    posix.join(home, '.bun', 'bin'),
+    posix.join(home, '.cargo', 'bin'),
     '/opt/local/bin',
   ]
 }
@@ -45,14 +44,14 @@ export function mergePathEntries(...sources: (string | undefined | null)[]): str
   const merged: string[] = []
   for (const source of sources) {
     if (!source) continue
-    for (const entry of source.split(delimiter)) {
+    for (const entry of source.split(':')) {
       const trimmed = entry.trim()
       if (!trimmed || seen.has(trimmed)) continue
       seen.add(trimmed)
       merged.push(trimmed)
     }
   }
-  return merged.join(delimiter)
+  return merged.join(':')
 }
 
 /**
@@ -211,7 +210,7 @@ export function computeUserPath(deps: ShellPathDependencies): string {
       fromShell = null
     }
   }
-  return mergePathEntries(fromShell, deps.env.PATH, commonBinDirs(deps.home).join(delimiter))
+  return mergePathEntries(fromShell, deps.env.PATH, commonBinDirs(deps.home).join(':'))
 }
 
 function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
