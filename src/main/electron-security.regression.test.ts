@@ -1,0 +1,22 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+const main = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+
+describe('Electron renderer security', () => {
+  it('keeps the renderer isolated and sandboxed', () => {
+    expect(main).toContain('sandbox: true')
+    expect(main).toContain('contextIsolation: true')
+    expect(main).toContain('nodeIntegration: false')
+    expect(main).toContain('webSecurity: true')
+    expect(main).not.toContain('sandbox: false')
+  })
+
+  it('only exposes the typed desktop API from preload', () => {
+    expect(preload).toContain("contextBridge.exposeInMainWorld('api', api)")
+    expect(preload).not.toContain('@electron-toolkit/preload')
+    expect(preload).not.toContain("exposeInMainWorld('electron'")
+    expect(preload).not.toContain('process.env')
+  })
+})

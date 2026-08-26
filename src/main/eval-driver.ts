@@ -453,19 +453,68 @@ async function runCommandGrader(
     let terminationError: Error | null = null
     let settled = false
     let terminating: Promise<void> | null = null
+    const finish = (result: CommandGradeExecution): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolveResult(result)
+    }
+    const terminateOwnedCommand = async (): Promise<void> => {
+      if (process.platform !== 'win32') {
+        await terminateProcessTree(child.pid!, { detachedGroup: true })
+        return
+      }
+      if (child.exitCode !== null || child.signalCode !== null) return
+      await new Promise<void>((resolveTermination, rejectTermination) => {
+        let killTimer: ReturnType<typeof setTimeout> | null = null
+        const cleanup = (): void => {
+          if (killTimer) clearTimeout(killTimer)
+          child.off('exit', onExit)
+          child.off('error', onError)
+        }
+        const onExit = (): void => {
+          cleanup()
+          resolveTermination()
+        }
+        const onError = (error: Error): void => {
+          cleanup()
+          rejectTermination(error)
+        }
+        child.once('exit', onExit)
+        child.once('error', onError)
+        if (child.exitCode !== null || child.signalCode !== null) {
+          onExit()
+          return
+        }
+        if (!child.kill()) {
+          cleanup()
+          rejectTermination(new Error(`Could not terminate command helper ${child.pid}`))
+          return
+        }
+        killTimer = setTimeout(() => {
+          cleanup()
+          rejectTermination(new Error(`Command helper ${child.pid} did not terminate`))
+        }, 2_000)
+      })
+    }
     const terminate = (kind: Exclude<CommandGradeExecution['kind'], 'exit'>): void => {
       if (infrastructureFailure) return
       infrastructureFailure = kind
-      if (!child.pid) return
-      terminating = terminateProcessTree(child.pid, { detachedGroup: process.platform !== 'win32' })
-        .catch((error) => {
+      if (!child.pid) {
+        finish({ kind, stdout, stderr })
+        return
+      }
+      terminating = (async () => {
+        try {
+          await terminateOwnedCommand()
+          if (windowsStatusPath) await rm(windowsStatusPath, { force: true }).catch(() => {})
+          finish({ kind, stdout, stderr })
+        } catch (error) {
           terminationError = error instanceof Error ? error : new Error(String(error))
-          if (!settled && process.platform !== 'win32') {
-            settled = true
-            clearTimeout(timeout)
-            resolveResult({ kind: 'cleanup-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}${terminationError.message}` })
-          }
-        })
+          if (windowsStatusPath) await rm(windowsStatusPath, { force: true }).catch(() => {})
+          finish({ kind: 'cleanup-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}${terminationError.message}` })
+        }
+      })()
     }
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8')
@@ -482,13 +531,10 @@ async function runCommandGrader(
     const timeout = setTimeout(() => terminate('timeout'), grader.timeoutMs ?? 60_000)
     child.on('close', async (code, signal) => {
       if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      if (terminating) await terminating
-      // The Windows helper owns its target in a kill-on-close Job Object. Once
-      // the helper itself has closed, the OS has closed that job and killed all
-      // descendants even if taskkill raced with helper exit.
-      if (process.platform === 'win32' && terminating) terminationError = null
+      if (terminating) {
+        await terminating
+        return
+      }
       if (windowsStatusPath && (terminationError || infrastructureFailure)) {
         await rm(windowsStatusPath, { force: true }).catch(() => {})
       }
@@ -500,22 +546,22 @@ async function runCommandGrader(
         }
       }
       if (terminationError) {
-        resolveResult({ kind: 'cleanup-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}${terminationError.message}` })
+        finish({ kind: 'cleanup-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}${terminationError.message}` })
       } else if (infrastructureFailure) {
-        resolveResult({ kind: infrastructureFailure, stdout, stderr })
+        finish({ kind: infrastructureFailure, stdout, stderr })
       } else if (windowsStatusPath) {
         const status = objectValue(JSON.parse(await readFile(windowsStatusPath, 'utf8').catch(() => '{}')))
         await rm(windowsStatusPath, { force: true }).catch(() => {})
         if (status?.kind === 'exit' && Number.isInteger(status.exitCode)) {
-          resolveResult({ kind: 'exit', exitCode: status.exitCode as number, stdout, stderr })
+          finish({ kind: 'exit', exitCode: status.exitCode as number, stdout, stderr })
         } else {
           const detail = typeof status?.message === 'string' ? status.message : 'Windows command job did not report a terminal status'
-          resolveResult({ kind: 'spawn-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}${detail}` })
+          finish({ kind: 'spawn-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}${detail}` })
         }
       } else if (typeof code === 'number') {
-        resolveResult({ kind: 'exit', exitCode: code, stdout, stderr })
+        finish({ kind: 'exit', exitCode: code, stdout, stderr })
       } else {
-        resolveResult({ kind: 'spawn-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}process exited by signal ${signal ?? 'unknown'}` })
+        finish({ kind: 'spawn-error', stdout, stderr: `${stderr}${stderr ? '\n' : ''}process exited by signal ${signal ?? 'unknown'}` })
       }
     })
   })

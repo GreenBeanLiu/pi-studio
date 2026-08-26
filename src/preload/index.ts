@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type { LlmProfileSavePayload, SettingsSaveInput } from '../shared/contracts'
 import type {
   AgentRuntimeSnapshot,
@@ -363,11 +362,8 @@ const api = {
 } satisfies DesktopApi
 
 if (process.contextIsolated) {
-  contextBridge.exposeInMainWorld('electron', electronAPI)
   contextBridge.exposeInMainWorld('api', api)
 } else {
-  // @ts-ignore -- Electron fallback when context isolation is disabled.
-  window.electron = electronAPI
   // @ts-ignore -- Electron fallback when context isolation is disabled.
   window.api = api
 }

@@ -188,8 +188,10 @@ function createWindow(): void {
     webPreferences: {
       // ESM 构建下 electron-vite 的 preload 产物是 index.mjs
       preload: join(import.meta.dirname, '../preload/index.mjs'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
     },
   })
 

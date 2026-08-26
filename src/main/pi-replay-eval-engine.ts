@@ -1,6 +1,7 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import {
   createAssistantMessageEventStream,
+  InMemoryCredentialStore,
   type AssistantMessageEvent,
   type Model,
   type StreamFunction,
@@ -267,6 +268,8 @@ export class PiReplayEvalEngine implements EvalEngine {
     const unsupported = toolNames.filter((name) => !BUILTIN_TOOLS.has(name))
     if (unsupported.length) throw new Error(`recording uses unsupported replay tools: ${unsupported.join(', ')}`)
     const modelRuntime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: null,
       allowModelNetwork: false,
       refreshOnCreate: false,
     })
