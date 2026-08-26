@@ -47,8 +47,9 @@ describe('persistence', () => {
   // 索引坏了丢的只是「能找回旧会话」,不该让应用起不来。
   it('treats a missing or corrupt file as an empty index', () => {
     expect(new AcpSessionStore(join(dir, 'nope.json')).list('/w')).toEqual([])
-    writeFileSync(file.replace('nested/', ''), 'not json at all', 'utf8')
-    expect(new AcpSessionStore(file.replace('nested/', '')).list('/w')).toEqual([])
+    const corruptFile = join(dir, 'acp-sessions.json')
+    writeFileSync(corruptFile, 'not json at all', 'utf8')
+    expect(new AcpSessionStore(corruptFile).list('/w')).toEqual([])
   })
 
   it('keeps writing after a write failure instead of throwing', () => {

@@ -15,11 +15,13 @@ Pi session files, the selected workspace, Docker, and remote integrations.
 | `userData/security-policies.json` | Default/workspace command and write policies | Yes | No |
 | `userData/pi-agent/sessions/**` | Pi conversation JSONL and session metadata | Yes; Pi is source of truth | Index only, do not duplicate full messages |
 | `userData/pi-agent/models.json` | Generated provider/model override | Yes; generated file | No |
+| `userData/pi-agent/acp-sessions.json` | Minimal external-agent session index needed to resume ACP conversations | Yes | No |
 | `userData/pi-agent/shared-memory.sqlite3` | Cross-agent shared memory with an FTS5 index | No | Current local source of truth |
 | `userData/pi-agent/shared-memory.json` | First-run import source for shared memory | Yes, until imported | Imported once |
 | `userData/pi-agent/shared-memory.snapshot.json` | Read-only mirror for sandboxed agents that cannot reach 127.0.0.1 | Regenerable | No |
 | `userData/pi-agent/shared-memory.connection.json` | Local memory service port and bearer token | Regenerable; removed on quit | No |
 | `userData/logs/**` | Application diagnostics | Yes, with retention limit | No |
+| `userData/backups/YYYY-MM-DD/**` | Daily startup snapshots of critical configuration and SQLite state, with SHA-256 manifest; newest seven retained | Yes | No |
 | `userData/sandbox/**` | Generated Dockerfile and RPC shim | Regenerable | No |
 | `<workspace>/.pi-studio/memory.md` | Workspace memory maintained with the project | Yes | No |
 | `<workspace>/.pi-studio/articles/**` | Exported Markdown/HTML article artifacts | Yes | Metadata only |
@@ -89,6 +91,12 @@ account-owned rows before unlinking a device, preserving the ownership invariant
 
 Do not put API keys, AppSecrets, access tokens, full Pi JSONL sessions, generated image bytes,
 or Docker images in PostgreSQL.
+
+Before local databases are opened, startup creates at most one backup per UTC day under
+`userData/backups/YYYY-MM-DD`. The snapshot includes configuration, workflow state, shared memory,
+and any SQLite WAL/SHM sidecars that exist. `manifest.json` records byte sizes and SHA-256 hashes.
+The newest seven daily snapshots are retained. Pi conversation JSONL, generated media, logs, and
+regenerable connection files are intentionally excluded to keep startup bounded.
 
 ## Repository boundary
 

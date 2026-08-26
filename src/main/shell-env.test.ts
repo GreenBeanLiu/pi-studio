@@ -1,4 +1,3 @@
-import { delimiter } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   INHERITED_ENV_KEYS,
@@ -13,6 +12,8 @@ import {
   userPath,
   type ShellPathDependencies,
 } from './shell-env'
+
+const PATH_DELIMITER = ':'
 
 function deps(overrides: Partial<ShellPathDependencies> = {}): ShellPathDependencies {
   return {
@@ -44,16 +45,16 @@ describe('computeUserPath', () => {
   // spawn('npx') 直接 ENOENT,而调用方只会看到「连接断了」。
   it('adds Homebrew even when the login shell cannot be asked', () => {
     const path = computeUserPath(deps())
-    expect(path.split(delimiter)).toContain('/opt/homebrew/bin')
+    expect(path.split(PATH_DELIMITER)).toContain('/opt/homebrew/bin')
     // 原有的系统目录不能丢
-    expect(path.split(delimiter)).toContain('/usr/bin')
+    expect(path.split(PATH_DELIMITER)).toContain('/usr/bin')
   })
 
   it('prefers what the login shell reports', () => {
     const path = computeUserPath(
       deps({ readLoginShellPath: () => '/Users/me/.nvm/versions/node/v22/bin:/usr/bin' }),
     )
-    expect(path.split(delimiter)[0]).toBe('/Users/me/.nvm/versions/node/v22/bin')
+    expect(path.split(PATH_DELIMITER)[0]).toBe('/Users/me/.nvm/versions/node/v22/bin')
   })
 
   it('asks the shell named in SHELL', () => {
@@ -68,7 +69,7 @@ describe('computeUserPath', () => {
     const readLoginShellPath = vi.fn(() => '/from/default/shell')
     const path = computeUserPath(deps({ env: { PATH: '/usr/bin' }, readLoginShellPath }))
     expect(readLoginShellPath).toHaveBeenCalledWith('/bin/zsh')
-    expect(path.split(delimiter)[0]).toBe('/from/default/shell')
+    expect(path.split(PATH_DELIMITER)[0]).toBe('/from/default/shell')
   })
 
   it('also recovers the proxy when SHELL is unset', () => {
@@ -88,12 +89,12 @@ describe('computeUserPath', () => {
       }),
     )
     // 查 PATH 这件事绝不能把打开工作区搞崩
-    expect(path.split(delimiter)).toContain('/opt/homebrew/bin')
+    expect(path.split(PATH_DELIMITER)).toContain('/opt/homebrew/bin')
   })
 
   it('falls back cleanly when the shell reports nothing', () => {
     const path = computeUserPath(deps({ readLoginShellPath: () => null }))
-    expect(path.split(delimiter)).toEqual(
+    expect(path.split(PATH_DELIMITER)).toEqual(
       expect.arrayContaining(['/usr/bin', '/opt/homebrew/bin', '/Users/me/.local/bin']),
     )
   })
@@ -109,7 +110,7 @@ describe('computeUserPath', () => {
     const path = computeUserPath(
       deps({ readLoginShellPath: () => '/opt/homebrew/bin:/usr/bin:/opt/homebrew/bin' }),
     )
-    const entries = path.split(delimiter)
+    const entries = path.split(PATH_DELIMITER)
     expect(new Set(entries).size).toBe(entries.length)
   })
 })
@@ -223,7 +224,7 @@ describe('userShellEnv', () => {
         readLoginShellVars: () => ({ HTTPS_PROXY: 'http://127.0.0.1:7890' }),
       }),
     )
-    expect(patch.PATH.split(delimiter)).toContain('/opt/homebrew/bin')
+    expect(patch.PATH.split(PATH_DELIMITER)).toContain('/opt/homebrew/bin')
     expect(patch.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
   })
 })
