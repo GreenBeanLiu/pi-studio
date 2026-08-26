@@ -180,12 +180,10 @@ const useStyles = createStyles(({ token, css }) => ({
 export default function SettingsModal({
   onClose,
   onExportDiagnostics,
-  diagnosticsDisabled,
   onSandboxToggled,
 }: {
   onClose: () => void
   onExportDiagnostics?: () => void
-  diagnosticsDisabled?: boolean
   /** 沙箱开关变化且有工作区在开时调用 —— 旧 agent 还跑在旧模式里,需要重启工作区 */
   onSandboxToggled?: () => void
 }) {
@@ -1176,7 +1174,7 @@ export default function SettingsModal({
                 <span>诊断包</span>
                 <Button
                   size="small"
-                  disabled={diagnosticsDisabled || !onExportDiagnostics}
+                  disabled={!onExportDiagnostics}
                   onClick={onExportDiagnostics}
                 >
                   导出

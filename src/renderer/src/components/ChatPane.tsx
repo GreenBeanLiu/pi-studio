@@ -47,6 +47,7 @@ import {
   type UserMessage,
   type ToolCall,
 } from '../lib/api'
+import { diagnosticFileName, sanitizeForDiagnostics } from '../lib/diagnostics-export'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 import { type ModelRoute } from '../../../shared/model-route'
 import { buildModelChip, buildModelMenuGroups } from './model-menu'
@@ -1332,10 +1333,6 @@ function textOf(content: string | { type: string; text?: string }[]): string {
     .join('')
 }
 
-function truncateString(value: string): string {
-  return value.length > 4000 ? `${value.slice(0, 4000)}\n...[truncated ${value.length - 4000} chars]` : value
-}
-
 function shortId(): string {
   return Math.random().toString(36).slice(2, 8)
 }
@@ -1491,39 +1488,6 @@ function buildMemorySuggestion(
     createdAt,
     content: lines.join('\n'),
   }
-}
-
-function sanitizeForDiagnostics(value: unknown, depth = 0): unknown {
-  if (depth > 8) return '[max depth]'
-  if (value == null) return value
-  if (typeof value === 'string') return truncateString(value)
-  if (typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map((item) => sanitizeForDiagnostics(item, depth + 1))
-
-  const output: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const normalized = key.toLowerCase()
-    if (
-      normalized === 'data' ||
-      normalized.includes('apikey') ||
-      normalized.includes('api_key') ||
-      normalized.includes('authorization') ||
-      normalized.includes('password') ||
-      normalized.includes('secret') ||
-      normalized.includes('token')
-    ) {
-      output[key] = '[redacted]'
-      continue
-    }
-    output[key] = sanitizeForDiagnostics(item, depth + 1)
-  }
-  return output
-}
-
-function diagnosticFileName(workspaceName: string): string {
-  const safeName = workspaceName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 48) || 'workspace'
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  return `pi-studio-diagnostics-${safeName}-${stamp}.json`
 }
 
 function gitStatusLabel(file: GitChangedFile): string {

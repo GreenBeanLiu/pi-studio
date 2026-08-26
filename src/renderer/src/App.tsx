@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { message as antdMessage } from 'antd'
 import { createStyles } from 'antd-style'
 import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
@@ -19,6 +20,7 @@ import {
   type SandboxMode,
   type Workspace,
 } from './lib/api'
+import { exportGlobalDiagnostics } from './lib/diagnostics-export'
 
 type UpdateState =
   | { status: 'idle' }
@@ -225,6 +227,16 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
     if (!workspace && !opening) setShowWorkspacePicker(true)
   }
 
+  const exportStartupDiagnostics = useCallback(async () => {
+    try {
+      const result = await exportGlobalDiagnostics(api)
+      if ('error' in result) antdMessage.error(result.error)
+      else if ('ok' in result) antdMessage.success('诊断包已导出')
+    } catch (error) {
+      antdMessage.error(error instanceof Error ? error.message : '导出诊断包失败')
+    }
+  }, [])
+
   // 动作全部复用页面已有的 command,不另写一套业务逻辑
   useAppShortcuts(
     {
@@ -315,8 +327,7 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
       {showSettings && (
         <SettingsModal
           onClose={closeSettings}
-          onExportDiagnostics={diagnosticsExporter ?? undefined}
-          diagnosticsDisabled={!workspace}
+          onExportDiagnostics={diagnosticsExporter ?? exportStartupDiagnostics}
           onSandboxToggled={() => void restartAgent()}
         />
       )}
