@@ -590,6 +590,19 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     return this.requirePi('设置追问模式').setFollowUpMode(mode)
   }
 
+  /**
+   * 切换外部 agent 的权限模式。
+   *
+   * 这是 ACP 会话上唯一能调的权限旋钮 —— 宿主的沙箱管不住外部 agent,
+   * 只能让它自己少放行或多放行。pi 会话没有档位可切,靠沙箱。
+   */
+  async setPermissionMode(modeId: string): Promise<void> {
+    const entry = this.requireEntry()
+    const set = entry.client.setPermissionMode
+    if (!set) throw unsupportedByBackend(entry, '切换权限模式')
+    await set.call(entry.client, modeId)
+  }
+
   setAutoCompaction(enabled: boolean): ReturnType<RpcClient['setAutoCompaction']> {
     return this.requirePi('设置自动压缩').setAutoCompaction(enabled)
   }

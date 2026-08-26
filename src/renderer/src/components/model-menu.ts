@@ -9,6 +9,8 @@ import {
 export type ModelMenuEntry = {
   key: string
   label: string
+  /** 行尾的弱化信息:上下文窗口。原来要悬停开第三层浮层才看得到。 */
+  meta?: string
   info: ModelInfo
 }
 
@@ -24,10 +26,35 @@ export type ModelMenuInput = {
   favoriteModels: readonly ModelRoute[]
   providerLabels: Record<string, string>
   currentModel: { provider: string; id: string } | null
+  /** 搜索词。非空时忽略收藏过滤和每组上限 —— 用户明确在找东西。 */
+  query?: string
 }
 
 /** 每组在没配收藏时最多显示几个。registry 里的历史注册太多,全列会刷屏。 */
 const FALLBACK_PER_PROVIDER = 8
+
+function formatTokens(n?: number): string | undefined {
+  if (!n) return undefined
+  return n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
+}
+
+function matches(model: ModelInfo, groupLabel: string, needle: string): boolean {
+  const haystack = [model.id, model.name, model.provider, groupLabel]
+    .filter((value): value is string => !!value)
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(needle)
+}
+
+function toEntry(model: ModelInfo, isAcpGroup: boolean): ModelMenuEntry {
+  return {
+    key: `${model.provider}::${model.id}`,
+    // ACP 条目用 registry 给的展示名(Codex / Claude Agent),比 id 好认
+    label: isAcpGroup ? (model.name ?? model.id) : model.id,
+    meta: formatTokens(model.contextWindow),
+    info: model,
+  }
+}
 
 /**
  * 模型选择器的分组。
@@ -35,9 +62,11 @@ const FALLBACK_PER_PROVIDER = 8
  * 配了「模型切换列表」就只显示列表里的模型 —— 没被点名的 provider 组整组消失
  * (registry 里的历史注册/本地直连残留不再刷屏);完全没配时才回退每组最新 8 个。
  *
- * 外部 ACP agent 那一组是例外,见下面。
+ * 两个例外:搜索时和外部 agent 组,见下面。
  */
 export function buildModelMenuGroups(input: ModelMenuInput): ModelMenuGroup[] {
+  const needle = input.query?.trim().toLowerCase() ?? ''
+  const searching = needle.length > 0
   const favSet = new Set(
     input.favoriteModels.map((route) => favoriteRouteKey(route.provider, route.model)),
   )
@@ -51,22 +80,24 @@ export function buildModelMenuGroups(input: ModelMenuInput): ModelMenuGroup[] {
 
   return [...byProvider.entries()]
     .map(([provider, list]): ModelMenuGroup => {
+      const isAcpGroup = isAcpModelRoute(provider)
+      const label = isAcpGroup ? ACP_PROVIDER_LABEL : (input.providerLabels[provider] ?? provider)
+
+      // 搜索时不过滤也不截断:用户明确在找东西,藏起来只会让他以为没有。
+      if (searching) {
+        return {
+          type: 'group',
+          label,
+          provider,
+          children: list.filter((m) => matches(m, label, needle)).map((m) => toEntry(m, isAcpGroup)),
+        }
+      }
+
       // 外部 agent 不参与收藏过滤:那套是给 registry 里成百上千个模型防刷屏用的,
       // ACP 一共就十来个,按它过滤会让整组消失 —— 用户配过收藏就再也看不到
       // Claude Code 和 Codex。
-      const isAcpGroup = isAcpModelRoute(provider)
       if (isAcpGroup) {
-        return {
-          type: 'group',
-          label: ACP_PROVIDER_LABEL,
-          provider,
-          // registry 给的展示名(Codex / Claude Agent)比 id 好认
-          children: list.map((model) => ({
-            key: `${model.provider}::${model.id}`,
-            label: model.name ?? model.id,
-            info: model,
-          })),
-        }
+        return { type: 'group', label, provider, children: list.map((m) => toEntry(m, true)) }
       }
 
       const providerFavorites = list.filter((model) =>
@@ -80,16 +111,40 @@ export function buildModelMenuGroups(input: ModelMenuInput): ModelMenuGroup[] {
         const current = list.find((model) => model.id === input.currentModel!.id)
         if (current && !shown.includes(current)) shown = [current, ...shown]
       }
-      return {
-        type: 'group',
-        label: input.providerLabels[provider] ?? provider,
-        provider,
-        children: shown.map((model) => ({
-          key: `${model.provider}::${model.id}`,
-          label: model.id,
-          info: model,
-        })),
-      }
+      return { type: 'group', label, provider, children: shown.map((m) => toEntry(m, false)) }
     })
     .filter((group) => group.children.length > 0)
+}
+
+/** chip 上显示什么。原来是一串 `·` 拼接,越拼越长。 */
+export type ModelChipView = {
+  /** 主标题:agent 名或模型 id。 */
+  name: string
+  /** 副标题:外部 agent 实际在跑的模型,pi 会话没有。 */
+  sub?: string
+  /** 推理档,做成小徽标。 */
+  badge?: string
+}
+
+export function buildModelChip(input: {
+  currentModel: { provider: string; id: string } | null
+  models: readonly ModelInfo[]
+  backendModel: { id: string; name?: string } | null
+  thinkingLabel: string
+  thinkingEnabled: boolean
+}): ModelChipView {
+  const { currentModel } = input
+  if (!currentModel) return { name: '默认模型' }
+  const known = input.models.find(
+    (model) => model.provider === currentModel.provider && model.id === currentModel.id,
+  )
+  const name = isAcpModelRoute(currentModel.provider)
+    ? (known?.name ?? currentModel.id)
+    : currentModel.id
+  return {
+    name,
+    // 后端自己报的模型才显示。问模型本人不可信 —— 它只知道训练时的身份。
+    sub: input.backendModel ? (input.backendModel.name ?? input.backendModel.id) : undefined,
+    badge: input.thinkingEnabled ? input.thinkingLabel : undefined,
+  }
 }

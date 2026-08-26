@@ -910,6 +910,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('pi:setFollowUpMode', (_e, mode: unknown) =>
     piClientManager.setFollowUpMode(oneOf(mode, QUEUE_MODES, '排队模式')),
   )
+  ipcMain.handle('pi:setPermissionMode', (_e, modeId: unknown) =>
+    piClientManager.setPermissionMode(requiredString(modeId, '权限模式')),
+  )
   ipcMain.handle('pi:setAutoCompaction', (_e, enabled: unknown) => {
     if (typeof enabled !== 'boolean') throw new TypeError('自动压缩开关无效')
     return piClientManager.setAutoCompaction(enabled)

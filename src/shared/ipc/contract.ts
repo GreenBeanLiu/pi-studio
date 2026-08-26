@@ -144,6 +144,8 @@ export type DesktopApi = {
     setSteeringMode: (mode: QueueMode) => Promise<void>
     setFollowUpMode: (mode: QueueMode) => Promise<void>
     setAutoCompaction: (enabled: boolean) => Promise<void>
+    /** 切换外部 agent 的权限模式(ACP 的 session/set_mode)。pi 会话上会报错。 */
+    setPermissionMode: (modeId: string) => Promise<void>
     compact: () => Promise<unknown>
     onEvent: (cb: (event: PiRuntimeEvent) => void) => () => void
     onStatus: (cb: (event: AgentStatusEvent) => void) => () => void
@@ -796,6 +798,17 @@ export type PiRuntimeCapabilities = {
    * 是不可信的 —— 它只知道训练时的身份,不知道被部署成哪个版本。
    */
   model?: { id: string; name?: string } | null
+  /**
+   * 后端的权限模式:当前档位和可选档位。
+   *
+   * 只有外部 ACP agent 有 —— 它自己决定什么操作要不要问,档位由它上报
+   * (codex 三档、claude 六档,各家不一样)。pi 那边是 null:它的权限靠沙箱,
+   * 没有可切换的档位。
+   */
+  permissionModes?: {
+    currentId: string | null
+    options: Array<{ id: string; name: string; description?: string }>
+  } | null
   features: {
     listSessions: boolean
     resume: boolean

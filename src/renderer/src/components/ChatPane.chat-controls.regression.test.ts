@@ -47,3 +47,39 @@ describe('chat pane controls', () => {
     expect(chatPane).toContain('.chat-msg-row:hover &')
   })
 })
+
+// 2026-08-26:改推理深度原来要「点 chip → 在模型列表里找到当前那一行 → 悬停 →
+// 右侧二级浮层」。面板本身已经是一层浮层,再套一层 hover 浮层,鼠标走偏就全关;
+// 而且这些设置跟「选哪个模型」根本是两回事。
+describe('会话参数不能再埋在模型行的悬停浮层里', () => {
+  it('没有挂在模型行上的二级 Popover 了', () => {
+    expect(chatPane).not.toContain('modelHoverPanel')
+    const panel = chatPane.slice(chatPane.indexOf('const paramsPanel = ('))
+    const list = panel.slice(0, panel.indexOf('推理深度'))
+    // 模型行是直接的 button,不再被 Popover 包着
+    expect(list).not.toContain('<Popover')
+  })
+
+  it('推理深度和权限模式平铺在面板里', () => {
+    const panel = chatPane.slice(
+      chatPane.indexOf('const paramsPanel = ('),
+      chatPane.indexOf('const sessionExportPanel'),
+    )
+    expect(panel).toContain('推理深度')
+    expect(panel).toContain('权限模式')
+    expect(panel).toContain('handlePermissionMode')
+  })
+
+  it('模型列表有搜索', () => {
+    const panel = chatPane.slice(chatPane.indexOf('const paramsPanel = ('))
+    expect(panel.slice(0, 600)).toContain('搜索模型或 agent')
+    expect(chatPane).toContain('query: modelQuery')
+  })
+
+  // 会跳过审批的档位要标出来:外部 agent 不走宿主的 fs/terminal 通道,
+  // 权限请求是唯一能拦住它的地方,关掉它等于全放行。
+  it('危险档位有标记', () => {
+    const panel = chatPane.slice(chatPane.indexOf('const paramsPanel = ('))
+    expect(panel).toContain('mode.risky')
+  })
+})

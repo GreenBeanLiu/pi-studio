@@ -1,6 +1,6 @@
-import { memo, Fragment, useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
 import { createStyles } from 'antd-style'
-import { Spin, Popover, Segmented, Switch, Button, message as antdMessage, Modal, Tabs, Empty } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button, message as antdMessage, Modal, Tabs, Empty, Input } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -24,6 +24,7 @@ import {
   Activity,
   Wrench,
   Copy,
+  Search,
 } from 'lucide-react'
 import {
   api,
@@ -48,7 +49,8 @@ import {
 } from '../lib/api'
 import ToolCallCard, { type ToolExecutionState } from './ToolCallCard'
 import { type ModelRoute } from '../../../shared/model-route'
-import { buildModelMenuGroups } from './model-menu'
+import { buildModelChip, buildModelMenuGroups } from './model-menu'
+import { acpModeLabel, describeAcpModes } from '../../../shared/acp-modes'
 import { DEFAULT_THINKING_LEVEL } from '../../../shared/agent-defaults'
 
 type AgentIssue = Exclude<AgentStatusEvent, { status: 'started' }>
@@ -1120,32 +1122,98 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
-  modelHoverPanel: css`
-    width: 252px;
+  modelChipName: css`
+    font-weight: 500;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  modelChipSub: css`
+    color: ${token.colorTextTertiary};
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  modelChipBadge: css`
+    background: ${token.colorFillTertiary};
+    color: ${token.colorTextSecondary};
+    border-radius: 4px;
+    padding: 0 5px;
+    font-size: 10px;
+    line-height: 15px;
+  `,
+
+  modelRowMeta: css`
+    margin-left: auto;
+    font-size: 11px;
+    color: ${token.colorTextQuaternary};
+    flex: none;
+  `,
+
+  modeList: css`
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    font-family: ${token.fontFamily};
+    gap: 1px;
   `,
 
-  modelSpecGrid: css`
-    display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
-    column-gap: 12px;
-    row-gap: 7px;
-    align-items: baseline;
+  modeRow: css`
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 5px 6px;
+    border: none;
+    background: transparent;
+    border-radius: 5px;
+    cursor: pointer;
+    text-align: left;
     font-size: 12px;
-    line-height: 1.45;
-  `,
-
-  modelSpecLabel: css`
-    color: ${token.colorTextTertiary};
-  `,
-
-  modelSpecValue: css`
-    min-width: 0;
     color: ${token.colorText};
-    overflow-wrap: anywhere;
+    font-family: ${token.fontFamily};
+
+    &:hover {
+      background: ${token.colorFillTertiary};
+    }
+  `,
+
+  modeHint: css`
+    color: ${token.colorTextTertiary};
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  modeRiskTag: css`
+    margin-left: auto;
+    flex: none;
+    font-size: 10px;
+    line-height: 15px;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: ${token.colorWarningBg};
+    color: ${token.colorWarningText};
+  `,
+
+  paramsMoreToggle: css`
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    border: none;
+    background: transparent;
+    padding: 2px 0;
+    cursor: pointer;
+    font-size: 12px;
+    color: ${token.colorTextTertiary};
+    font-family: ${token.fontFamily};
+
+    &:hover {
+      color: ${token.colorText};
+    }
   `,
 
   paramGrid: css`
@@ -1699,6 +1767,9 @@ export default function ChatPane({
   // so it reads the current workspace through a ref.
   const workspaceRef = useRef(workspace)
   workspaceRef.current = workspace
+  const [modelQuery, setModelQuery] = useState('')
+  /** 「更多」那一栏默认收起:插话/排队/自动压缩不是每次对话都要动的。 */
+  const [paramsMoreOpen, setParamsMoreOpen] = useState(false)
   /** 正在切模型。选外部 agent 会起进程,不能让连点变成开一堆。 */
   const switchingModelRef = useRef(false)
   const currentModelRef = useRef(currentModel)
@@ -2641,17 +2712,38 @@ export default function ChatPane({
   // ── Model switcher ───────────────────────────────────────────────
   /** 后端自己上报的当前模型;pi 会话是 null(它的模型在 currentModel 里)。 */
   const backendModel = runtimeCapabilities?.model ?? null
+  /** 外部 agent 的权限档位;pi 会话没有(它的权限靠沙箱)。 */
+  const permissionModes = useMemo(
+    () => describeAcpModes(runtimeCapabilities?.permissionModes?.options),
+    [runtimeCapabilities],
+  )
+  const currentPermissionMode = runtimeCapabilities?.permissionModes?.currentId ?? null
+  /** 当前模型支持推理才显示那一档 —— 原来这个判断藏在 hover 浮层里。 */
+  const thinkingSupported = useMemo(() => {
+    if (!currentModel) return false
+    const known = models.find(
+      (m) => m.provider === currentModel.provider && m.id === currentModel.id,
+    )
+    // 外部 agent 的推理深度由它自己管,宿主的 setThinkingLevel 对它无效
+    return known ? known.reasoning : false
+  }, [currentModel, models])
   const backendModelTitle = backendModel
     ? `模型与参数 · 当前由 ${backendModel.name ?? backendModel.id} 驱动`
     : '模型与参数'
   // 分组规则(收藏过滤、ACP 组豁免)抽在 model-menu.ts 里,那边有测试。
   const modelMenuItems = useMemo(
-    () => buildModelMenuGroups({ models, favoriteModels, providerLabels, currentModel }),
-    [models, favoriteModels, providerLabels, currentModel],
+    () => buildModelMenuGroups({ models, favoriteModels, providerLabels, currentModel, query: modelQuery }),
+    [models, favoriteModels, providerLabels, currentModel, modelQuery],
   )
 
-  /** hover 模型行时展示的参数卡:字段来自 pi registry,缺啥就不显示啥。 */
-  function modelParamsTooltip(m: ModelInfo): ReactNode {
+  /**
+   * 模型规格,给行的原生 title 用。
+   *
+   * 原来这是一张 hover 卡片,挂在模型行上的第二层 Popover 里 —— 面板本身已经是
+   * 一层浮层了,再套一层 hover 浮层,鼠标走偏就全关。改成原生 title:
+   * 常看的上下文窗口已经平铺在行尾,完整规格降级成 tooltip。
+   */
+  function modelSpecText(m: ModelInfo): string {
     const fmtTokens = (n?: number) =>
       !n ? null : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
     const cost = m.cost ?? {}
@@ -2674,21 +2766,8 @@ export default function ChatPane({
     if (maxOut) rows.push(['最大输出', `${maxOut} tokens`])
     rows.push(['推理', m.reasoning ? '支持' : '不支持'])
     if (m.input?.length) rows.push(['输入', m.input.join(' + ')])
-    if (hasCost)
-      rows.push([
-        '价格/M',
-        `入 $${cost.input ?? 0} · 出 $${cost.output ?? 0}`,
-      ])
-    return (
-      <div className={styles.modelSpecGrid}>
-        {rows.map(([k, v]) => (
-          <Fragment key={k}>
-            <span className={styles.modelSpecLabel}>{k}</span>
-            <span className={styles.modelSpecValue}>{v}</span>
-          </Fragment>
-        ))}
-      </div>
-    )
+    if (hasCost) rows.push(['价格/M', `入 $${cost.input ?? 0} · 出 $${cost.output ?? 0}`])
+    return rows.map(([k, v]) => `${k}:${v}`).join('\n')
   }
 
   // ── Thinking level ───────────────────────────────────────────────
@@ -2702,6 +2781,19 @@ export default function ChatPane({
   ]
   const thinkingLabel = THINKING_LEVELS.find((t) => t.key === thinking)?.label ?? '关闭'
 
+  const modelChip = useMemo(
+    () =>
+      buildModelChip({
+        currentModel,
+        models,
+        backendModel,
+        thinkingLabel,
+        thinkingEnabled: thinkingSupported && thinking !== 'off',
+      }),
+    [currentModel, models, backendModel, thinkingLabel, thinkingSupported, thinking],
+  )
+
+
   async function handleThinkingSelect(level: ThinkingLevel) {
     try {
       await api.pi.setThinkingLevel(level)
@@ -2711,6 +2803,15 @@ export default function ChatPane({
     }
   }
 
+
+  async function handlePermissionMode(modeId: string) {
+    try {
+      await api.pi.setPermissionMode(modeId)
+      await refreshBackendState()
+    } catch (err) {
+      setError((err as Error).message ?? '切换权限模式失败')
+    }
+  }
 
   async function pickModel(key: string) {
     // 防重入。选外部 agent 会真的起一个进程,连点几下就攒下几个 ——
@@ -2755,121 +2856,145 @@ export default function ChatPane({
     }
   }
 
-  /** hover 模型行的浮层:规格 + 会话参数控制。
-   *  参数控制只挂在「当前使用的模型」上,且按模型能力裁剪(推理深度只给 reasoning 模型)。 */
-  function modelHoverPanel(m: ModelInfo, active: boolean): ReactNode {
-    return (
-      <div className={styles.modelHoverPanel}>
-        {modelParamsTooltip(m)}
-        {active ? (
-          <>
-            {m.reasoning && (
-              <div>
-                <div className={styles.paramLabel}>推理深度</div>
-                <Segmented
-                  size="small"
-                  block
-                  value={thinking}
-                  onChange={(v) => handleThinkingSelect(v as ThinkingLevel)}
-                  options={THINKING_LEVELS.map((t) => ({ label: t.label, value: t.key }))}
-                />
-              </div>
-            )}
-            <div className={styles.paramGrid}>
-              <div style={{ flex: 1 }}>
-                <div className={styles.paramLabel}>插话模式</div>
-                <Segmented
-                  size="small"
-                  block
-                  value={steeringMode}
-                  onChange={(v) => handleSteering(v as QueueMode)}
-                  options={[
-                    { label: '全部', value: 'all' },
-                    { label: '逐条', value: 'one-at-a-time' },
-                  ]}
-                />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div className={styles.paramLabel}>排队模式</div>
-                <Segmented
-                  size="small"
-                  block
-                  value={followUpMode}
-                  onChange={(v) => handleFollowUp(v as QueueMode)}
-                  options={[
-                    { label: '全部', value: 'all' },
-                    { label: '逐条', value: 'one-at-a-time' },
-                  ]}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className={styles.paramLabel} style={{ marginBottom: 0 }}>自动压缩上下文</span>
-              <Switch size="small" checked={autoCompaction} onChange={handleAutoCompaction} />
-            </div>
-            <Button
-              size="small"
-              block
-              loading={compacting}
-              disabled={runtimeCapabilities?.features.compact === false}
-              title={
-                runtimeCapabilities?.features.compact === false
-                  ? '当前 Pi Runtime 不支持上下文压缩'
-                  : undefined
-              }
-              onClick={handleCompact}
-            >
-              立即压缩上下文
-            </Button>
-          </>
-        ) : (
-          <div className={styles.paramHint}>点击切换到此模型{m.reasoning ? ',可调推理深度' : ''}</div>
-        )}
-      </div>
-    )
-  }
-
   const paramsPanel = (
     <div className={styles.paramsPanel}>
-      <div>
-        <div className={styles.paramLabel}>模型</div>
-        <div className={styles.modelList}>
-          {modelMenuItems.length === 0 && <div className={styles.paramHint}>暂无可选模型</div>}
-          {/* 服务商 → 模型 两级展示:同名模型(不同网关)靠分组区分;
-              hover 行 → 规格 + 会话参数(当前模型才有,且按能力裁剪) */}
-          {modelMenuItems.map((group) => (
-            <div key={group.provider}>
-              <div className={styles.modelGroupLabel}>{group.label}</div>
-              {group.children.map((m) => {
-                const active = !!(
-                  currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
-                )
-                return (
-                  <Popover
-                    key={m.key}
-                    content={modelHoverPanel(m.info, active)}
-                    placement="rightTop"
-                    trigger="hover"
-                    mouseEnterDelay={0.15}
-                    classNames={{ root: styles.modelInfoPopover }}
-                  >
-                    <button
-                      className={cx(styles.modelRow, active && styles.modelRowActive)}
-                      onClick={() => pickModel(m.key)}
-                    >
-                      <span className={styles.modelCheckSlot}>
-                        {active && <Check size={13} />}
-                      </span>
-                      <span className={styles.modelRowLabel}>{m.label}</span>
-                      {m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
-                    </button>
-                  </Popover>
-                )
-              })}
-            </div>
-          ))}
-        </div>
+      <Input
+        size="small"
+        allowClear
+        prefix={<Search size={12} />}
+        placeholder="搜索模型或 agent"
+        value={modelQuery}
+        onChange={(e) => setModelQuery(e.target.value)}
+      />
+
+      <div className={styles.modelList}>
+        {modelMenuItems.length === 0 && (
+          <div className={styles.paramHint}>{modelQuery.trim() ? '没有匹配的模型' : '暂无可选模型'}</div>
+        )}
+        {modelMenuItems.map((group) => (
+          <div key={group.provider}>
+            <div className={styles.modelGroupLabel}>{group.label}</div>
+            {group.children.map((m) => {
+              const active = !!(
+                currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
+              )
+              return (
+                <button
+                  key={m.key}
+                  className={cx(styles.modelRow, active && styles.modelRowActive)}
+                  onClick={() => pickModel(m.key)}
+                  title={modelSpecText(m.info)}
+                >
+                  <span className={styles.modelCheckSlot}>{active && <Check size={13} />}</span>
+                  <span className={styles.modelRowLabel}>{m.label}</span>
+                  {m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
+                  {m.meta && <span className={styles.modelRowMeta}>{m.meta}</span>}
+                </button>
+              )
+            })}
+          </div>
+        ))}
       </div>
+
+      {/* 会话参数原来埋在「模型列表的当前行的悬停浮层」里 —— 二级 hover 浮层,
+          鼠标走偏就全关,而且这些设置跟选哪个模型根本是两回事。现在平铺。 */}
+      {thinkingSupported && (
+        <div>
+          <div className={styles.paramLabel}>推理深度</div>
+          <Segmented
+            size="small"
+            block
+            value={thinking}
+            onChange={(v) => handleThinkingSelect(v as ThinkingLevel)}
+            options={THINKING_LEVELS.map((t) => ({ label: t.label, value: t.key }))}
+          />
+        </div>
+      )}
+
+      {permissionModes.length > 0 && (
+        <div>
+          <div className={styles.paramLabel}>
+            权限模式
+            <span style={{ color: token.colorTextQuaternary }}> · 外部 agent 自己决定要不要问</span>
+          </div>
+          <div className={styles.modeList}>
+            {permissionModes.map((mode) => {
+              const active = mode.id === currentPermissionMode
+              return (
+                <button
+                  key={mode.id}
+                  className={cx(styles.modeRow, active && styles.modelRowActive)}
+                  onClick={() => handlePermissionMode(mode.id)}
+                  title={mode.description}
+                >
+                  <span className={styles.modelCheckSlot}>{active && <Check size={13} />}</span>
+                  <span className={styles.modelRowLabel}>{acpModeLabel(mode)}</span>
+                  {mode.hint && <span className={styles.modeHint}>{mode.hint}</span>}
+                  {/* 选中这一档等于关掉唯一的控制点:外部 agent 不走宿主的
+                      fs/terminal 通道,权限请求是唯一能拦住它的地方。 */}
+                  {mode.risky && <span className={styles.modeRiskTag}>放行</span>}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      <button className={styles.paramsMoreToggle} onClick={() => setParamsMoreOpen((v) => !v)}>
+        {paramsMoreOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        更多:插话 / 排队 / 自动压缩
+      </button>
+
+      {paramsMoreOpen && (
+        <>
+          <div className={styles.paramGrid}>
+            <div style={{ flex: 1 }}>
+              <div className={styles.paramLabel}>插话模式</div>
+              <Segmented
+                size="small"
+                block
+                value={steeringMode}
+                onChange={(v) => handleSteering(v as QueueMode)}
+                options={[
+                  { label: '全部', value: 'all' },
+                  { label: '逐条', value: 'one-at-a-time' },
+                ]}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className={styles.paramLabel}>排队模式</div>
+              <Segmented
+                size="small"
+                block
+                value={followUpMode}
+                onChange={(v) => handleFollowUp(v as QueueMode)}
+                options={[
+                  { label: '全部', value: 'all' },
+                  { label: '逐条', value: 'one-at-a-time' },
+                ]}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className={styles.paramLabel} style={{ marginBottom: 0 }}>自动压缩上下文</span>
+            <Switch size="small" checked={autoCompaction} onChange={handleAutoCompaction} />
+          </div>
+          <Button
+            size="small"
+            block
+            loading={compacting}
+            disabled={runtimeCapabilities?.features.compact === false}
+            title={
+              runtimeCapabilities?.features.compact === false
+                ? '当前后端不支持上下文压缩'
+                : undefined
+            }
+            onClick={handleCompact}
+          >
+            立即压缩上下文
+          </Button>
+        </>
+      )}
     </div>
   )
 
@@ -3571,15 +3696,15 @@ export default function ChatPane({
                   onOpenChange={setParamsOpen}
                   content={paramsPanel}
                 >
+                  {/* 原来是一串 `·` 拼接:`codex-acp · GPT-5.6-Sol (medium) · 推理:高`,
+                      越拼越长还会把整行挤爆。改成名字 + 弱化的后端模型 + 推理徽标。 */}
                   <button className={styles.modelChip} title={backendModelTitle}>
                     <SlidersHorizontal size={11} />
-                    {currentModel ? currentModel.id : '默认模型'}
-                    {/* 外部 agent 跑的是它自己的模型,问模型本人不可信 —— 这里显示的是
-                        它在 session/new 里上报的那个。pi 会话没有这一段。 */}
-                    {backendModel && (
-                      <span style={{ opacity: 0.6 }}>· {backendModel.name ?? backendModel.id}</span>
+                    <span className={styles.modelChipName}>{modelChip.name}</span>
+                    {modelChip.sub && <span className={styles.modelChipSub}>{modelChip.sub}</span>}
+                    {modelChip.badge && (
+                      <span className={styles.modelChipBadge}>{modelChip.badge}</span>
                     )}
-                    <span style={{ opacity: 0.6 }}>· 推理：{thinkingLabel}</span>
                     <ChevronDown size={11} />
                   </button>
                 </Popover>

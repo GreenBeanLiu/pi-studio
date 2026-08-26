@@ -131,6 +131,29 @@ export function acpCurrentModel(session: unknown): { id: string; name?: string }
   return { id: currentId, name }
 }
 
+/**
+ * session/new 或 session/load 报的权限模式。各家档位不一样也不一样多,
+ * 原样带上去,由界面决定怎么展示。
+ */
+export function acpPermissionModes(
+  session: unknown,
+): PiRuntimeCapabilities['permissionModes'] {
+  const modes = at(session, 'modes')
+  const available = at(modes, 'availableModes')
+  if (!Array.isArray(available) || available.length === 0) return null
+  const options = available
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : '',
+      name: typeof item.name === 'string' ? item.name : '',
+      description: typeof item.description === 'string' ? item.description : undefined,
+    }))
+    .filter((option) => option.id)
+  if (options.length === 0) return null
+  const currentId = at(modes, 'currentModeId')
+  return { currentId: typeof currentId === 'string' && currentId ? currentId : null, options }
+}
+
 export function acpCapabilities(
   agentId: string,
   init: unknown,
@@ -148,6 +171,7 @@ export function acpCapabilities(
     // 会话由外部 agent 自己存,宿主读不到文件。
     sessionFormatVersion: null,
     model: acpCurrentModel(session),
+    permissionModes: acpPermissionModes(session),
     handshake: Object.freeze({ verified: true, state: false, messages: false, commands: false }),
     features: Object.freeze({
       listSessions: presentAt(capabilities, 'sessionCapabilities', 'list'),
@@ -187,14 +211,22 @@ export class AcpConnection implements AgentBackend {
   /** session/load 回放期间为 true:那时的 update 是历史,不该投影成正在跑的一轮。 */
   private replaying = false
 
+  /** 权限档位会变(用户切,或 agent 自己发 current_mode_update),所以 caps 不是常量。 */
+  private caps: PiRuntimeCapabilities
+
+  get capabilities(): PiRuntimeCapabilities {
+    return this.caps
+  }
+
   private constructor(
     private readonly options: AcpConnectionOptions,
     private readonly cwd: string,
-    readonly capabilities: PiRuntimeCapabilities,
+    capabilities: PiRuntimeCapabilities,
     readonly sessionId: string,
     readonly agentInfo: AcpAgentInfo | null,
     readonly modes: AcpSessionModes | null,
   ) {
+    this.caps = capabilities
     this.permissions = new AcpPermissionBridge({
       present: (event) => this.emit(event),
       timeoutMs: options.permissionTimeoutMs,
@@ -393,6 +425,32 @@ export class AcpConnection implements AgentBackend {
     }
   }
 
+  /**
+   * 切换权限模式。
+   *
+   * 这是外部 agent 上唯一能调的权限旋钮 —— 宿主的沙箱管不住它(fs/terminal
+   * 那两条通道它根本不走),能做的就是让它自己少放行或多放行。
+   */
+  async setPermissionMode(modeId: string): Promise<void> {
+    if (this.closed) throw new Error('ACP connection is closed')
+    const modes = this.caps.permissionModes
+    if (!modes?.options.some((option) => option.id === modeId)) {
+      throw new Error(`该 agent 没有「${modeId}」这个权限模式`)
+    }
+    await this.connection!.agent.request('session/set_mode', {
+      sessionId: this.sessionId,
+      modeId,
+    })
+    this.applyModeId(modeId)
+  }
+
+  /** agent 自己也会改档位(current_mode_update),两条路都收到这里。 */
+  private applyModeId(modeId: string): void {
+    const modes = this.caps.permissionModes
+    if (!modes || modes.currentId === modeId) return
+    this.caps = { ...this.caps, permissionModes: { ...modes, currentId: modeId } }
+  }
+
   processId(): number | null {
     return this.child?.pid ?? null
   }
@@ -426,6 +484,11 @@ export class AcpConnection implements AgentBackend {
     // 没有正在进行的一轮就丢掉:agent 有时会在 prompt 之外推
     // available_commands_update 之类的东西,那不属于任何一轮。
     this.updates.push(update as AcpSessionUpdate)
+    // agent 自己也会切档位(比如用户在权限弹窗里选了「永久允许」),
+    // 界面要跟着变,不然显示的还是旧档。
+    if (update.sessionUpdate === 'current_mode_update' && typeof update.currentModeId === 'string') {
+      this.applyModeId(update.currentModeId)
+    }
     // 回放期间只收不投:那是历史,不是正在发生的一轮。
     if (this.replaying) return
     const turn = this.turn

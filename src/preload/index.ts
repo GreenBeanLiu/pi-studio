@@ -53,6 +53,7 @@ const METHODS = {
     'setSteeringMode',
     'setFollowUpMode',
     'setAutoCompaction',
+    'setPermissionMode',
     'compact',
     'getRuntimeSnapshot',
     'getAgentStatusSnapshot',

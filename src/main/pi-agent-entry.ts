@@ -40,6 +40,11 @@ export type AgentBackend = {
    * update 投影出来 —— 恢复会话时界面就靠它。
    */
   conversation(): AgentMessage[] | null
+  /**
+   * 切换权限模式。只有外部 agent 有档位可切 —— 它自己决定什么操作要问,
+   * 宿主的沙箱对它无效。pi 的权限靠沙箱,不实现这个方法。
+   */
+  setPermissionMode?(modeId: string): Promise<void>
   observeProcess(listeners: {
     stderr?: (chunk: Buffer | string) => void
     exit?: (code: number | null, signal: string | null) => void
