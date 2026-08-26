@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { Type, type Static } from '@sinclair/typebox'
 import type { AgentToolResult, ExtensionAPI } from '@earendil-works/pi-coding-agent'
@@ -214,7 +214,7 @@ const text = (body: string): AgentToolResult<{ codexHome: string }> => ({
  * 自己"猜"成 cwd.replace('/','-') 会多一个前导连字符,目录就对不上了。
  */
 export function piSessionDirName(cwd: string): string {
-  return `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
+  return `--${resolve(cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
 }
 
 /** pi 的会话文件名:ISO 时间戳里的 : 和 . 换成 -,接 _<sessionId>.jsonl。 */
