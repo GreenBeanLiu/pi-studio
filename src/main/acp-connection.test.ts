@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { agent as createAgent, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk'
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { PiRuntimeEvent } from '../shared/ipc/contract'
-import { AcpConnection, AcpAuthRequiredError, acpCapabilities, acpCurrentModel } from './acp-connection'
+import {
+  AcpConnection,
+  AcpAuthRequiredError,
+  acpCapabilities,
+  acpCurrentModel,
+  describeAuthMethods,
+} from './acp-connection'
 
 /**
  * 进程内的假 ACP agent。SDK 的 app 可以直接对接(内存流对),于是整条链路
@@ -14,6 +20,7 @@ type FakeAgentOptions = {
   onPrompt?: (ctx: {
     client: { notify: (m: string, p: unknown) => unknown; request: (m: string, p: unknown) => Promise<unknown> }
     sessionId: string
+    text: string
   }) => Promise<PromptResult | void>
   failNewSession?: { message: string; data?: unknown }
   /** session/load 时回放的历史。 */
@@ -47,9 +54,11 @@ function fakeAgent(options: FakeAgentOptions = {}) {
       }
     })
     .onRequest('session/prompt', async (ctx) => {
+      const params = ctx.params as { prompt?: Array<{ type: string; text?: string }> }
       const result = await options.onPrompt?.({
         client: ctx.client as never,
         sessionId: 'sess-1',
+        text: params.prompt?.find((b) => b.type === 'text')?.text ?? '',
       })
       return result ?? { stopReason: 'end_turn' as const }
     })
@@ -338,22 +347,6 @@ describe('a prompt turn', () => {
     await connection.dispose()
   })
 
-  it('refuses a second concurrent turn', async () => {
-    let release: (() => void) | null = null
-    const gate = new Promise<void>((resolve) => (release = resolve))
-    const { connection } = await connect({
-      onPrompt: async () => {
-        await gate
-        return { stopReason: 'end_turn' }
-      },
-    })
-    const first = connection.prompt('one')
-    await expect(connection.prompt('two')).rejects.toThrow(/turn in flight/)
-    release!()
-    await first
-    await connection.dispose()
-  })
-
   it('accepts a new turn once the previous one settled', async () => {
     const { connection, events } = await connect()
     await connection.prompt('one')
@@ -533,5 +526,43 @@ describe('resuming an existing session', () => {
     const { connection } = await connect()
     expect(connection.conversation()).toEqual([])
     await connection.dispose()
+  })
+})
+
+// 原样丢一句 "Authentication required" 出去等于什么都没说 —— agent 把怎么登
+// 一起报回来了(pi-acp 实测给的是一条要在终端里跑的命令),得让用户能照着做。
+describe('describeAuthMethods', () => {
+  it('把终端登录写成可以照抄的命令', () => {
+    const text = describeAuthMethods([
+      {
+        id: 'pi_terminal_login',
+        name: 'Launch pi in the terminal',
+        type: 'terminal',
+        _meta: { 'terminal-auth': { command: 'pi-acp', args: ['--terminal-login'] } },
+      },
+    ])
+    expect(text).toContain('在终端里跑:pi-acp --terminal-login')
+  })
+
+  it('没有命令时至少给出方式名', () => {
+    const text = describeAuthMethods([
+      { id: 'api-key', name: 'API Key' },
+      { id: 'chat-gpt', name: 'ChatGPT' },
+    ])
+    expect(text).toContain('API Key')
+    expect(text).toContain('ChatGPT')
+  })
+
+  it('拿不到任何方式就不硬编一句提示', () => {
+    expect(describeAuthMethods([])).toBe('')
+    expect(describeAuthMethods([null, 42, {}])).toBe('')
+  })
+
+  it('错误信息里既有指引也保留原文', () => {
+    const error = new AcpAuthRequiredError('Authentication required', [
+      { id: 'chat-gpt', name: 'ChatGPT' },
+    ])
+    expect(error.message).toContain('ChatGPT')
+    expect(error.message).toContain('Authentication required')
   })
 })

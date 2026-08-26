@@ -63,13 +63,37 @@ export type AcpProcessListeners = {
   error?: (error: Error) => void
 }
 
+/**
+ * 把 authMethods 写成用户照着就能做的一句话。
+ *
+ * agent 报的形式各不一样:有的是 `type: 'terminal'` 带一条要在终端里跑的命令
+ * (pi-acp 实测就是 `pi-acp --terminal-login`),有的只给个名字让你自己去登。
+ * 原样丢一个 "Authentication required" 出去等于什么都没说。
+ */
+export function describeAuthMethods(authMethods: readonly unknown[]): string {
+  const lines: string[] = []
+  for (const method of authMethods) {
+    if (!isRecord(method)) continue
+    const name = typeof method.name === 'string' ? method.name : String(method.id ?? '')
+    if (!name) continue
+    const meta = isRecord(method._meta) ? method._meta : undefined
+    const terminal = meta && isRecord(meta['terminal-auth']) ? meta['terminal-auth'] : undefined
+    const command = terminal && typeof terminal.command === 'string' ? terminal.command : undefined
+    const args = terminal && Array.isArray(terminal.args) ? terminal.args.filter((a): a is string => typeof a === 'string') : []
+    lines.push(command ? `${name}(在终端里跑:${[command, ...args].join(' ')})` : name)
+  }
+  if (lines.length === 0) return ''
+  return `需要先登录。可用方式:${lines.join(';')}`
+}
+
 /** ACP 的认证错误:agent 起来了但没登录,`data.authMethods` 告诉你怎么登。 */
 export class AcpAuthRequiredError extends Error {
   constructor(
     message: string,
     readonly authMethods: unknown[],
   ) {
-    super(message)
+    const guidance = describeAuthMethods(authMethods)
+    super(guidance ? `${guidance}\n(${message})` : message)
     this.name = 'AcpAuthRequiredError'
   }
 }
@@ -210,6 +234,14 @@ export class AcpConnection implements AgentBackend {
   private readonly updates: AcpSessionUpdate[] = []
   /** session/load 回放期间为 true:那时的 update 是历史,不该投影成正在跑的一轮。 */
   private replaying = false
+  /**
+   * 一轮还在跑时收到的消息,排队等这轮结束。
+   *
+   * ACP 没有插话机制 —— schema 和方法表里都没有 queue/steer/interrupt,
+   * Claude 那个 promptQueueing 是它自己的私有 _meta。所以宿主侧排队:
+   * 消息不会丢,但它是「这轮完了再发」而不是「插进这轮」。
+   */
+  private queued: Array<{ text: string; images?: ImageContent[] }> = []
 
   /** 权限档位会变(用户切,或 agent 自己发 current_mode_update),所以 caps 不是常量。 */
   private caps: PiRuntimeCapabilities
@@ -499,7 +531,12 @@ export class AcpConnection implements AgentBackend {
   /** 发一轮 prompt,把整轮投影成 pi 事件推出去。 */
   async prompt(text: string, images?: ImageContent[]): Promise<void> {
     if (this.closed) throw new Error('ACP connection is closed')
-    if (this.turn) throw new Error('ACP session already has a turn in flight')
+    // 一轮还在跑就排队。原来这里直接抛,而界面在调用前已经清空了输入框 ——
+    // 用户打的那句话就这么没了。
+    if (this.turn) {
+      this.queued.push({ text, images })
+      return
+    }
     // 我们发出去的这句也要进历史 —— agent 不会把它回放给我们。
     this.updates.push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text } })
     const projector = new AcpTurnProjector(this.options.agentId, this.options.now)
@@ -531,6 +568,22 @@ export class AcpConnection implements AgentBackend {
     // 一轮结束后还挂着的审批没人会再回答了。
     this.permissions.cancelSession(this.sessionId)
     for (const event of events) this.emit(event)
+    this.flushQueued()
+  }
+
+  /** 排队的消息在这一轮收尾后接着发。失败也不能把队列卡住。 */
+  private flushQueued(): void {
+    if (this.closed || this.turn) return
+    const next = this.queued.shift()
+    if (!next) return
+    void this.prompt(next.text, next.images).catch((error) => {
+      appendAppLog('warn', 'acp.queue', 'Failed to send a queued message', normalizeError(error))
+    })
+  }
+
+  /** 还在排队等发的消息条数。 */
+  queuedCount(): number {
+    return this.queued.length
   }
 
   /** 中止当前一轮。ACP 的 session/cancel 是通知,agent 之后会用 stopReason 回 prompt。 */
@@ -547,6 +600,7 @@ export class AcpConnection implements AgentBackend {
   async dispose(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.queued = []
     this.permissions.cancelSession(this.sessionId)
     // 还挂着的一轮要收尾,否则界面永远停在运行中。
     const projector = this.turn

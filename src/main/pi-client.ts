@@ -303,6 +303,8 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
   steer(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
     const checkpoint = entry.status.prompt(message)
+    // ACP 没有插话机制(不在规范里),但消息不能丢:交给连接排队,这轮完了再发。
+    if (!entry.pi) return entry.client.send(message, images)
     return this.piOf(entry, '插话').steer(message, images).catch((error) => {
       entry.status.promptRejected(checkpoint)
       throw error
@@ -312,6 +314,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
   followUp(message: string, images?: ImageContent[]): Promise<void> {
     const entry = this.requireEntry()
     const checkpoint = entry.status.prompt(message)
+    if (!entry.pi) return entry.client.send(message, images)
     return this.piOf(entry, '追问').followUp(message, images).catch((error) => {
       entry.status.promptRejected(checkpoint)
       throw error
@@ -432,9 +435,19 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     return { ok: true }
   }
 
-  /** 新聊天 = 新进程,当前会话该跑还跑。 */
+  /**
+   * 新聊天 = 新进程,当前会话该跑还跑。
+   *
+   * 当前用的是外部 agent 的话,新聊天也用同一个 agent —— 否则「新建」会把用户
+   * 悄悄踢回 pi,而他并没有要求换后端。
+   */
   async newSession(): Promise<{ cancelled: boolean }> {
     if (!this.pool.launchContext()) throw new Error(NO_WORKSPACE_ERROR)
+    const acp = this.active?.acp
+    if (acp) {
+      await this.startAcpSession(acp.agentId)
+      return { cancelled: false }
+    }
     const entry = await this.pool.spawn(null)
     this.activate(entry)
     return { cancelled: false }
