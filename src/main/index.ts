@@ -187,8 +187,8 @@ function createWindow(): void {
       : { frame: false, titleBarStyle: 'hidden' }),
     backgroundColor: '#000000',
     webPreferences: {
-      // ESM 构建下 electron-vite 的 preload 产物是 index.mjs
-      preload: join(import.meta.dirname, '../preload/index.mjs'),
+      // sandbox preload 由 Electron 的 sandbox_bundle 加载,必须是 CJS 脚本。
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,

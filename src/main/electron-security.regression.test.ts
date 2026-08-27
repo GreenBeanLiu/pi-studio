@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const main = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+const electronViteConfig = readFileSync(new URL('../../electron.vite.config.ts', import.meta.url), 'utf8')
 
 describe('Electron renderer security', () => {
   it('keeps the renderer isolated and sandboxed', () => {
@@ -11,6 +12,13 @@ describe('Electron renderer security', () => {
     expect(main).toContain('nodeIntegration: false')
     expect(main).toContain('webSecurity: true')
     expect(main).not.toContain('sandbox: false')
+  })
+
+  it('loads a CommonJS preload script in the sandboxed renderer', () => {
+    expect(main).toContain("preload: join(import.meta.dirname, '../preload/index.cjs')")
+    expect(main).not.toContain('../preload/index.mjs')
+    expect(electronViteConfig).toContain("format: 'cjs'")
+    expect(electronViteConfig).toContain("entryFileNames: '[name].cjs'")
   })
 
   it('only exposes the typed desktop API from preload', () => {
