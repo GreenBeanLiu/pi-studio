@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { loadSettings } from './settings'
-import { PiRunTimeoutError, runPromptToSettled, startPiRuntimeCancellable, type PiAgentRunHandle } from './pi-runtime'
-import { runProfileCompiler } from './run-profile'
+import { PiRunTimeoutError, runPromptToSettled, type PiAgentRunHandle } from './pi-runtime'
+import { runtimeHost } from './runtime-host'
 import { describeDeniedApprovals } from './approval-gateway'
 import { writeRoutineArtifact, type RoutineArtifactFormat } from './routine-artifact'
 import { prepareReviewedWebSearchExtension } from './web-search-extension'
@@ -485,25 +485,19 @@ async function ensureAgentClient(
     prepareReviewedWorkspaceMemoryExtension(),
     prepareReviewedWebSearchExtension(!!settings.tavilyApiKey),
   ].filter((extension): extension is string => extension !== null)
-  const profile = await runProfileCompiler.compile('routine', routine.workspacePath, { extensions })
-  const client = await startPiRuntimeCancellable(profile, signal, {
+  const { client } = await runtimeHost.start('routine', routine.workspacePath, {
+    extensions,
+    signal,
     onOwned: (cleanup) => {
       session.startupCleanup = cleanup
+    },
+    audit: {
+      routineId: routine.id,
+      routine: routine.name,
     },
   })
   session.client = client
   session.startupCleanup = null
-  // 工作流走 startPiRuntimeCancellable,不经过 PiClient,那条 agent.start 落不下来 ——
-  // 出问题时日志里查不到这次用的哪个模型,只能去翻 pi 的 session jsonl。日志留在这边
-  // 而不是塞进 pi-runtime:eval CLI 会把 pi-runtime 打成纯 Node 包跑,拉不得 electron。
-  appendAppLog('info', 'agent.start', 'Pi agent process started', {
-    kind: 'routine',
-    routineId: routine.id,
-    routine: routine.name,
-    cwd: profile.cwd,
-    provider: profile.provider,
-    model: profile.model ?? null,
-  })
   return client
 }
 

@@ -1,10 +1,11 @@
 import { createHash } from 'crypto'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { EvalEngine, EvalEngineRequest, EvalEngineResult } from './eval-driver'
-import { startPiRuntimeCancellable, runPromptToSettled, type PiAgentRunHandle } from './pi-runtime'
+import { runPromptToSettled, type PiAgentRunHandle } from './pi-runtime'
 import { resolvePiCliPath } from './pi-process'
 import { SessionProjectionTracker } from './session-projection'
 import type { CompiledRunProfile } from './run-profile'
+import { runtimeHost, type RuntimeHostStartOptions } from './runtime-host'
 
 type PiEvalClient = Pick<
   PiAgentRunHandle,
@@ -12,17 +13,18 @@ type PiEvalClient = Pick<
 >
 
 type PiEvalEngineDependencies = {
-  start: (
-    profile: CompiledRunProfile,
-    signal: AbortSignal,
-    onOwned: (cleanup: () => Promise<void>) => void,
-  ) => Promise<PiEvalClient>
+  runtimeHost: {
+    startCompiled: (
+      profile: CompiledRunProfile,
+      options?: Omit<RuntimeHostStartOptions, 'extensions' | 'subagentsAvailable'>,
+    ) => Promise<{ profile: CompiledRunProfile; client: PiEvalClient }>
+  }
   cliPath: () => string
   environment: NodeJS.ProcessEnv
 }
 
 const DEFAULT_DEPENDENCIES: PiEvalEngineDependencies = {
-  start: (profile, signal, onOwned) => startPiRuntimeCancellable(profile, signal, { onOwned }),
+  runtimeHost,
   cliPath: resolvePiCliPath,
   environment: process.env,
 }
@@ -113,8 +115,16 @@ export class PiEvalEngine implements EvalEngine {
   constructor(private readonly dependencies: PiEvalEngineDependencies = DEFAULT_DEPENDENCIES) {}
 
   async run(request: EvalEngineRequest, emit: Parameters<EvalEngine['run']>[1], signal: AbortSignal): Promise<EvalEngineResult> {
-    const client = await this.dependencies.start(profileFor(request, this.dependencies), signal, (cleanup) => {
-      this.startupCleanup = cleanup
+    const { client } = await this.dependencies.runtimeHost.startCompiled(profileFor(request, this.dependencies), {
+      signal,
+      onOwned: (cleanup) => {
+        this.startupCleanup = cleanup
+      },
+      audit: {
+        source: 'eval',
+        caseId: request.caseId,
+        requestedSessionId: request.sessionId,
+      },
     })
     this.activeClient = client
     this.startupCleanup = null

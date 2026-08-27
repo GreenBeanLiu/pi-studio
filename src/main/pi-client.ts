@@ -168,13 +168,6 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     const entry = await this.pool.spawn(restoreSessionFile)
     this.activate(entry)
 
-    appendAppLog('info', 'agent.start', 'Pi agent process started', {
-      cwd,
-      provider: profile.provider,
-      model: profile.model ?? null,
-      modelConfigured: !!profile.model,
-      restoredSession: !!restoreSessionFile && entry.sessionFile === restoreSessionFile,
-    })
     onStatus?.({
       status: 'started',
       cwd,

@@ -31,7 +31,12 @@ describe('PiEvalEngine', () => {
     const fake = client()
     let compiled: unknown
     const engine = new PiEvalEngine({
-      start: async (profile) => { compiled = profile; return fake as never },
+      runtimeHost: {
+        startCompiled: async (profile) => {
+          compiled = profile
+          return { profile, client: fake as never }
+        },
+      },
       cliPath: () => 'C:\\pi\\cli.js',
       environment: { SOURCE_KEY: 'secret' },
     })
@@ -49,7 +54,9 @@ describe('PiEvalEngine', () => {
     const fake = client()
     fake.getState.mockRejectedValueOnce(new Error('state failed'))
     const engine = new PiEvalEngine({
-      start: async () => fake as never,
+      runtimeHost: {
+        startCompiled: async (profile) => ({ profile, client: fake as never }),
+      },
       cliPath: () => 'C:\\pi\\cli.js',
       environment: {},
     })
@@ -67,7 +74,9 @@ describe('PiEvalEngine', () => {
       usage: { input: 302, output: 136, cacheRead: 130_000, cacheWrite: 816, totalTokens: 131_254 },
     }] as never)
     const engine = new PiEvalEngine({
-      start: async () => fake as never,
+      runtimeHost: {
+        startCompiled: async (profile) => ({ profile, client: fake as never }),
+      },
       cliPath: () => 'C:\\pi\\cli.js',
       environment: {},
     })

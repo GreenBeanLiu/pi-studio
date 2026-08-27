@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { spawn } from 'child_process'
-import { runProfileCompiler } from './run-profile'
+import { runtimeHost } from './runtime-host'
 import {
   modelsDir,
   loadHistory,
@@ -14,7 +14,7 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
-import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
+import { PiRunTimeoutError, runPromptToSettled } from './pi-runtime'
 
 /**
  * 第三种 3D 引擎「代码建模」:不走 Tripo,由内嵌的 pi agent 程序化手搓
@@ -225,8 +225,9 @@ async function generateCodeModel(payload: {
     } else writeFileSync(scriptPath, skeleton(), 'utf-8')
     pr('building')
 
-    const profile = await runProfileCompiler.compile('code-model', dir)
-    const client = await startPiRuntime(profile)
+    const { client } = await runtimeHost.start('code-model', dir, {
+      audit: { modelId: id },
+    })
     const runAgentTurn = async (instruction: string): Promise<void> => {
       try {
         await runPromptToSettled(client, instruction, AGENT_TIMEOUT_MS)

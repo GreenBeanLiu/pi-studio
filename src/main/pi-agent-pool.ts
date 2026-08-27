@@ -4,7 +4,8 @@ import { appendAppLog, normalizeError } from './app-log'
 import { agentConfigDir } from './settings'
 import { sandboxAgentPath, sandboxSessionPathToHost } from './sandbox'
 import type { PiRuntimeEvent } from '../shared/ipc/contract'
-import { startPiRuntime } from './pi-runtime'
+import type { PiAgentRunHandle } from './pi-runtime'
+import { runtimeHost } from './runtime-host'
 import {
   AgentJobRegistry,
   isTerminalJobState,
@@ -44,6 +45,11 @@ export type AgentPoolHost = {
   emitActivity(event: SessionActivityEvent): void
 }
 
+export type AgentPoolRuntimeLauncher = (
+  profile: LaunchContext,
+  options?: { audit?: Record<string, unknown> },
+) => Promise<{ client: PiAgentRunHandle }>
+
 /**
  * 一个聊天一个 `pi` RPC 子进程,池子管它们的生死。
  *
@@ -57,7 +63,11 @@ export class AgentPool {
   private entries: AgentEntry[] = []
   private readonly jobs = new AgentJobRegistry()
 
-  constructor(private readonly host: AgentPoolHost) {}
+  constructor(
+    private readonly host: AgentPoolHost,
+    private readonly launchRuntime: AgentPoolRuntimeLauncher = (profile, options) =>
+      runtimeHost.startCompiled(profile, options),
+  ) {}
 
   setLaunch(launch: LaunchContext | null): void {
     this.launch = launch
@@ -120,7 +130,12 @@ export class AgentPool {
         PI_STUDIO_ARTIFACT_WORKSPACE_KEY: artifactWorkspaceKey(launch.cwd),
       },
     }
-    const client = await startPiRuntime(runtimeLaunch)
+    const { client } = await this.launchRuntime(runtimeLaunch, {
+      audit: {
+        source: 'chat-pool',
+        requestedSessionFile: restoreSessionFile,
+      },
+    })
     const job = this.jobs.register({
       kind: 'chat',
       owner: { sessionFile: restoreSessionFile },

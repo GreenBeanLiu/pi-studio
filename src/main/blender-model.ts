@@ -2,7 +2,7 @@ import { app, ipcMain } from 'electron'
 import { mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { connect } from 'net'
-import { runProfileCompiler } from './run-profile'
+import { runtimeHost } from './runtime-host'
 import {
   modelsDir,
   loadHistory,
@@ -13,7 +13,7 @@ import {
   type Model3DResult,
 } from './model3d'
 import { appendAppLog, normalizeError } from './app-log'
-import { PiRunTimeoutError, runPromptToSettled, startPiRuntime } from './pi-runtime'
+import { PiRunTimeoutError, runPromptToSettled } from './pi-runtime'
 import {
   inspectBlenderInstall,
   installAddonAndLaunchBlender,
@@ -246,8 +246,9 @@ async function generateBlenderModel(payload: {
     else writeFileSync(scriptPath, SKELETON, 'utf-8')
     pr('building')
 
-    const profile = await runProfileCompiler.compile('blender-model', dir)
-    const client = await startPiRuntime(profile)
+    const { client } = await runtimeHost.start('blender-model', dir, {
+      audit: { modelId: id },
+    })
 
     const runAgentTurn = async (text: string): Promise<void> => {
       try {
