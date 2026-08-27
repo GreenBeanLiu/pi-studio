@@ -43,7 +43,10 @@ graph TB
         end
         subgraph main["main process"]
             IPC["ipc.ts / channels.ts"]
-            PC["pi-client.ts<br/>RpcClient 封装"]
+            PC["pi-client.ts<br/>会话池 / 前台状态"]
+            RH["runtime-host.ts<br/>统一启动入口"]
+            PROF["run-profile.ts<br/>可审计启动画像"]
+            EVLOG[("runtime-events.jsonl<br/>运行时事件日志")]
             RC["remote-control.ts<br/>host 侧 WS"]
             LG["llm-gateway.ts"]
             RT["routines.ts + routine-scheduler.ts"]
@@ -52,8 +55,11 @@ graph TB
         AGENT["pi-coding-agent 进程<br/>JSONL over stdio"]
         rend <-->|IPC| IPC
         IPC --> PC & RC & LG & RT
-        PC -->|spawn| AGENT
-        PC -.可选隔离.-> SB
+        PC & RT --> RH
+        RH --> PROF
+        RH -->|spawn + handshake| AGENT
+        RH --> EVLOG
+        PROF -.可选隔离.-> SB
         SB --> AGENT
     end
 
@@ -67,7 +73,37 @@ graph TB
 
 ---
 
-## 2. 手机遥控链路（本次新增的部分）
+## 2. Agent Runtime Host
+
+桌面端所有 Pi 进程启动都走 `RuntimeHost`：聊天、后台会话、例程、代码建模、Blender 建模、eval 复放使用同一个启动 seam。
+调用者只表达“运行类型 + 工作区 + 少量审计上下文”；`RuntimeHost` 负责把它变成可启动、可诊断、可清理的运行实例。
+
+```mermaid
+flowchart LR
+    Caller["pi-client / AgentPool<br/>routines / code-model / eval"] --> Host["RuntimeHost.start / startCompiled"]
+    Host --> Profile["RunProfileCompiler<br/>provider · model · sandbox · tools · digest"]
+    Host --> Runtime["pi-runtime.ts<br/>RpcClient start + handshake"]
+    Runtime --> Pi["pi-coding-agent process"]
+    Host --> Events[("runtime-events.jsonl")]
+    Events --> Projection["runtime-event-log.ts<br/>diagnostics summary"]
+```
+
+这个 seam 刻意分清三种持久化事实：
+
+- `run-profile.ts` 记录“为什么这样启动”：provider、model、sandbox、安全快照、profile digest；不记录 env secret。
+- Pi 自己的 session JSONL 记录“用户/模型对话内容”，仍由 `getMessages()` 和会话导出读取。
+- `runtime-events.jsonl` 记录“host 观察到的运行生命周期”：`run.started`、runtime event、`run.settled`、`cleanup`。diagnostics 读取的是投影摘要，不把 JSONL 文件格式暴露给 renderer。
+
+这一步借鉴 Maka 的方向，但不照搬它的整体 runtime host：pi-studio 仍是 Electron host + 嵌入式 Pi harness + 云中转。现在先把启动和运行证据收敛到一个深模块，后续如果要做更完整的 event-sourced session inspect，可以在 `runtime-event-log.ts` 这一侧继续扩展。
+
+两个约束很重要：
+
+- main/headless 共用路径不能静态 import Electron。`RuntimeHost.startCompiled()` 要能在 eval CLI 里跑。
+- 日志写入和读取失败都不能阻断 agent 启动；诊断证据是副作用，不是业务前置条件。
+
+---
+
+## 3. 手机遥控链路（本次新增的部分）
 
 中转**不解析消息内容**，纯文本帧透传；一个「装机(installation)」= 一个房间。
 
@@ -111,7 +147,7 @@ sequenceDiagram
 
 ---
 
-## 3. LLM 调用链路
+## 4. LLM 调用链路
 
 上游 API key **只存在服务端**，桌面与 agent 都拿不到：
 
@@ -126,10 +162,14 @@ pi-coding-agent ──OpenAI 兼容请求──> trail-api/llm/v1/{profile_id}/c
 
 ---
 
-## 4. 关键文件索引
+## 5. 关键文件索引
 
 **桌面 `pi-studio/src/`**
-- `main/pi-client.ts` — 包装 `@earendil-works/pi-coding-agent` 的 `RpcClient`，spawn agent 进程
+- `main/runtime-host.ts` — Pi 运行实例的统一启动入口；集中处理 profile、cancellable startup、审计日志、runtime event 记录
+- `main/run-profile.ts` — 编译可审计启动画像：provider、model、sandbox、安全快照、工具参数、profile digest
+- `main/pi-runtime.ts` — 包装 `@earendil-works/pi-coding-agent` 的 `RpcClient`，负责 start、handshake、进程清理
+- `main/pi-client.ts` — 前台聊天会话管理、事件投影、后台会话池协调
+- `main/runtime-event-recorder.ts` / `main/runtime-event-log.ts` — host 级运行事件 JSONL 写入与 diagnostics 摘要投影
 - `main/remote-control.ts` — host 侧 WS：收指令分发到 RpcClient、转发 agent 事件
 - `main/sandbox.ts` / `sandbox-wsl.ts` — 可选把 agent 关进 WSL bubblewrap 或 Docker
 - `main/llm-gateway.ts` — 云端 LLM 网关对接
@@ -153,7 +193,7 @@ pi-coding-agent ──OpenAI 兼容请求──> trail-api/llm/v1/{profile_id}/c
 
 ---
 
-## 5. 现状与缺口
+## 6. 现状与缺口
 
 - 手机端只到 **P0**：纯文本渲染 assistant 消息，未做 Markdown / thinking 折叠 / 工具卡 / 子代理卡（见 `pi-studio-mobile/todo.md` P1–P2）
 - 手机端重连是**固定 4 秒**，todo 里写的指数退避尚未实现（`src/remote.ts:57`）
