@@ -1,6 +1,9 @@
-import { appendFileSync, mkdirSync } from 'fs'
+import { appendFileSync, closeSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import type { CompiledRunProfile } from './run-profile'
+
+const DEFAULT_MAX_LOG_BYTES = 10 * 1024 * 1024
+const DEFAULT_TRIM_TO_BYTES = 5 * 1024 * 1024
 
 type RuntimeProfileSummary = {
   kind: CompiledRunProfile['kind']
@@ -45,12 +48,48 @@ export type RuntimeEventRecorder = {
   append(record: RuntimeEventRecord): void | Promise<void>
 }
 
+export type JsonlRuntimeEventRecorderOptions = {
+  maxBytes?: number
+  trimToBytes?: number
+}
+
 export class JsonlRuntimeEventRecorder implements RuntimeEventRecorder {
-  constructor(private readonly filePath: string) {}
+  private readonly maxBytes: number
+  private readonly trimToBytes: number
+
+  constructor(
+    private readonly filePath: string,
+    options: JsonlRuntimeEventRecorderOptions = {},
+  ) {
+    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_LOG_BYTES
+    this.trimToBytes = Math.min(options.trimToBytes ?? DEFAULT_TRIM_TO_BYTES, this.maxBytes)
+  }
 
   append(record: RuntimeEventRecord): void {
     mkdirSync(dirname(this.filePath), { recursive: true })
     appendFileSync(this.filePath, `${JSON.stringify(record)}\n`, 'utf8')
+    this.trimIfNeeded()
+  }
+
+  private trimIfNeeded(): void {
+    let size = 0
+    try {
+      size = statSync(this.filePath).size
+    } catch {
+      return
+    }
+    if (size <= this.maxBytes) return
+
+    const bytesToRead = Math.min(this.trimToBytes, size)
+    const buffer = Buffer.alloc(bytesToRead)
+    const fd = openSync(this.filePath, 'r')
+    try {
+      readSync(fd, buffer, 0, bytesToRead, size - bytesToRead)
+    } finally {
+      closeSync(fd)
+    }
+    const tail = buffer.toString('utf8').replace(/^[^\r\n]*(?:\r?\n|$)/, '')
+    writeFileSync(this.filePath, tail, 'utf8')
   }
 }
 

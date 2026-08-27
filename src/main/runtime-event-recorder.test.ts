@@ -64,4 +64,31 @@ describe('JsonlRuntimeEventRecorder', () => {
       },
     ])
   })
+
+  it('trims old records at line boundaries when the log grows past its cap', () => {
+    const filePath = join(directory, 'runtime-events.jsonl')
+    const recorder = new JsonlRuntimeEventRecorder(filePath, {
+      maxBytes: 450,
+      trimToBytes: 300,
+    })
+
+    for (let i = 0; i < 8; i += 1) {
+      recorder.append({
+        type: 'runtime.event',
+        runId: 'run-1',
+        at: `2026-08-27T00:00:0${i}.000Z`,
+        event: { type: 'message_update', index: i, text: 'x'.repeat(40) },
+      })
+    }
+
+    const lines = readFileSync(filePath, 'utf8').trim().split('\n')
+    expect(lines.length).toBeGreaterThan(0)
+    expect(lines.length).toBeLessThan(8)
+    for (const line of lines) {
+      expect(() => JSON.parse(line)).not.toThrow()
+    }
+    expect(JSON.parse(lines[0]) as unknown).not.toMatchObject({
+      event: { index: 0 },
+    })
+  })
 })
