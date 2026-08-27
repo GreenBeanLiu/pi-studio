@@ -64,7 +64,6 @@ import type { Workspace } from '../shared/contracts'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const QUEUE_MODES = ['all', 'one-at-a-time'] as const
-import { runProfileCompiler } from './run-profile'
 import { registerRoutines } from './routines'
 import { registerChannels } from './channels'
 import { registerSandbox } from './sandbox'
@@ -497,10 +496,7 @@ export function registerIpcHandlers(): void {
     try {
       await piClientManager.startWorkspace(
         workspacePath,
-        () =>
-          runProfileCompiler.compile('chat', workspacePath, {
-            subagentsAvailable,
-          }),
+        { subagentsAvailable },
         async (agentEvent, context) => {
           const normalizedAgentEvent = materializeToolEvent(
             getAgentArtifacts(),

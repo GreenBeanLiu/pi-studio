@@ -3,7 +3,7 @@ import type { ImageContent } from '@earendil-works/pi-ai'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { appendAppLog, normalizeError } from './app-log'
 import { agentConfigDir, saveSelectedModelRoute } from './settings'
-import type { CompiledRunProfile } from './run-profile'
+import { runProfileCompiler } from './run-profile'
 import type {
   ExtensionUiResponse,
   ModelInfo,
@@ -52,6 +52,10 @@ export {
   pickEvictableAgent,
   sessionKey,
 } from './pi-agent-entry'
+
+export type StartWorkspaceOptions = {
+  subagentsAvailable?: boolean
+}
 export type {
   AgentStatusEvent,
   AgentStatusListener,
@@ -141,7 +145,7 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
 
   async startWorkspace(
     cwd: string,
-    compileProfile: () => Promise<CompiledRunProfile>,
+    options: StartWorkspaceOptions,
     onEvent: PiEventListener,
     onStatus?: AgentStatusListener,
     onWorkspaceStopped?: (cwd: string) => Promise<void>,
@@ -153,7 +157,9 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     await this.stop()
     if (previousWorkspacePath) await onWorkspaceStopped?.(previousWorkspacePath)
 
-    const profile = await compileProfile()
+    const profile = await runProfileCompiler.compile('chat', cwd, {
+      subagentsAvailable: options.subagentsAvailable,
+    })
     const launch = {
       ...profile,
       sandboxSessionPaths: profile.sandboxMode !== null,

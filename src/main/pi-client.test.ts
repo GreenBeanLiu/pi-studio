@@ -29,6 +29,10 @@ function agentLayerSource(): string {
   return AGENT_LAYER_FILES.map(readAgentLayerFile).join('\n')
 }
 
+function readMainFile(name: string): string {
+  return readFileSync(new URL(`./${name}`, import.meta.url), 'utf8')
+}
+
 // 2026-08-03:pi 的 new_session / switch_session 直接 dispose 当前会话。实测(本地假
 // SSE provider)正在跑的一轮会被掐断且一个事件都不发 —— message_end / turn_end /
 // agent_end / agent_settled 全没有,界面永远停在最后一步。所以改成一个聊天一个进程,
@@ -248,5 +252,13 @@ describe('agent processes are owned by jobs', () => {
   it('gives every subagent run a parent job', () => {
     expect(pool()).toContain("kind: 'subagent'")
     expect(pool()).toContain('parentId: entry.job.id')
+  })
+})
+
+describe('workspace launch profile ownership', () => {
+  it('keeps chat profile compilation in the session layer instead of IPC', () => {
+    expect(readMainFile('ipc.ts')).not.toContain('runProfileCompiler')
+    expect(readMainFile('pi-client.ts')).toContain("runProfileCompiler.compile('chat', cwd")
+    expect(readMainFile('ipc.ts')).toContain('{ subagentsAvailable }')
   })
 })
