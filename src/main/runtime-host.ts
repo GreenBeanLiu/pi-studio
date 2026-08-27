@@ -10,6 +10,7 @@ import {
 } from './pi-runtime'
 import {
   JsonlRuntimeEventRecorder,
+  runtimeEventLogPath,
   runtimeEventTimestamp,
   summarizeRuntimeProfile,
   type RuntimeEventRecord,
@@ -71,8 +72,7 @@ async function resolveDesktopRuntimeRecorder(): Promise<RuntimeEventRecorder | n
     desktopRecorder = null
     return desktopRecorder
   }
-  const { join } = await import('path')
-  desktopRecorder = new JsonlRuntimeEventRecorder(join(app.getPath('userData'), 'runtime-events.jsonl'))
+  desktopRecorder = new JsonlRuntimeEventRecorder(runtimeEventLogPath(app.getPath('userData')))
   return desktopRecorder
 }
 

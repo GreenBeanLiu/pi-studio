@@ -34,6 +34,8 @@ import {
   sealGitRunChanges,
 } from './git-diff'
 import { appendAppLog, normalizeError, readRecentAppLog } from './app-log'
+import { readRuntimeEventLog } from './runtime-event-log'
+import { runtimeEventLogPath } from './runtime-event-recorder'
 import {
   loadWorkspaceMemory,
   saveWorkspaceMemory,
@@ -284,6 +286,7 @@ export function registerIpcHandlers(): void {
     ok: true,
     content: readRecentAppLog(),
     agentJobs: piClientManager.agentJobs(),
+    runtimeEvents: readRuntimeEventLog(runtimeEventLogPath(app.getPath('userData'))),
   }))
   ipcMain.handle(
     'diagnostics:save',

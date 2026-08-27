@@ -66,7 +66,12 @@ export type DesktopApi = {
     writeText: (value: string) => Promise<void>
   }
   diagnostics: {
-    getLogs: () => Promise<{ ok: true; content: string; agentJobs: AgentJobSnapshot[] }>
+    getLogs: () => Promise<{
+      ok: true
+      content: string
+      agentJobs: AgentJobSnapshot[]
+      runtimeEvents: RuntimeEventLogSnapshot
+    }>
     save: (payload: {
       defaultPath: string
       content: string
@@ -771,6 +776,37 @@ export type AgentJobSnapshot = {
   finishReason: string | null
   forced: boolean
   cleanupError: string | null
+}
+
+export type RuntimeEventLogSnapshot = {
+  path: string
+  runs: RuntimeRunSummary[]
+  invalidLines: number
+  truncated: boolean
+  readError?: string
+}
+
+export type RuntimeRunSummary = {
+  runId: string
+  kind: AgentJobKind | null
+  cwd: string | null
+  provider: string | null
+  model: string | null
+  sandboxMode: SandboxMode | null
+  profileDigest: string | null
+  audit: Record<string, unknown> | null
+  startedAt: string | null
+  lastEventAt: string | null
+  settledAt: string | null
+  cleanup: {
+    at: string
+    mode: 'dispose' | 'forceDispose'
+    status: 'ok' | 'error'
+    error: string | null
+  } | null
+  eventCount: number
+  lastEventType: string | null
+  recentEvents: Array<{ at: string; type: string | null; event: unknown }>
 }
 
 export type AgentRuntimeSnapshot = {

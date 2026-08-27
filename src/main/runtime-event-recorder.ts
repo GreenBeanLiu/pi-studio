@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, join } from 'path'
 import type { CompiledRunProfile } from './run-profile'
 
 type RuntimeProfileSummary = {
@@ -52,6 +52,10 @@ export class JsonlRuntimeEventRecorder implements RuntimeEventRecorder {
     mkdirSync(dirname(this.filePath), { recursive: true })
     appendFileSync(this.filePath, `${JSON.stringify(record)}\n`, 'utf8')
   }
+}
+
+export function runtimeEventLogPath(userDataPath: string): string {
+  return join(userDataPath, 'runtime-events.jsonl')
 }
 
 export function summarizeRuntimeProfile(profile: CompiledRunProfile): RuntimeProfileSummary {

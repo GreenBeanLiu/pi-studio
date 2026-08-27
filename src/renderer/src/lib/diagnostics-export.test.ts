@@ -29,7 +29,17 @@ describe('diagnostics export', () => {
         app: { version: async () => '0.12.0', piVersion: async () => '0.84.2' },
         settings: { load: async () => Promise.reject(new Error('settings unavailable')) },
         diagnostics: {
-          getLogs: async () => ({ ok: true, content: 'startup failed', agentJobs: [] }),
+          getLogs: async () => ({
+            ok: true,
+            content: 'startup failed',
+            agentJobs: [],
+            runtimeEvents: {
+              path: 'runtime-events.jsonl',
+              runs: [],
+              invalidLines: 0,
+              truncated: false,
+            },
+          }),
           save,
         },
         pi: { getRuntimeSnapshot: async () => Promise.reject(new Error('runtime unavailable')) },
