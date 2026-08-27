@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parseLlmProfileSavePayload } from './ipc-contracts'
+
+const ipcSource = readFileSync(new URL('./ipc.ts', import.meta.url), 'utf8')
 
 const profile = {
   id: 'three-a-main',
@@ -35,5 +38,13 @@ describe('llm profile IPC contract', () => {
     expect(() =>
       parseLlmProfileSavePayload({ create: false, profile: invalidProfile }),
     ).toThrow()
+  })
+})
+
+describe('backup restore IPC contract', () => {
+  it('registers both handlers and validates the backup name centrally', () => {
+    expect(ipcSource).toContain("ipcMain.handle('diagnostics:listBackups'")
+    expect(ipcSource).toContain("ipcMain.handle('diagnostics:restoreBackup'")
+    expect(ipcSource).toContain("requiredString(payload.name, '备份名称')")
   })
 })

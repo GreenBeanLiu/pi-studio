@@ -73,12 +73,15 @@ import { registerCodeModel } from './code-model'
 import { registerBlenderModel } from './blender-model'
 import { remoteControl } from './remote-control'
 import { createSettingsView } from './settings-view'
+import { listLocalDataBackups, scheduleDataRestore } from './local-data-backup'
 import { AgentRuntimeTracker } from './agent-runtime'
 import { SessionProjectionTracker } from './session-projection'
 import { removeLegacySecurityGuardExtension } from './legacy-extension-cleanup'
 import type { ApprovalProjection, ExtensionUiResponse, PiRuntimeEvent } from '../shared/ipc/contract'
 import { approvalAuditJournal } from './approval-audit'
 import { canRespondToOwnedUiRequest } from './extension-ui-ownership'
+
+let dataRestoreRestartScheduled = false
 
 // Agent Runtime 权威快照:renderer 重挂载/reload 后先取快照,再订阅变化
 const agentRuntime = new AgentRuntimeTracker((snapshot) => {
@@ -312,6 +315,33 @@ export function registerIpcHandlers(): void {
       }
     },
   )
+  ipcMain.handle('diagnostics:listBackups', () => {
+    try {
+      return { ok: true, backups: listLocalDataBackups(app.getPath('userData')) }
+    } catch (error) {
+      appendAppLog('error', 'backup', 'Failed to list local data backups', normalizeError(error))
+      return { error: (error as Error).message ?? '读取备份列表失败' }
+    }
+  })
+  ipcMain.handle('diagnostics:restoreBackup', (_event, payload: unknown) => {
+    try {
+      if (!isRecord(payload)) throw new Error('恢复参数无效')
+      const name = requiredString(payload.name, '备份名称')
+      scheduleDataRestore(app.getPath('userData'), name)
+      appendAppLog('info', 'backup', 'Scheduled local data restore', { name })
+      if (!dataRestoreRestartScheduled) {
+        dataRestoreRestartScheduled = true
+        setTimeout(() => {
+          app.relaunch()
+          app.quit()
+        }, 250)
+      }
+      return { ok: true, restarting: true }
+    } catch (error) {
+      appendAppLog('error', 'backup', 'Failed to schedule local data restore', normalizeError(error))
+      return { error: (error as Error).message ?? '安排数据恢复失败' }
+    }
+  })
 
   // ── Settings ────────────────────────────────────────────────────
   ipcMain.handle('settings:load', () => {

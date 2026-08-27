@@ -134,7 +134,7 @@ pi-coding-agent ──OpenAI 兼容请求──> trail-api/llm/v1/{profile_id}/c
 - `main/sandbox.ts` / `sandbox-wsl.ts` — 可选把 agent 关进 WSL bubblewrap 或 Docker
 - `main/llm-gateway.ts` — 云端 LLM 网关对接
 - `main/routines.ts` / `routine-scheduler.ts` — 定时例程
-- `main/local-data-backup.ts` — 数据库打开前创建每日原子快照并轮转保留七份
+- `main/local-data-backup.ts` — 数据库打开前创建每日原子快照；恢复请求在重启后先校验、留保护点，再可回滚替换数据
 - `renderer/src/components/ChatPane.tsx` — `segmentMessages` 折叠连续工具步、`ThinkingBlock`、流式 index
 - `renderer/src/components/ToolCallCard.tsx` — 工具卡 + `SubagentCard`
 

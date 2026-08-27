@@ -21,7 +21,7 @@ import { cleanupStaleRunChangeTempDirs } from './run-change-set'
 import { syncBundledExtensions, syncBundledSkills } from './bundled-agent-resources'
 import { startSharedMemoryService, stopSharedMemoryService } from './shared-memory'
 import { sharedMemoryPath } from './workspace-memory'
-import { createStartupDataBackup } from './local-data-backup'
+import { applyPendingDataRestore, createStartupDataBackup } from './local-data-backup'
 
 // 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
 if (process.env.PI_REMOTE_DEBUG_PORT)
@@ -243,6 +243,16 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   installProcessLoggers()
+  try {
+    const restore = applyPendingDataRestore(app.getPath('userData'), { appVersion: app.getVersion() })
+    if (restore.status === 'restored') {
+      appendAppLog('info', 'backup', 'Applied pending data restore', restore)
+    } else if (restore.status === 'failed') {
+      appendAppLog('error', 'backup', 'Pending data restore failed', restore)
+    }
+  } catch (error) {
+    appendAppLog('error', 'backup', 'Pending data restore crashed', normalizeError(error))
+  }
   try {
     const backup = createStartupDataBackup(app.getPath('userData'), { appVersion: app.getVersion() })
     if (backup.status === 'created') {

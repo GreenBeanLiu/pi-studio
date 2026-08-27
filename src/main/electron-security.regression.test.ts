@@ -21,9 +21,12 @@ describe('Electron renderer security', () => {
   })
 
   it('backs up persistent state before stores are opened', () => {
+    const restore = main.indexOf('const restore = applyPendingDataRestore(')
     const backup = main.indexOf('const backup = createStartupDataBackup(')
     const ipcRegistration = main.indexOf('registerIpcHandlers()')
     const memoryService = main.indexOf('startSharedMemoryService(')
+    expect(restore).toBeGreaterThan(-1)
+    expect(restore).toBeLessThan(backup)
     expect(backup).toBeGreaterThan(-1)
     expect(backup).toBeLessThan(ipcRegistration)
     expect(backup).toBeLessThan(memoryService)

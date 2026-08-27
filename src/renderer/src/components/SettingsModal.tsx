@@ -15,6 +15,7 @@ import {
   type SandboxImageStatus,
   type RemoteControlSnapshot,
   type RemotePairingCode,
+  type LocalBackupSummary,
 } from '../lib/api'
 import { createDefaultSettingsView } from '../../../shared/contracts'
 import {
@@ -45,6 +46,13 @@ const CATEGORIES: { key: Category; label: string; icon: typeof Bot }[] = [
   { key: 'imagegen', label: '生图', icon: ImageIcon },
   { key: 'about', label: '关于', icon: Info },
 ]
+
+function formatBackupLabel(backup: LocalBackupSummary): string {
+  const createdAt = new Date(backup.createdAt)
+  const timestamp = Number.isNaN(createdAt.getTime()) ? backup.createdAt : createdAt.toLocaleString()
+  const kind = backup.kind === 'pre-restore' ? '恢复前保护点' : '每日备份'
+  return `${timestamp} · ${kind}${backup.status === 'invalid' ? ' · 已损坏' : ''}`
+}
 
 const useStyles = createStyles(({ token, css }) => ({
   main: css`
@@ -225,6 +233,60 @@ export default function SettingsModal({
   const [deepSeekSaving, setDeepSeekSaving] = useState(false)
   const [deepSeekResult, setDeepSeekResult] = useState<ProviderConnectionResult | null>(null)
   const [sharedMemoryStatus, setSharedMemoryStatus] = useState<{ url: string; file: string; count: number } | null>(null)
+  const [backups, setBackups] = useState<LocalBackupSummary[]>([])
+  const [selectedBackup, setSelectedBackup] = useState<string>()
+  const [backupsLoading, setBackupsLoading] = useState(false)
+  const [backupRestoring, setBackupRestoring] = useState(false)
+
+  async function loadBackups() {
+    const listBackups = api.diagnostics.listBackups
+    if (!listBackups) return
+    setBackupsLoading(true)
+    try {
+      const result = await listBackups()
+      if ('error' in result) {
+        message.error(result.error)
+        return
+      }
+      setBackups(result.backups)
+      setSelectedBackup((current) => {
+        if (current && result.backups.some((backup) => backup.name === current && backup.status === 'ready')) {
+          return current
+        }
+        return result.backups.find((backup) => backup.status === 'ready')?.name
+      })
+    } catch {
+      message.error('读取备份列表失败')
+    } finally {
+      setBackupsLoading(false)
+    }
+  }
+
+  function restoreSelectedBackup() {
+    const restoreBackup = api.diagnostics.restoreBackup
+    if (!restoreBackup || !selectedBackup) return
+    const backup = backups.find((item) => item.name === selectedBackup)
+    Modal.confirm({
+      title: '恢复本地数据并重启？',
+      content: `将恢复到 ${backup ? formatBackupLabel(backup) : selectedBackup}。当前数据会先保存为保护点，应用随后重启。`,
+      okText: '恢复并重启',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setBackupRestoring(true)
+        try {
+          const result = await restoreBackup({ name: selectedBackup })
+          if ('error' in result) throw new Error(result.error)
+          message.loading({ content: '正在重启并恢复数据…', duration: 0, key: 'backup-restore' })
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '安排数据恢复失败')
+          throw error
+        } finally {
+          setBackupRestoring(false)
+        }
+      },
+    })
+  }
 
   async function detectSandbox() {
     setSandboxDetecting(true)
@@ -273,6 +335,10 @@ export default function SettingsModal({
     api.remote.getStatus().then(setRemoteSnap).catch(() => {})
     return api.remote.onStatus(setRemoteSnap)
   }, [])
+
+  useEffect(() => {
+    if (category === 'about') void loadBackups()
+  }, [category])
 
   async function toggleRemote(enabled: boolean) {
     patch({ remoteEnabled: enabled })
@@ -1179,6 +1245,42 @@ export default function SettingsModal({
                 >
                   导出
                 </Button>
+              </div>
+              <div className={styles.aboutRow}>
+                <span>数据恢复</span>
+                <div className={styles.actionRow}>
+                  <Select
+                    size="small"
+                    value={selectedBackup}
+                    loading={backupsLoading}
+                    disabled={!api.diagnostics.listBackups}
+                    placeholder={api.diagnostics.listBackups ? '暂无可用备份' : '当前版本暂不支持'}
+                    onChange={setSelectedBackup}
+                    style={{ width: 270 }}
+                    options={backups.map((backup) => ({
+                      value: backup.name,
+                      label: formatBackupLabel(backup),
+                      disabled: backup.status !== 'ready',
+                      title: backup.error,
+                    }))}
+                  />
+                  <Button
+                    size="small"
+                    icon={<RefreshCw size={13} />}
+                    loading={backupsLoading}
+                    disabled={!api.diagnostics.listBackups}
+                    onClick={() => void loadBackups()}
+                  />
+                  <Button
+                    size="small"
+                    danger
+                    loading={backupRestoring}
+                    disabled={!api.diagnostics.restoreBackup || !selectedBackup}
+                    onClick={restoreSelectedBackup}
+                  >
+                    恢复并重启
+                  </Button>
+                </div>
               </div>
             </div>
           )}

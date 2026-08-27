@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { resolve, sep } from 'path'
 import {
   isContainedPath,
@@ -17,6 +18,16 @@ import {
 } from './validators'
 
 const ROOT = resolve('/tmp/agent/sessions/ws-abc')
+const contractSource = readFileSync(new URL('./contract.ts', import.meta.url), 'utf8')
+const preloadSource = readFileSync(new URL('../../preload/index.ts', import.meta.url), 'utf8')
+
+describe('backup restore IPC contract', () => {
+  it('keeps restore methods optional and bridged for mixed-version startup', () => {
+    expect(contractSource).toContain('listBackups?:')
+    expect(contractSource).toContain('restoreBackup?:')
+    expect(preloadSource).toContain("diagnostics: ['getLogs', 'save', 'listBackups', 'restoreBackup']")
+  })
+})
 
 describe('path containment', () => {
   it('accepts a file directly inside the root', () => {

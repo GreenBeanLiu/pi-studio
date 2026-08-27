@@ -24,7 +24,7 @@ const METHODS = {
   win: ['minimize', 'maximize', 'close', 'flash'],
   app: ['version', 'piVersion'],
   clipboard: ['writeText'],
-  diagnostics: ['getLogs', 'save'],
+  diagnostics: ['getLogs', 'save', 'listBackups', 'restoreBackup'],
   settings: ['load', 'save', 'listCloudModels', 'onChanged'],
   llmProfiles: ['list', 'save', 'delete', 'refreshModels'],
   modelCatalog: ['loadProviderLabels'],

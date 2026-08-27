@@ -40,6 +40,16 @@ export type {
 
 // Type-safe wrapper around window.api (exposed by preload)
 
+export type LocalBackupSummary = {
+  name: string
+  createdAt: string
+  appVersion?: string | null
+  kind?: 'daily' | 'pre-restore'
+  fileCount?: number
+  status: 'ready' | 'invalid'
+  error?: string
+}
+
 export type DesktopApi = {
   platform: NodeJS.Platform
   win: {
@@ -61,6 +71,10 @@ export type DesktopApi = {
       defaultPath: string
       content: string
     }) => Promise<{ ok: true; path: string } | { cancelled: true } | { error: string }>
+    listBackups?: () => Promise<{ ok: true; backups: LocalBackupSummary[] } | { error: string }>
+    restoreBackup?: (payload: {
+      name: string
+    }) => Promise<{ ok: true; restarting?: boolean } | { error: string }>
   }
   settings: {
     load: () => Promise<SettingsView>

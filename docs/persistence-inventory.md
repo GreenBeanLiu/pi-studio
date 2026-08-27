@@ -22,6 +22,8 @@ Pi session files, the selected workspace, Docker, and remote integrations.
 | `userData/pi-agent/shared-memory.connection.json` | Local memory service port and bearer token | Regenerable; removed on quit | No |
 | `userData/logs/**` | Application diagnostics | Yes, with retention limit | No |
 | `userData/backups/YYYY-MM-DD/**` | Daily startup snapshots of critical configuration and SQLite state, with SHA-256 manifest; newest seven retained | Yes | No |
+| `userData/backups/pre-restore-*/**` | Protection points created immediately before a requested restore; newest three retained | Yes | No |
+| `userData/backups/.restore-pending.json` | Validated one-shot restore plan consumed before local stores open | Temporary | No |
 | `userData/sandbox/**` | Generated Dockerfile and RPC shim | Regenerable | No |
 | `<workspace>/.pi-studio/memory.md` | Workspace memory maintained with the project | Yes | No |
 | `<workspace>/.pi-studio/articles/**` | Exported Markdown/HTML article artifacts | Yes | Metadata only |
@@ -97,6 +99,14 @@ Before local databases are opened, startup creates at most one backup per UTC da
 and any SQLite WAL/SHM sidecars that exist. `manifest.json` records byte sizes and SHA-256 hashes.
 The newest seven daily snapshots are retained. Pi conversation JSONL, generated media, logs, and
 regenerable connection files are intentionally excluded to keep startup bounded.
+
+Settings can schedule a restore from a valid manifest. The running process never replaces an open
+SQLite database: it writes `.restore-pending.json` and relaunches. On the next startup, before IPC or
+the shared-memory service can open stores, the app verifies every file hash, creates a pre-restore
+protection point, stages the selected snapshot, and swaps files with rollback on failure. Files in the
+managed backup set that are absent from the selected snapshot are removed so the restored state is
+an exact snapshot. A failed plan is recorded in `.restore-failed.json` and consumed once to avoid a
+restart loop.
 
 ## Repository boundary
 
