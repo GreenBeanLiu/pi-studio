@@ -16,6 +16,8 @@ import {
   type RemoteControlSnapshot,
   type RemotePairingCode,
   type LocalBackupSummary,
+  type RuntimeEventLogSnapshot,
+  type RuntimeRunSummary,
 } from '../lib/api'
 import { createDefaultSettingsView } from '../../../shared/contracts'
 import {
@@ -52,6 +54,27 @@ function formatBackupLabel(backup: LocalBackupSummary): string {
   const timestamp = Number.isNaN(createdAt.getTime()) ? backup.createdAt : createdAt.toLocaleString()
   const kind = backup.kind === 'pre-restore' ? '恢复前保护点' : '每日备份'
   return `${timestamp} · ${kind}${backup.status === 'invalid' ? ' · 已损坏' : ''}`
+}
+
+function formatRuntimeTimestamp(value: string | null): string {
+  if (!value) return '未知'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function runtimeRunStatus(run: RuntimeRunSummary): { label: string; color: string } {
+  if (run.cleanup?.status === 'error') return { label: '清理失败', color: 'red' }
+  if (run.lastEventType === 'run_failed') return { label: '失败', color: 'red' }
+  if (run.cleanup) return { label: '已清理', color: 'default' }
+  if (run.settledAt) return { label: '已结束', color: 'green' }
+  if (run.lastEventAt) return { label: '运行中', color: 'blue' }
+  return { label: '已启动', color: 'processing' }
+}
+
+function runtimeRunName(run: RuntimeRunSummary): string {
+  const kind = run.kind ?? 'unknown'
+  const model = run.model ? ` · ${run.model}` : ''
+  return `${kind}${model}`
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -165,6 +188,70 @@ const useStyles = createStyles(({ token, css }) => ({
     }
   `,
 
+  runtimePanel: css`
+    padding: 12px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  `,
+
+  runtimeHeader: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  `,
+
+  runtimeList: css`
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  `,
+
+  runtimeRun: css`
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: ${token.borderRadius}px;
+    background: ${token.colorFillQuaternary};
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  `,
+
+  runtimeRunTop: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  `,
+
+  runtimeRunTitle: css`
+    min-width: 0;
+    color: ${token.colorText};
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  `,
+
+  runtimeRunMeta: css`
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    color: ${token.colorTextTertiary};
+    font-size: 12px;
+  `,
+
+  runtimePath: css`
+    min-width: 0;
+    overflow-wrap: anywhere;
+  `,
+
+  mono: css`
+    font-family: ${token.fontFamilyCode};
+  `,
+
   profileCard: css`
     border: 1px solid ${token.colorBorderSecondary};
     border-radius: ${token.borderRadiusLG}px;
@@ -237,6 +324,8 @@ export default function SettingsModal({
   const [selectedBackup, setSelectedBackup] = useState<string>()
   const [backupsLoading, setBackupsLoading] = useState(false)
   const [backupRestoring, setBackupRestoring] = useState(false)
+  const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeEventLogSnapshot | null>(null)
+  const [runtimeDiagnosticsLoading, setRuntimeDiagnosticsLoading] = useState(false)
 
   async function loadBackups() {
     const listBackups = api.diagnostics.listBackups
@@ -259,6 +348,18 @@ export default function SettingsModal({
       message.error('读取备份列表失败')
     } finally {
       setBackupsLoading(false)
+    }
+  }
+
+  async function loadRuntimeDiagnostics() {
+    setRuntimeDiagnosticsLoading(true)
+    try {
+      const result = await api.diagnostics.getLogs()
+      setRuntimeDiagnostics(result.runtimeEvents ?? null)
+    } catch {
+      message.error('读取运行记录失败')
+    } finally {
+      setRuntimeDiagnosticsLoading(false)
     }
   }
 
@@ -337,7 +438,10 @@ export default function SettingsModal({
   }, [])
 
   useEffect(() => {
-    if (category === 'about') void loadBackups()
+    if (category === 'about') {
+      void loadBackups()
+      void loadRuntimeDiagnostics()
+    }
   }, [category])
 
   async function toggleRemote(enabled: boolean) {
@@ -1281,6 +1385,67 @@ export default function SettingsModal({
                     恢复并重启
                   </Button>
                 </div>
+              </div>
+              <div className={styles.runtimePanel}>
+                <div className={styles.runtimeHeader}>
+                  <span className={styles.label}>
+                    最近运行
+                    {runtimeDiagnostics?.truncated && <Tag color="default">尾部记录</Tag>}
+                    {runtimeDiagnostics?.invalidLines ? (
+                      <Tag color="orange">{runtimeDiagnostics.invalidLines} 行无效</Tag>
+                    ) : null}
+                  </span>
+                  <Button
+                    size="small"
+                    icon={<RefreshCw size={13} />}
+                    loading={runtimeDiagnosticsLoading}
+                    title="刷新运行记录"
+                    aria-label="刷新运行记录"
+                    onClick={() => void loadRuntimeDiagnostics()}
+                  />
+                </div>
+                {runtimeDiagnostics?.readError && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="运行记录读取失败"
+                    description={runtimeDiagnostics.readError}
+                  />
+                )}
+                {!runtimeDiagnosticsLoading && !runtimeDiagnostics?.readError && (
+                  <div className={styles.runtimeList}>
+                    {(runtimeDiagnostics?.runs ?? []).slice(0, 5).map((run) => {
+                      const status = runtimeRunStatus(run)
+                      return (
+                        <div key={run.runId} className={styles.runtimeRun}>
+                          <div className={styles.runtimeRunTop}>
+                            <span className={styles.runtimeRunTitle} title={runtimeRunName(run)}>
+                              {runtimeRunName(run)}
+                            </span>
+                            <Tag color={status.color}>{status.label}</Tag>
+                          </div>
+                          <div className={styles.runtimeRunMeta}>
+                            <span>事件 {run.eventCount}</span>
+                            <span>最后 {run.lastEventType ?? '无事件'}</span>
+                            <span>启动 {formatRuntimeTimestamp(run.startedAt)}</span>
+                            <span>更新 {formatRuntimeTimestamp(run.lastEventAt)}</span>
+                            {run.profileDigest && (
+                              <span className={styles.mono}>profile {run.profileDigest}</span>
+                            )}
+                          </div>
+                          {run.cwd && (
+                            <span className={cx(styles.labelHint, styles.runtimePath)}>
+                              {run.cwd}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {!runtimeDiagnostics?.runs.length && (
+                      <span className={styles.labelHint}>暂无运行记录</span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

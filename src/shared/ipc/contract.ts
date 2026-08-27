@@ -70,7 +70,7 @@ export type DesktopApi = {
       ok: true
       content: string
       agentJobs: AgentJobSnapshot[]
-      runtimeEvents: RuntimeEventLogSnapshot
+      runtimeEvents?: RuntimeEventLogSnapshot
     }>
     save: (payload: {
       defaultPath: string
