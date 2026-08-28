@@ -114,4 +114,39 @@ describe('LLM gateway model registration', () => {
       expect.objectContaining({ id: 'deepseek-v4-pro', reasoning: true }),
     ])
   })
+
+  it('uses cloud catalog model metadata before local name heuristics', () => {
+    const providers = buildGatewayProviderConfigs('https://relay.example', [
+      {
+        id: 'cloudflare-agent',
+        display_name: 'Cloudflare Agent',
+        base_url: 'https://worker.example/v1',
+        api_type: 'openai-completions',
+        models: ['pi-agent-fast'],
+        model_metadata: {
+          'pi-agent-fast': {
+            name: 'Pi Agent Fast',
+            reasoning: false,
+            contextWindow: 256_000,
+            maxTokens: 16_000,
+            compat: { supportsReasoningEffort: false },
+          },
+        },
+        enabled: true,
+        sort_order: 0,
+        has_key: true,
+      },
+    ])
+
+    expect(providers['cloudflare-agent'].models).toEqual([
+      {
+        id: 'pi-agent-fast',
+        name: 'Pi Agent Fast',
+        reasoning: false,
+        contextWindow: 256_000,
+        maxTokens: 16_000,
+        compat: { supportsReasoningEffort: false },
+      },
+    ])
+  })
 })

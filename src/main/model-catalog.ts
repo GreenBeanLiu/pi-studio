@@ -18,7 +18,7 @@ import {
   writeModelsOverride,
   migrateDirectProviderRetirement,
 } from './settings'
-import type { LlmProfileSavePayload, ModelCatalogView } from '../shared/contracts'
+import type { LlmModelMetadata, LlmProfileSavePayload, ModelCatalogView } from '../shared/contracts'
 import { DEEPSEEK_PROFILE_ID } from '../shared/deepseek-profile'
 
 type ModelProjection = {
@@ -67,6 +67,26 @@ function catalogCachePath(): string {
   return join(agentConfigDir(), 'model-catalog-cache.json')
 }
 
+function validMetadataEntry(value: unknown): value is LlmModelMetadata {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const metadata = value as Partial<LlmModelMetadata>
+  if (metadata.name !== undefined && typeof metadata.name !== 'string') return false
+  if (metadata.reasoning !== undefined && typeof metadata.reasoning !== 'boolean') return false
+  if (metadata.contextWindow !== undefined && typeof metadata.contextWindow !== 'number') return false
+  if (metadata.maxTokens !== undefined && typeof metadata.maxTokens !== 'number') return false
+  if (metadata.input !== undefined) {
+    if (!Array.isArray(metadata.input)) return false
+    if (!metadata.input.every((item) => item === 'text' || item === 'image')) return false
+  }
+  return true
+}
+
+function validMetadataMap(value: unknown): value is Record<string, LlmModelMetadata> {
+  if (value === undefined) return true
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value).every(validMetadataEntry)
+}
+
 function isLlmProviderProfile(value: unknown): value is LlmProviderProfile {
   if (!value || typeof value !== 'object') return false
   const profile = value as Partial<LlmProviderProfile>
@@ -79,6 +99,7 @@ function isLlmProviderProfile(value: unknown): value is LlmProviderProfile {
     profile.api_type === 'openai-completions' &&
     Array.isArray(profile.models) &&
     profile.models.every((model) => typeof model === 'string' && !!model.trim()) &&
+    validMetadataMap(profile.model_metadata) &&
     typeof profile.enabled === 'boolean' &&
     typeof profile.sort_order === 'number' &&
     Number.isFinite(profile.sort_order) &&

@@ -261,4 +261,25 @@ describe('model catalog coordination', () => {
       expect.objectContaining({ gatewayProfiles: [] }),
     )
   })
+
+  it('keeps provider profiles with cloud-supplied model metadata', async () => {
+    const metadataProfile: LlmProviderProfile = {
+      ...profile,
+      model_metadata: {
+        'gpt-5.5': {
+          name: 'GPT 5.5',
+          reasoning: true,
+          input: ['text'],
+          contextWindow: 512_000,
+        },
+      },
+    }
+    const deps = dependencies({
+      fetchCatalog: vi.fn(async () => ({ providers: [metadataProfile] })),
+    })
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.sync()).resolves.toEqual({ profiles: [metadataProfile] })
+    expect(deps.saveCachedProfiles).toHaveBeenCalledWith([metadataProfile])
+  })
 })

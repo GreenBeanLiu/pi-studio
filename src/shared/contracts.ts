@@ -8,12 +8,31 @@ export type Workspace = {
   lastOpenedAt: string
 }
 
+export type LlmModelMetadata = {
+  name?: string
+  reasoning?: boolean
+  input?: Array<'text' | 'image'>
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }
+  contextWindow?: number
+  maxTokens?: number
+  thinkingLevelMap?: Partial<
+    Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>
+  >
+  compat?: {
+    supportsDeveloperRole?: boolean
+    supportsReasoningEffort?: boolean
+    requiresReasoningContentOnAssistantMessages?: boolean
+    thinkingFormat?: 'deepseek'
+  }
+}
+
 export type LlmProviderProfile = {
   id: string
   display_name: string
   base_url?: string
   api_type: 'openai-completions'
   models: string[]
+  model_metadata?: Record<string, LlmModelMetadata>
   enabled: boolean
   sort_order: number
   has_key: boolean

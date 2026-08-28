@@ -159,6 +159,9 @@ pi-coding-agent ──OpenAI 兼容请求──> trail-api/llm/v1/{profile_id}/c
 
 桌面通过 `/llm/session-token` 换取短期凭据，再把 `baseUrl` 指给网关，
 配置在 `src/main/llm-gateway.ts` 与 `agent-runtime-config.ts`。
+`/llm/catalog` 同时下发可选 `model_metadata`，桌面优先使用云端给出的
+`reasoning`、`contextWindow`、`cost`、`thinkingLevelMap`、兼容性标记；旧 catalog
+没有 metadata 时才回退到本地模型名启发式判断。
 
 ---
 

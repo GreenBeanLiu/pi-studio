@@ -1,4 +1,4 @@
-import type { LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
+import type { LlmModelMetadata, LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
 
 export type { LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
 
@@ -19,21 +19,7 @@ export function listEnabledLlmRoutes(catalog: LlmCatalog): string[] {
 export type PiCustomModelConfig = {
   id: string
   name: string
-  reasoning?: boolean
-  input?: Array<'text' | 'image'>
-  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }
-  contextWindow?: number
-  maxTokens?: number
-  thinkingLevelMap?: Partial<
-    Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>
-  >
-  compat?: {
-    supportsDeveloperRole?: boolean
-    supportsReasoningEffort?: boolean
-    requiresReasoningContentOnAssistantMessages?: boolean
-    thinkingFormat?: 'deepseek'
-  }
-}
+} & Omit<LlmModelMetadata, 'name'>
 
 export type PiCustomProviderConfig = {
   baseUrl: string
@@ -42,22 +28,25 @@ export type PiCustomProviderConfig = {
   models: PiCustomModelConfig[]
 }
 
-/**
- * 网关模型是自定义 provider id(three-a-*),pi 内置 registry 没有它们的元数据,
- * getAvailableModels 里 reasoning 全默认成 false —— 于是聊天页 hover 不显示推理深度、
- * pi 也不给上游带 reasoning_effort。这里按 id 补判断,让推理类模型标 reasoning:true +
- * supportsReasoningEffort。宁可给非推理模型多带个被忽略的参数,也别漏掉真推理模型。
- */
+/** 云端 catalog 可下发模型能力；这里的模型名判断只作为旧 catalog 的兜底。 */
 export function isGatewayReasoningModel(id: string): boolean {
   const s = id.toLowerCase()
   if (/non-reasoning|composer|fast|build|image|embed|whisper|tts/.test(s)) return false
   return /grok-4|grok-[5-9]|gpt-5|gpt-[6-9]|^o[1-9]|reasoning|deepseek-(?:r|v4)|glm.*think|qwq/.test(s)
 }
 
-function buildGatewayModel(profileId: string, id: string): PiCustomModelConfig {
+function modelFromMetadata(id: string, metadata: LlmModelMetadata): PiCustomModelConfig {
+  const { name, ...rest } = metadata
+  return { id, name: name?.trim() || id, ...rest }
+}
+
+function buildGatewayModel(profile: LlmProviderProfile, id: string): PiCustomModelConfig {
+  const metadata = profile.model_metadata?.[id]
+  if (metadata) return modelFromMetadata(id, metadata)
+
   const reasoning = isGatewayReasoningModel(id)
   if (!reasoning) return { id, name: id }
-  if (profileId === 'deepseek' && id.toLowerCase().startsWith('deepseek-v4-')) {
+  if (profile.id === 'deepseek' && id.toLowerCase().startsWith('deepseek-v4-')) {
     const isPro = id.toLowerCase() === 'deepseek-v4-pro'
     return {
       id,
@@ -106,7 +95,7 @@ export function buildGatewayProviderConfigs(
           baseUrl: `${root}/llm/v1/${encodeURIComponent(profile.id)}`,
           api: 'openai-completions' as const,
           apiKey: '$PI_STUDIO_LLM_KEY' as const,
-          models: profile.models.map((id) => buildGatewayModel(profile.id, id)),
+          models: profile.models.map((id) => buildGatewayModel(profile, id)),
         },
       ]),
   )
