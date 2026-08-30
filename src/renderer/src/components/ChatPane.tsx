@@ -34,8 +34,6 @@ import {
   type SlashCommand,
   type ThinkingLevel,
   type QueueMode,
-  type GitDiffSnapshot,
-  type GitChangedFile,
   type PiRuntimeEvent,
   type SessionExportFormat,
   type AgentRunStatusSnapshot,
@@ -83,7 +81,28 @@ import {
   updateToolResult,
 } from './chat-run-records'
 import { applyStreamingMessage, assistantErrorOf, beginStreamingMessage } from './chat-stream'
+import { useGitDiff, type GitDiffDeps } from './use-git-diff'
 import { buildMemorySuggestion } from './chat-memory-note'
+
+/**
+ * useGitDiff 只认注入进来的环境(见 use-git-diff.ts)。这里把它接到真的 IPC 和 antd 上。
+ * 模块级常量 —— 引用稳定,不会每次渲染都让 hook 里的 useCallback 失效。
+ */
+const gitDiffDeps: GitDiffDeps = {
+  git: api.git,
+  notifyError: (message) => antdMessage.error(message),
+  notifySuccess: (message) => antdMessage.success(message),
+  confirmDiscard: (onOk) => {
+    Modal.confirm({
+      title: '撤销本次 Agent 运行变更？',
+      content: '只会恢复到本次运行开始时的工作区快照；运行前已有的未提交修改和文件会保留。',
+      okText: '撤销本次变更',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk,
+    })
+  },
+}
 
 type Props = {
   workspace: Workspace | null
@@ -126,9 +145,10 @@ export default function ChatPane({
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
-  const [diffOpen, setDiffOpen] = useState(false)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const [diffSnapshot, setDiffSnapshot] = useState<GitDiffSnapshot | null>(null)
+  const gitDiff = useGitDiff(workspace, gitDiffDeps)
+  // 事件订阅那个 effect 的依赖是 [],只能捕获引用稳定的东西。showSnapshot 是
+  // useCallback([]),满足条件;gitDiff 对象本身每次渲染都是新的,别整个捕。
+  const { showSnapshot: showDiffSnapshot } = gitDiff
   const [sessionExportLoading, setSessionExportLoading] = useState<SessionExportFormat | null>(null)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memoryLoading, setMemoryLoading] = useState(false)
@@ -493,8 +513,8 @@ export default function ChatPane({
             .then((result) => {
               const snapshot = 'ok' in result ? result.snapshot : null
               if ('ok' in result && result.snapshot.status.trim()) {
-                setDiffSnapshot(result.snapshot)
-                setDiffOpen(true)
+                // showSnapshot 是 useCallback([]),引用稳定,可以安全地被这个 [] deps 的 effect 捕获
+                showDiffSnapshot(result.snapshot)
                 antdMessage.info('Agent 修改了工作区，请检查后接受或回滚')
                 if (completedRunId) {
                   const timestamp = new Date().toISOString()
@@ -971,76 +991,6 @@ export default function ChatPane({
     }
   }, [workspace, memorySuggestionDraft, memorySuggestionSaving])
 
-  const openGitDiff = useCallback(async () => {
-    if (!workspace) return
-    setDiffOpen(true)
-    setDiffLoading(true)
-    try {
-      const result = await api.git.diff()
-      if ('error' in result) {
-        antdMessage.error(result.error)
-        setDiffSnapshot(null)
-      } else {
-        setDiffSnapshot(result.snapshot)
-      }
-    } catch (err) {
-      antdMessage.error((err as Error).message ?? '读取 Git 变更失败')
-      setDiffSnapshot(null)
-    } finally {
-      setDiffLoading(false)
-    }
-  }, [workspace])
-
-  const acceptGitChanges = useCallback(async () => {
-    try {
-      const result = await api.git.acceptChanges()
-      if ('error' in result) {
-        antdMessage.error(result.error)
-        return
-      }
-      setDiffOpen(false)
-      setDiffSnapshot(null)
-      antdMessage.success('已接受本次 Agent 运行变更')
-    } catch (err) {
-      antdMessage.error((err as Error).message ?? '接受 Agent 运行变更失败')
-    }
-  }, [])
-
-  const openChangedFile = useCallback(async (file: GitChangedFile) => {
-    try {
-      const result = await api.git.showFile(file.path)
-      if ('error' in result) antdMessage.error(result.error)
-    } catch (err) {
-      antdMessage.error((err as Error).message ?? '打开文件失败')
-    }
-  }, [])
-
-  const discardGitChanges = useCallback(() => {
-    Modal.confirm({
-      title: '撤销本次 Agent 运行变更？',
-      content: '只会恢复到本次运行开始时的工作区快照；运行前已有的未提交修改和文件会保留。',
-      okText: '撤销本次变更',
-      cancelText: '取消',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        setDiffLoading(true)
-        try {
-          const result = await api.git.discardChanges()
-          if ('error' in result) {
-            antdMessage.error(result.error)
-            return
-          }
-          setDiffSnapshot(result.snapshot)
-          antdMessage.success('工作区变更已回滚')
-        } catch (err) {
-          antdMessage.error((err as Error).message ?? '回滚工作区变更失败')
-        } finally {
-          setDiffLoading(false)
-        }
-      },
-    })
-  }, [])
-
   // While the agent runs, Enter queues a follow-up and Ctrl+Enter steers
   // (interrupts); when idle both are a plain prompt.
   const sendMessage = useCallback(
@@ -1072,12 +1022,12 @@ export default function ChatPane({
           setInput(text)
           setImages(imgs ?? [])
           if (message.includes('must be accepted or reverted')) {
-            void openGitDiff()
+            void gitDiff.openDiff()
           }
         }
       }
     },
-    [input, images, sending, workspace, starting, agentIssue, runtimeCapabilities, openGitDiff],
+    [input, images, sending, workspace, starting, agentIssue, runtimeCapabilities, gitDiff.openDiff],
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -1475,32 +1425,35 @@ export default function ChatPane({
   }
 
   const isEmpty = messages.length === 0
-  const hasGitChanges = !!diffSnapshot?.status.trim()
-  const changedFiles = diffSnapshot?.files ?? []
-  const stagedCount = changedFiles.filter((file) => file.staged).length
-  const unstagedCount = changedFiles.filter((file) => file.unstaged).length
+  const {
+    snapshot: diffSnapshot,
+    hasChanges: hasGitChanges,
+    changedFiles,
+    stagedCount,
+    unstagedCount,
+  } = gitDiff
   const diffReviewModal = (
     <Modal
-      open={diffOpen}
-      onCancel={() => setDiffOpen(false)}
+      open={gitDiff.open}
+      onCancel={gitDiff.close}
       title="本次 Agent 运行变更"
       width={1120}
       centered
       footer={[
-        <Button key="refresh" onClick={openGitDiff} loading={diffLoading}>
+        <Button key="refresh" onClick={gitDiff.openDiff} loading={gitDiff.loading}>
           刷新
         </Button>,
-        <Button key="discard" danger disabled={!hasGitChanges || diffLoading} onClick={discardGitChanges}>
+        <Button key="discard" danger disabled={!hasGitChanges || gitDiff.loading} onClick={gitDiff.discard}>
           <RotateCcw size={13} />
           撤销本次变更
         </Button>,
-        <Button key="accept" type="primary" disabled={!hasGitChanges || diffLoading} onClick={acceptGitChanges}>
+        <Button key="accept" type="primary" disabled={!hasGitChanges || gitDiff.loading} onClick={gitDiff.accept}>
           <ShieldCheck size={13} />
           接受变更
         </Button>,
       ]}
     >
-      {diffLoading ? (
+      {gitDiff.loading ? (
         <div style={{ padding: 32, display: 'flex', justifyContent: 'center' }}>
           <Spin size="small" />
         </div>
@@ -1544,7 +1497,7 @@ export default function ChatPane({
                       </span>
                       <button
                         className={styles.fileAction}
-                        onClick={() => openChangedFile(file)}
+                        onClick={() => gitDiff.openChangedFile(file)}
                         title="在文件夹中显示"
                       >
                         <ExternalLink size={12} />
@@ -2175,7 +2128,7 @@ export default function ChatPane({
                 </Popover>
               )}
               {workspace && hasGitChanges && (
-                <button className={styles.modelChip} onClick={openGitDiff} title="查看工作区变更">
+                <button className={styles.modelChip} onClick={gitDiff.openDiff} title="查看工作区变更">
                   <GitCompare size={11} />
                   变更
                 </button>
