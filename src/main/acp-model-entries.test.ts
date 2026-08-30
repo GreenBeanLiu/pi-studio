@@ -14,6 +14,8 @@ const BINARY = agent('opencode', {
 })
 
 const DARWIN = { platformKey: 'darwin-aarch64' as const }
+/** 关掉白名单,单独验证「能不能启动」那一层过滤。 */
+const DARWIN_ANY = { ...DARWIN, allowedIds: null }
 
 describe('acpModelEntries', () => {
   it('projects a launchable agent into one selector entry', () => {
@@ -32,7 +34,7 @@ describe('acpModelEntries', () => {
   // 我们不自动装二进制(registry 里近一半没有校验和),列出来只会让用户
   // 点了之后拿到一个失败。
   it('leaves out agents that cannot actually be started', () => {
-    expect(acpModelEntries([NPX, BINARY, UVX], DARWIN).map((m) => m.id)).toEqual([
+    expect(acpModelEntries([NPX, BINARY, UVX], DARWIN_ANY).map((m) => m.id)).toEqual([
       'codex-acp',
       'fast-agent',
     ])
@@ -46,10 +48,31 @@ describe('acpModelEntries', () => {
   })
 
   it('sorts by id so the group does not reshuffle between refreshes', () => {
-    const ids = acpModelEntries([UVX, NPX, agent('auggie', { npx: { package: 'a' } })], DARWIN).map(
-      (m) => m.id,
-    )
+    const ids = acpModelEntries(
+      [UVX, NPX, agent('auggie', { npx: { package: 'a' } })],
+      DARWIN_ANY,
+    ).map((m) => m.id)
     expect(ids).toEqual(['auggie', 'codex-acp', 'fast-agent'])
+  })
+
+  // registry 有 39 个 agent,二十多个能启动。全列出来这一组就比其余所有模型
+  // 加起来还长,而绝大多数一个都不会被点。
+  it('lists only the allowlisted agents', () => {
+    const registry = [
+      NPX,
+      agent('claude-acp', { npx: { package: '@zed-industries/claude-code-acp' } }, 'Claude Agent'),
+      agent('auggie', { npx: { package: 'a' } }, 'Auggie CLI'),
+      agent('cline', { npx: { package: 'c' } }, 'Cline'),
+      agent('agoragentic-acp', { npx: { package: 'g' } }, 'Agoragentic'),
+      agent('autohand', { npx: { package: 'h' } }, 'Autohand Code'),
+      agent('gemini', { npx: { package: 'g' } }, 'Gemini CLI'),
+    ]
+    expect(acpModelEntries(registry, DARWIN).map((m) => m.id)).toEqual(['claude-acp', 'codex-acp'])
+  })
+
+  it('still drops an allowlisted agent that cannot start on this platform', () => {
+    const linuxOnly = agent('claude-acp', { binary: { 'linux-x86_64': { archive: 'u', cmd: 'c' } } })
+    expect(acpModelEntries([linuxOnly], DARWIN)).toEqual([])
   })
 
   // 上下文窗口和推理深度都是外部 agent 内部的事,宿主不知道也不该编。

@@ -13,18 +13,34 @@ import { resolveAcpLaunchSpec, type AcpPlatformKey } from './acp-launch-spec'
 export { ACP_MODEL_PROVIDER, isAcpModelRoute } from '../shared/model-route'
 
 /**
- * 只列真的能启动的 agent。
+ * 选择器里只放这两个。
  *
- * 二进制分发的 16 个(cursor、devin、goose、opencode……)故意不进列表:
+ * registry 现在有 39 个 agent,其中能启动的也有二十多个 —— 全列出来,模型选择
+ * 器里一组就比其余所有模型加起来还长,而绝大多数用户一个都不会点。要用别的走
+ * 「自定义命令」手动接。
+ */
+export const ACP_ALLOWED_AGENT_IDS: readonly string[] = ['claude-acp', 'codex-acp']
+
+/**
+ * 只列真的能启动、且在白名单里的 agent。
+ *
+ * 二进制分发的 16 个(cursor、devin、goose、opencode……)本来就进不来:
  * 我们不自动下载安装(registry 里近一半二进制分发没有校验和),列出来只会让
- * 用户点了之后拿到一个失败。要用的话走「自定义命令」手动接。
+ * 用户点了之后拿到一个失败。
+ *
+ * `allowedIds: null` 关掉白名单,只保留可启动性过滤 —— 单测用它单独验证那一层。
  */
 export function acpModelEntries(
   agents: readonly AcpRegistryAgent[],
-  options?: { platformKey?: AcpPlatformKey | null },
+  options?: { platformKey?: AcpPlatformKey | null; allowedIds?: readonly string[] | null },
 ): ModelInfo[] {
+  const allowed =
+    options?.allowedIds === null
+      ? null
+      : new Set(options?.allowedIds ?? ACP_ALLOWED_AGENT_IDS)
   const entries: ModelInfo[] = []
   for (const agent of agents) {
+    if (allowed && !allowed.has(agent.id)) continue
     const resolved = resolveAcpLaunchSpec(agent, options)
     if (!resolved.ok) continue
     entries.push({
