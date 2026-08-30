@@ -35,9 +35,9 @@ import { QRCodeSVG } from 'qrcode.react'
 
 type Settings = SettingsView & { clearCloudImageKey?: boolean }
 
-// 云端线路管理界面暂不展示(2026-07-19 用户定):云端能用即可,线路/权限开通后台化。
+// 云端线路管理界面已开放:用于维护 provider 分组、同步模型、查看 Cloudflare Agent health。
 // 本地直连已于 2026-08-19 整体退役,不再有可恢复的开关。
-const SHOW_CLOUD_LANE_ADMIN: boolean = false
+const SHOW_CLOUD_LANE_ADMIN: boolean = true
 
 // 安全策略分类已移除(2026-07-17):隔离职责交给沙箱(WSL2+bubblewrap),
 // 规则式软拦截(securityGuard/策略编辑器)不再暴露,后端代码保留但不启用。
