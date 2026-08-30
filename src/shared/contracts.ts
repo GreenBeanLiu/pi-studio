@@ -42,6 +42,57 @@ export type LlmProviderProfile = {
   new_models?: string[]
 }
 
+export type LlmProviderRouteStats = {
+  requestCount: number
+  successCount: number
+  failureCount: number
+  failedAttemptCount: number
+  lastRequestAt?: string | null
+  lastStatus?: number | null
+  lastError?: string | null
+}
+
+export type LlmProviderRecentFailure = {
+  at?: string
+  model?: string
+  routeId?: string
+  status?: number
+  message?: string
+}
+
+export type LlmProviderHealthState = {
+  requestCount: number
+  failedAttemptCount: number
+  lastRequestAt?: string | null
+  lastRouteId?: string | null
+  lastStatus?: number | null
+  lastError?: string | null
+  routeStats: Record<string, LlmProviderRouteStats>
+  recentFailures: LlmProviderRecentFailure[]
+}
+
+export type LlmProviderHealth =
+  | {
+      id: string
+      display_name: string
+      base_url?: string
+      supported: true
+      ok: boolean
+      advertisedModels: string[]
+      upstreams: Array<{ id?: string; baseUrl?: string }>
+      modelRoutes: Record<string, string[]>
+      modelMetadata: Record<string, LlmModelMetadata>
+      state: LlmProviderHealthState
+    }
+  | {
+      id: string
+      display_name: string
+      supported: false
+      ok: false
+      status_code: number
+      error: string
+    }
+
 export type LlmProfileWrite = {
   id: string
   display_name: string

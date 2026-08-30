@@ -163,6 +163,11 @@ pi-coding-agent ──OpenAI 兼容请求──> trail-api/llm/v1/{profile_id}/c
 `reasoning`、`contextWindow`、`cost`、`thinkingLevelMap`、兼容性标记；旧 catalog
 没有 metadata 时才回退到本地模型名启发式判断。
 
+Cloudflare Agent provider 额外暴露 `/provider/health` 时，桌面通过 backend 的
+`/llm/profiles/{id}/provider-health` 代理读取健康状态。这个链路仍由 backend
+注入 provider key，只把清洗后的 route stats、recent failures 和模型元数据返回到
+renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问题。
+
 ---
 
 ## 5. 关键文件索引

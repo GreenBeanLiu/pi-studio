@@ -418,6 +418,13 @@ export function registerIpcHandlers(): void {
       return { error: (err as Error).message ?? String(err) }
     }
   })
+  ipcMain.handle('llmProfiles:providerHealth', async (_event, id: string) => {
+    try {
+      return { ok: true, health: await modelCatalog.providerHealth(id) }
+    } catch (err) {
+      return { error: (err as Error).message ?? String(err) }
+    }
+  })
 
   ipcMain.handle('settings:listCloudModels', async (_event, payload: unknown) => {
     try {

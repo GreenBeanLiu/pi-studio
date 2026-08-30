@@ -1,6 +1,11 @@
-import type { LlmModelMetadata, LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
+import type {
+  LlmModelMetadata,
+  LlmProfileWrite,
+  LlmProviderHealth,
+  LlmProviderProfile,
+} from '../shared/contracts'
 
-export type { LlmProfileWrite, LlmProviderProfile } from '../shared/contracts'
+export type { LlmProfileWrite, LlmProviderHealth, LlmProviderProfile } from '../shared/contracts'
 
 export type LlmCatalog = { providers: LlmProviderProfile[] }
 
@@ -182,4 +187,12 @@ export function refreshLlmProfileModels(
   return gatewayJson(relay, appKey, `/llm/profiles/${encodeURIComponent(id)}/refresh-models`, {
     method: 'POST',
   })
+}
+
+export function fetchLlmProviderHealth(
+  relay: string,
+  appKey: string,
+  id: string,
+): Promise<LlmProviderHealth> {
+  return gatewayJson(relay, appKey, `/llm/profiles/${encodeURIComponent(id)}/provider-health`)
 }

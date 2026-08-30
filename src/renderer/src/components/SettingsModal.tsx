@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
 import { Alert, Input, Button, Modal, Select, Switch, Tag, Popconfirm, message } from 'antd'
-import { Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
+import { Activity, Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
 import {
   api,
   type Channel,
   type ChannelType,
   type SettingsView,
+  type LlmProviderHealth,
   type LlmProfileWrite,
   type LlmProviderProfile,
   type ProviderConnectionResult,
@@ -75,6 +76,48 @@ function runtimeRunName(run: RuntimeRunSummary): string {
   const kind = run.kind ?? 'unknown'
   const model = run.model ? ` · ${run.model}` : ''
   return `${kind}${model}`
+}
+
+function formatLlmProviderHealth(health: LlmProviderHealth): string {
+  if (!health.supported) {
+    return `这条线路还没有 provider health 端点。\n\n${health.error}`
+  }
+
+  const state = health.state
+  const routeLines = Object.entries(state.routeStats).map(([routeId, stats]) => {
+    const successRate = stats.requestCount > 0
+      ? `，成功率 ${Math.round((stats.successCount / stats.requestCount) * 100)}%`
+      : ''
+    const lastStatus = stats.lastStatus === undefined || stats.lastStatus === null
+      ? ''
+      : `，最后状态 ${stats.lastStatus}`
+    const lastError = stats.lastError ? `，最后错误 ${stats.lastError}` : ''
+    return `${routeId}: 请求 ${stats.requestCount}，成功 ${stats.successCount}，失败 ${stats.failureCount}，失败尝试 ${stats.failedAttemptCount}${successRate}${lastStatus}${lastError}`
+  })
+  const failureLines = state.recentFailures.slice(0, 6).map((failure) => {
+    const at = formatRuntimeTimestamp(failure.at ?? null)
+    const route = failure.routeId ?? 'unknown-route'
+    const model = failure.model ?? 'unknown-model'
+    const status = failure.status === undefined ? '无状态码' : `HTTP ${failure.status}`
+    const message = failure.message ? `: ${failure.message}` : ''
+    return `${at} · ${route} · ${model} · ${status}${message}`
+  })
+
+  return [
+    `状态: ${health.ok ? 'ok' : 'degraded'}`,
+    `总请求: ${state.requestCount}`,
+    `失败尝试: ${state.failedAttemptCount}`,
+    `最后请求: ${formatRuntimeTimestamp(state.lastRequestAt ?? null)}`,
+    `最后路由: ${state.lastRouteId ?? '暂无'}`,
+    `暴露模型: ${health.advertisedModels.length}`,
+    `上游线路: ${health.upstreams.length}`,
+    '',
+    'Route stats',
+    routeLines.length > 0 ? routeLines.join('\n') : '暂无 route stats',
+    '',
+    'Recent failures',
+    failureLines.length > 0 ? failureLines.join('\n') : '最近没有失败记录',
+  ].join('\n')
 }
 
 const useStyles = createStyles(({ token, css }) => ({
@@ -314,6 +357,7 @@ export default function SettingsModal({
   const [llmProfiles, setLlmProfiles] = useState<LlmProviderProfile[]>([])
   const [llmProfilesLoading, setLlmProfilesLoading] = useState(false)
   const [llmProfilesError, setLlmProfilesError] = useState('')
+  const [llmProfileHealthLoading, setLlmProfileHealthLoading] = useState<string | null>(null)
   const [llmProfileDraft, setLlmProfileDraft] = useState<(LlmProfileWrite & { create: boolean }) | null>(null)
   const [llmProfileSaving, setLlmProfileSaving] = useState(false)
   const [deepSeekApiKey, setDeepSeekApiKey] = useState('')
@@ -540,25 +584,52 @@ export default function SettingsModal({
 
   async function refreshLlmModels(id: string) {
     setLlmProfilesLoading(true)
-    const result = await api.llmProfiles.refreshModels(id)
-    if ('error' in result) setLlmProfilesError(result.error)
-    else {
-      await loadLlmProfiles()
-      // 刷新只做减法:探活剔除调不通的,新模型只报不加(上游一个分组里混着图像和
-      // 视频模型,整表覆盖会把它们灌进聊天列表)。两边都得说一声,否则用户只会
-      // 看见模型莫名其妙少了几个、或者压根不知道上游出了新模型。
-      const dropped = result.profile?.unavailable_models ?? []
-      const discovered = result.profile?.new_models ?? []
-      if (dropped.length > 0) {
-        message.warning(`实际调用不通，已剔除：${dropped.join('、')}`)
+    try {
+      const result = await api.llmProfiles.refreshModels(id)
+      if ('error' in result) setLlmProfilesError(result.error)
+      else {
+        await loadLlmProfiles()
+        // 刷新只做减法:探活剔除调不通的,新模型只报不加(上游一个分组里混着图像和
+        // 视频模型,整表覆盖会把它们灌进聊天列表)。两边都得说一声,否则用户只会
+        // 看见模型莫名其妙少了几个、或者压根不知道上游出了新模型。
+        const dropped = result.profile?.unavailable_models ?? []
+        const discovered = result.profile?.new_models ?? []
+        if (dropped.length > 0) {
+          message.warning(`实际调用不通，已剔除：${dropped.join('、')}`)
+        }
+        if (discovered.length > 0) {
+          message.info(`上游新增（未自动添加，可手动填入）：${discovered.join('、')}`)
+        }
+        if (dropped.length === 0 && discovered.length === 0) {
+          message.success('模型列表已是最新，全部可用')
+        }
+        if (result.warning) setLlmProfilesError(result.warning)
       }
-      if (discovered.length > 0) {
-        message.info(`上游新增（未自动添加，可手动填入）：${discovered.join('、')}`)
+    } finally {
+      setLlmProfilesLoading(false)
+    }
+  }
+
+  async function showLlmProviderHealth(profile: LlmProviderProfile) {
+    setLlmProfileHealthLoading(profile.id)
+    setLlmProfilesError('')
+    try {
+      const result = await api.llmProfiles.providerHealth(profile.id)
+      if ('error' in result) {
+        setLlmProfilesError(result.error)
+        return
       }
-      if (dropped.length === 0 && discovered.length === 0) {
-        message.success('模型列表已是最新，全部可用')
-      }
-      if (result.warning) setLlmProfilesError(result.warning)
+      Modal.info({
+        title: `${profile.display_name} 线路健康`,
+        width: 680,
+        content: (
+          <pre className={styles.mono} style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {formatLlmProviderHealth(result.health)}
+          </pre>
+        ),
+      })
+    } finally {
+      setLlmProfileHealthLoading(null)
     }
   }
 
@@ -878,6 +949,13 @@ export default function SettingsModal({
                       </span>
                     </div>
                     <div className={styles.actionRow} style={{ flexWrap: 'nowrap' }}>
+                      <Button
+                        size="small"
+                        title="查看 provider health"
+                        icon={<Activity size={13} />}
+                        loading={llmProfileHealthLoading === profile.id}
+                        onClick={() => showLlmProviderHealth(profile)}
+                      />
                       <Button size="small" title="从上游 /models 同步" icon={<RefreshCw size={13} />} onClick={() => refreshLlmModels(profile.id)} />
                       <Button size="small" title="编辑" icon={<Pencil size={13} />} onClick={() => editLlmProfile(profile)} />
                       <Popconfirm title="删除这条模型线路？" onConfirm={() => removeLlmProfile(profile.id)}>

@@ -48,3 +48,9 @@ describe('backup restore IPC contract', () => {
     expect(ipcSource).toContain("requiredString(payload.name, '备份名称')")
   })
 })
+
+describe('provider health IPC contract', () => {
+  it('registers the provider health handler', () => {
+    expect(ipcSource).toContain("ipcMain.handle('llmProfiles:providerHealth'")
+  })
+})

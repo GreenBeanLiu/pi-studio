@@ -26,7 +26,7 @@ const METHODS = {
   clipboard: ['writeText'],
   diagnostics: ['getLogs', 'save', 'listBackups', 'restoreBackup'],
   settings: ['load', 'save', 'listCloudModels', 'onChanged'],
-  llmProfiles: ['list', 'save', 'delete', 'refreshModels'],
+  llmProfiles: ['list', 'save', 'delete', 'refreshModels', 'providerHealth'],
   modelCatalog: ['loadProviderLabels'],
   sandbox: ['detect', 'imageStatus', 'buildImage', 'onBuildProgress'],
   remote: ['getStatus', 'setEnabled', 'generatePairingCode', 'resetPairings', 'onStatus'],

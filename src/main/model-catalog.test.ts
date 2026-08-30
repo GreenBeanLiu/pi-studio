@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ModelCatalogCoordinator, type ModelCatalogDependencies } from './model-catalog'
-import type { LlmProviderProfile, LlmProfileWrite } from './llm-gateway'
+import type { LlmProviderHealth, LlmProviderProfile, LlmProfileWrite } from './llm-gateway'
 
 const profile: LlmProviderProfile = {
   id: 'three-a-main',
@@ -22,6 +22,38 @@ const deepSeekProfile: LlmProviderProfile = {
   enabled: true,
   sort_order: 2,
   has_key: true,
+}
+
+const providerHealth: LlmProviderHealth = {
+  id: 'three-a-main',
+  display_name: '3A Main',
+  base_url: 'https://api.3a-api.com/v1',
+  supported: true,
+  ok: true,
+  advertisedModels: ['gpt-5.5'],
+  upstreams: [{ id: 'default', baseUrl: 'https://api.3a-api.com/v1' }],
+  modelRoutes: { 'gpt-5.5': ['default'] },
+  modelMetadata: {},
+  state: {
+    requestCount: 2,
+    failedAttemptCount: 0,
+    lastRequestAt: '2026-08-31T00:00:00.000Z',
+    lastRouteId: 'default',
+    lastStatus: 200,
+    lastError: null,
+    routeStats: {
+      default: {
+        requestCount: 2,
+        successCount: 2,
+        failureCount: 0,
+        failedAttemptCount: 0,
+        lastRequestAt: '2026-08-31T00:00:00.000Z',
+        lastStatus: 200,
+        lastError: null,
+      },
+    },
+    recentFailures: [],
+  },
 }
 
 function dependencies(
@@ -49,6 +81,7 @@ function dependencies(
     updateProfile: vi.fn(async () => profile),
     deleteProfile: vi.fn(async () => undefined),
     refreshProfileModels: vi.fn(async () => profile),
+    providerHealth: vi.fn(async () => providerHealth),
     projectModels: vi.fn(),
     loadCachedProfiles: vi.fn(() => []),
     saveCachedProfiles: vi.fn(),
@@ -228,6 +261,18 @@ describe('model catalog coordination', () => {
     await expect(catalog.loadProviderLabels()).resolves.toEqual({
       providerLabels: { 'three-a-main': '3A Main' },
     })
+  })
+
+  it('loads provider health through the configured cloud gateway', async () => {
+    const deps = dependencies()
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.providerHealth('three-a-main')).resolves.toEqual(providerHealth)
+    expect(deps.providerHealth).toHaveBeenCalledWith(
+      'https://trail-api.glanger.xyz',
+      'desktop-key',
+      'three-a-main',
+    )
   })
 
   it('loads provider labels from the last valid cache when the gateway is offline', async () => {

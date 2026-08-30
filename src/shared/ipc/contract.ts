@@ -21,6 +21,7 @@ import type {
 } from '@earendil-works/pi-ai/compat'
 import type {
   LlmProfileSavePayload,
+  LlmProviderHealth,
   LlmProviderProfile,
   ModelCatalogView,
   SettingsSaveInput,
@@ -31,6 +32,7 @@ import type {
 export type {
   LlmProfileWrite,
   LlmProfileSavePayload,
+  LlmProviderHealth,
   LlmProviderProfile,
   ModelCatalogView,
   SettingsSaveInput,
@@ -100,6 +102,9 @@ export type DesktopApi = {
     refreshModels: (
       id: string,
     ) => Promise<{ ok: true; profile: LlmProviderProfile; warning?: string } | { error: string }>
+    providerHealth: (
+      id: string,
+    ) => Promise<{ ok: true; health: LlmProviderHealth } | { error: string }>
   }
   modelCatalog: {
     loadProviderLabels: () => Promise<{ ok: true; view: ModelCatalogView } | { error: string }>

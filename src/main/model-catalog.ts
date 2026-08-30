@@ -6,10 +6,12 @@ import {
   createLlmSessionToken,
   deleteLlmProfile,
   fetchLlmCatalog,
+  fetchLlmProviderHealth,
   listLlmProfiles,
   refreshLlmProfileModels,
   updateLlmProfile,
   type LlmCatalog,
+  type LlmProviderHealth,
   type LlmProviderProfile,
 } from './llm-gateway'
 import {
@@ -35,6 +37,7 @@ export type ModelCatalogDependencies = {
   updateProfile: typeof updateLlmProfile
   deleteProfile: typeof deleteLlmProfile
   refreshProfileModels: typeof refreshLlmProfileModels
+  providerHealth: typeof fetchLlmProviderHealth
   projectModels: (projection: ModelProjection) => void
   loadCachedProfiles: () => LlmProviderProfile[]
   saveCachedProfiles: (profiles: LlmProviderProfile[]) => void
@@ -139,6 +142,7 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
     updateProfile: updateLlmProfile,
     deleteProfile: deleteLlmProfile,
     refreshProfileModels: refreshLlmProfileModels,
+    providerHealth: fetchLlmProviderHealth,
     projectModels: (projection) =>
       writeModelsOverride(projection.gatewayRelay, projection.gatewayProfiles),
     loadCachedProfiles: loadCatalogCache,
@@ -314,6 +318,11 @@ export class ModelCatalogCoordinator {
       this.dependencies.refreshProfileModels(connection.relay, connection.key, id),
     )
     return { profile: result.value, warning: result.warning }
+  }
+
+  async providerHealth(id: string): Promise<LlmProviderHealth> {
+    const connection = this.requireConnection()
+    return this.dependencies.providerHealth(connection.relay, connection.key, id)
   }
 
   private requireConnection(): Extract<CloudConnection, { available: true }> {
