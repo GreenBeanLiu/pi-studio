@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const chatPane = readFileSync(new URL('./ChatPane.tsx', import.meta.url), 'utf8')
+// 样式在 2026-08-30 拆到了 ChatPane.styles.ts;CSS 数值只能这样断言(渲染不出来)。
+const chatPaneStyles = readFileSync(new URL('./ChatPane.styles.ts', import.meta.url), 'utf8')
 
 // 2026-08-08: 聊天区三处手感问题——选完模型弹层赖着不走、回到底部的箭头和输入框
 // 上那排按钮挤在一起、断了一轮之后想把刚发的原文捞回来只能手选。
@@ -30,7 +32,7 @@ describe('chat pane controls', () => {
   })
 
   it('keeps the scroll-to-bottom button clear of the input toolbar', () => {
-    const style = chatPane.slice(chatPane.indexOf('scrollBottomBtn: css`'))
+    const style = chatPaneStyles.slice(chatPaneStyles.indexOf('scrollBottomBtn: css`'))
     const bottom = style.match(/bottom:\s*(\d+)px/)
     expect(bottom).not.toBeNull()
     expect(Number(bottom![1])).toBeGreaterThanOrEqual(56)
@@ -44,7 +46,7 @@ describe('chat pane controls', () => {
     expect(chatPane).toContain('navigator.clipboard.writeText(text)')
     // hover 才显形,但要挂在行上,不能每条消息常驻一个图标
     expect(chatPane).toContain("cx('chat-msg-row', styles.msgRow")
-    expect(chatPane).toContain('.chat-msg-row:hover &')
+    expect(chatPaneStyles).toContain('.chat-msg-row:hover &')
   })
 })
 
@@ -54,6 +56,7 @@ describe('chat pane controls', () => {
 describe('会话参数不能再埋在模型行的悬停浮层里', () => {
   it('没有挂在模型行上的二级 Popover 了', () => {
     expect(chatPane).not.toContain('modelHoverPanel')
+    expect(chatPaneStyles).not.toContain('modelHoverPanel')
     const panel = chatPane.slice(chatPane.indexOf('const paramsPanel = ('))
     const list = panel.slice(0, panel.indexOf('推理深度'))
     // 模型行是直接的 button,不再被 Popover 包着
