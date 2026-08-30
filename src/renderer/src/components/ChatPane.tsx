@@ -72,6 +72,17 @@ import {
   textOf,
 } from './chat-format'
 import { approvalFromProjection, planProjectionApply, toolsFromProjection } from './chat-projection'
+import {
+  appendTimelineEvent,
+  completeRun,
+  endTool,
+  failRun,
+  resolveRunStatus,
+  startRun,
+  startTool,
+  updateToolResult,
+} from './chat-run-records'
+import { applyStreamingMessage, assistantErrorOf, beginStreamingMessage } from './chat-stream'
 import { buildMemorySuggestion } from './chat-memory-note'
 
 type Props = {
@@ -330,17 +341,14 @@ export default function ChatPane({
       if (!runId) return
       const timestamp = new Date().toISOString()
       setRunRecords((prev) =>
-        prev.map((run) =>
-          run.id === runId
-            ? {
-                ...run,
-                timeline: [
-                  ...run.timeline,
-                  { id: `${runId}:${label}:${shortId()}`, type: 'event', label, detail, timestamp, status },
-                ],
-              }
-            : run,
-        ),
+        appendTimelineEvent(prev, runId, {
+          id: `${runId}:${label}:${shortId()}`,
+          type: 'event',
+          label,
+          detail,
+          timestamp,
+          status,
+        }),
       )
     }
 
@@ -357,13 +365,7 @@ export default function ChatPane({
       appendRunEventTo(runId, label, detail, 'error')
       if (runId) {
         const timestamp = new Date().toISOString()
-        setRunRecords((prev) =>
-          prev.map((run) =>
-            run.id === runId && run.status !== 'aborted'
-              ? { ...run, status: 'error', endedAt: run.endedAt ?? timestamp }
-              : run,
-          ),
-        )
+        setRunRecords((prev) => failRun(prev, runId, timestamp))
       }
       activeRunIdRef.current = null
       setRetryNotice(null)
@@ -376,29 +378,19 @@ export default function ChatPane({
         const timestamp = new Date().toISOString()
         if (runId) {
           setRunRecords((prev) =>
-            prev.map((run) =>
-              run.id === runId
-                ? {
-                    ...run,
-                    timeline: [
-                      ...run.timeline,
-                      {
-                        id: `${timestamp}:ui:${shortId()}`,
-                        type: 'event',
-                        label:
-                          event.method === 'confirm'
-                            ? '等待工具审批'
-                            : event.method === 'notify'
-                              ? '扩展通知'
-                              : '扩展请求',
-                        detail: 'message' in event ? String(event.message) : event.method,
-                        timestamp,
-                        status: event.method === 'confirm' ? 'running' : undefined,
-                      },
-                    ],
-                  }
-                : run,
-            ),
+            appendTimelineEvent(prev, runId, {
+              id: `${timestamp}:ui:${shortId()}`,
+              type: 'event',
+              label:
+                event.method === 'confirm'
+                  ? '等待工具审批'
+                  : event.method === 'notify'
+                    ? '扩展通知'
+                    : '扩展请求',
+              detail: 'message' in event ? String(event.message) : event.method,
+              timestamp,
+              status: event.method === 'confirm' ? 'running' : undefined,
+            }),
           )
         }
         if (event.method === 'notify') {
@@ -432,30 +424,27 @@ export default function ChatPane({
             activeRunIdRef.current = id
             lastAssistantErrorRef.current = null
             setRunRecords((prev) =>
-              [
-                ({
-                  id,
-                  workspaceName: workspaceRef.current?.name,
-                  workspacePath: workspaceRef.current?.path,
-                  startedAt: timestamp,
-                  status: 'running',
-                  model: model?.id,
-                  provider: model?.provider,
-                  thinking: thinkingRef.current,
-                  tools: [],
-                  timeline: [
-                    {
-                      id: `${id}:start`,
-                      type: 'event',
-                      label: 'Agent 开始',
-                      detail: workspaceRef.current?.name,
-                      timestamp,
-                      status: 'running',
-                    },
-                  ],
-                } satisfies RunRecord),
-                ...prev,
-              ].slice(0, 20),
+              startRun(prev, {
+                id,
+                workspaceName: workspaceRef.current?.name,
+                workspacePath: workspaceRef.current?.path,
+                startedAt: timestamp,
+                status: 'running',
+                model: model?.id,
+                provider: model?.provider,
+                thinking: thinkingRef.current,
+                tools: [],
+                timeline: [
+                  {
+                    id: `${id}:start`,
+                    type: 'event',
+                    label: 'Agent 开始',
+                    detail: workspaceRef.current?.name,
+                    timestamp,
+                    status: 'running',
+                  },
+                ],
+              }),
             )
           }
           setSending(true)
@@ -486,45 +475,13 @@ export default function ChatPane({
               completedRunId = runId
               const currentRun = runRecordsRef.current.find((run) => run.id === runId)
               if (currentRun) {
-                const status: RunStatus =
-                  currentRun.status === 'aborted'
-                    ? 'aborted'
-                    : currentRun.tools.some((tool) => tool.status === 'error')
-                      ? 'error'
-                      : 'done'
-                completedRunForMemory = { ...currentRun, endedAt: timestamp, status }
+                completedRunForMemory = {
+                  ...currentRun,
+                  endedAt: timestamp,
+                  status: resolveRunStatus(currentRun),
+                }
               }
-              setRunRecords((prev) =>
-                prev.map((run) =>
-                  run.id === runId
-                    ? {
-                        ...run,
-                        endedAt: timestamp,
-                        status:
-                          run.status === 'aborted'
-                            ? 'aborted'
-                            : run.tools.some((tool) => tool.status === 'error')
-                              ? 'error'
-                              : 'done',
-                        timeline: [
-                          ...run.timeline,
-                          {
-                            id: `${runId}:end`,
-                            type: 'event',
-                            label: 'Agent 结束',
-                            timestamp,
-                            status:
-                              run.status === 'aborted'
-                                ? 'aborted'
-                                : run.tools.some((tool) => tool.status === 'error')
-                                  ? 'error'
-                                  : 'done',
-                          },
-                        ],
-                      }
-                    : run,
-                ),
-              )
+              setRunRecords((prev) => completeRun(prev, runId, timestamp))
             }
             activeRunIdRef.current = null
           }
@@ -542,24 +499,14 @@ export default function ChatPane({
                 if (completedRunId) {
                   const timestamp = new Date().toISOString()
                   setRunRecords((prev) =>
-                    prev.map((run) =>
-                      run.id === completedRunId
-                        ? {
-                            ...run,
-                            timeline: [
-                              ...run.timeline,
-                              {
-                                id: `${completedRunId}:git:${shortId()}`,
-                                type: 'event',
-                                label: '检测到 Git 变更',
-                                detail: `${result.snapshot.files.length} 个文件变更`,
-                                timestamp,
-                                status: 'done',
-                              },
-                            ],
-                          }
-                        : run,
-                    ),
+                    appendTimelineEvent(prev, completedRunId, {
+                      id: `${completedRunId}:git:${shortId()}`,
+                      type: 'event',
+                      label: '检测到 Git 变更',
+                      detail: `${result.snapshot.files.length} 个文件变更`,
+                      timestamp,
+                      status: 'done',
+                    }),
                   )
                 }
               }
@@ -638,29 +585,22 @@ export default function ChatPane({
           break
         case 'message_start':
           setMessages((prev) => {
-            streamingIndexRef.current = prev.length
-            return [...prev, { ...event.message }]
+            const next = beginStreamingMessage(prev, event.message)
+            streamingIndexRef.current = next.streamingIndex
+            return next.messages
           })
           break
         case 'message_update':
         case 'message_end':
-          // 失败的一轮同样以 agent_end 收尾,区别只在最后一条 assistant 消息的
-          // stopReason —— 不记下来,收尾时就会把报错的一轮当成"任务完成"。
-          if (event.type === 'message_end' && event.message.role === 'assistant') {
-            lastAssistantErrorRef.current =
-              event.message.stopReason === 'error'
-                ? (event.message.errorMessage ?? '模型调用失败')
-                : null
+          if (event.type === 'message_end') {
+            // undefined = 不是 assistant 消息,保留已记下的失败(见 assistantErrorOf)
+            const failure = assistantErrorOf(event.message)
+            if (failure !== undefined) lastAssistantErrorRef.current = failure
           }
           setMessages((prev) => {
-            const idx = streamingIndexRef.current
-            if (idx === null || idx >= prev.length) {
-              streamingIndexRef.current = prev.length
-              return [...prev, { ...event.message }]
-            }
-            const next = prev.slice()
-            next[idx] = { ...event.message }
-            return next
+            const next = applyStreamingMessage(prev, streamingIndexRef.current, event.message)
+            streamingIndexRef.current = next.streamingIndex
+            return next.messages
           })
           break
         case 'tool_execution_start':
@@ -670,34 +610,14 @@ export default function ChatPane({
               const timestamp = new Date().toISOString()
               const detail = summarizeToolArgs(event.args)
               setRunRecords((prev) =>
-                prev.map((run) =>
-                  run.id === runId
-                    ? {
-                        ...run,
-                        tools: [
-                          ...run.tools.filter((tool) => tool.id !== event.toolCallId),
-                          {
-                            id: event.toolCallId,
-                            toolName: event.toolName,
-                            args: event.args,
-                            status: 'running',
-                            startedAt: timestamp,
-                          },
-                        ],
-                        timeline: [
-                          ...run.timeline,
-                          {
-                            id: `${timestamp}:tool-start:${event.toolCallId}`,
-                            type: 'tool',
-                            label: `开始 ${event.toolName}`,
-                            detail,
-                            timestamp,
-                            status: 'running',
-                          },
-                        ],
-                      }
-                    : run,
-                ),
+                appendTimelineEvent(startTool(prev, runId, event, timestamp), runId, {
+                  id: `${timestamp}:tool-start:${event.toolCallId}`,
+                  type: 'tool',
+                  label: `开始 ${event.toolName}`,
+                  detail,
+                  timestamp,
+                  status: 'running',
+                }),
               )
             }
           }
@@ -707,16 +627,7 @@ export default function ChatPane({
             const runId = activeRunIdRef.current
             if (runId) {
               setRunRecords((prev) =>
-                prev.map((run) =>
-                  run.id === runId
-                    ? {
-                        ...run,
-                        tools: run.tools.map((tool) =>
-                          tool.id === event.toolCallId ? { ...tool, result: event.partialResult } : tool,
-                        ),
-                      }
-                    : run,
-                ),
+                updateToolResult(prev, runId, event.toolCallId, event.partialResult),
               )
             }
           }
@@ -727,34 +638,13 @@ export default function ChatPane({
             if (runId) {
               const timestamp = new Date().toISOString()
               setRunRecords((prev) =>
-                prev.map((run) =>
-                  run.id === runId
-                    ? {
-                        ...run,
-                        tools: run.tools.map((tool) =>
-                          tool.id === event.toolCallId
-                            ? {
-                                ...tool,
-                                toolName: event.toolName,
-                                status: event.isError ? 'error' : 'done',
-                                result: event.result,
-                                endedAt: timestamp,
-                              }
-                            : tool,
-                        ),
-                        timeline: [
-                          ...run.timeline,
-                          {
-                            id: `${timestamp}:tool-end:${event.toolCallId}`,
-                            type: 'tool',
-                            label: `${event.isError ? '失败' : '完成'} ${event.toolName}`,
-                            timestamp,
-                            status: event.isError ? 'error' : 'done',
-                          },
-                        ],
-                      }
-                    : run,
-                ),
+                appendTimelineEvent(endTool(prev, runId, event, timestamp), runId, {
+                  id: `${timestamp}:tool-end:${event.toolCallId}`,
+                  type: 'tool',
+                  label: `${event.isError ? '失败' : '完成'} ${event.toolName}`,
+                  timestamp,
+                  status: event.isError ? 'error' : 'done',
+                }),
               )
             }
           }
