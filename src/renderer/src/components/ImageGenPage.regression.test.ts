@@ -7,6 +7,7 @@ const selector = readFileSync(new URL('./ImageModelSelector.tsx', import.meta.ur
 const output = readFileSync(new URL('./ImageOutputSection.tsx', import.meta.url), 'utf8')
 const historyRow = readFileSync(new URL('./ImageHistoryBatchRow.tsx', import.meta.url), 'utf8')
 const mainImageGen = readFileSync(new URL('../../../main/image-gen.ts', import.meta.url), 'utf8')
+const input = readFileSync(new URL('./ImageInputSection.tsx', import.meta.url), 'utf8')
 
 describe('Image generation workspace regressions', () => {
   it('uses the modular workspace instead of the legacy tab page', () => {
@@ -49,5 +50,26 @@ describe('Image generation workspace regressions', () => {
     expect(historyRow).toContain('opacity: 0')
     expect(workspace).toContain('<img src={preview} alt="预览" />')
     expect(workspace).not.toContain('selectedByBatch')
+  })
+
+  it('picks a style template instead of the old one-line example prompts', () => {
+    // 五条示例短句已被 22 个风格模板取代,别退回去
+    expect(input).not.toContain('EXAMPLE_PROMPTS')
+    expect(input).toContain('风格模板')
+    expect(input).toContain('filterImageStyleTemplates(templateQuery, templateCategory)')
+    expect(input).toContain('IMAGE_STYLE_CATEGORIES.map')
+    expect(input).toContain('onApplyTemplate(template)')
+  })
+
+  it('applies the template canvas to whichever field the current engine reads', () => {
+    // gpt 吃 size、gemini/grok 吃比例,点一个模板三者都要落到位
+    expect(workspace).toContain('function applyStyleTemplate(template: ImageStyleTemplate)')
+    expect(workspace).toContain('const ratio = templateAspectRatio(template.size)')
+    expect(workspace).toContain('size: template.size,')
+    expect(workspace).toContain('geminiAspectRatio: ratio,')
+    expect(workspace).toContain('grokAspectRatio: ratio,')
+    // 提示词上限挪进 lib 才能被数据层测试守住
+    expect(workspace).toContain('promptMax={IMAGE_PROMPT_MAX}')
+    expect(workspace).not.toContain('const PROMPT_MAX =')
   })
 })

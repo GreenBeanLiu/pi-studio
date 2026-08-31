@@ -1,21 +1,20 @@
 import { useRef, useState } from 'react'
 import { Button, Input, Spin, Tooltip } from 'antd'
 import { createStyles } from 'antd-style'
-import { Brush, ChevronDown, Image as ImageIcon, Link2, Sparkles, X } from 'lucide-react'
+import { Brush, ChevronDown, Image as ImageIcon, Link2, Search, Sparkles, X } from 'lucide-react'
+import {
+  IMAGE_STYLE_CATEGORIES,
+  filterImageStyleTemplates,
+  imageStyleCategoryLabel,
+  type ImageStyleCategoryId,
+  type ImageStyleTemplate,
+} from '../lib/image-style-templates'
 
 export type ReferenceUploadState =
   | { status: 'idle' }
   | { status: 'uploading' }
   | { status: 'done'; url: string }
   | { status: 'error'; error: string }
-
-const EXAMPLE_PROMPTS = [
-  '一座雪山下的湖泊,清晨薄雾,电影感光线',
-  '可爱的橘猫宇航员,厚涂插画,星空背景',
-  'a cozy coffee shop interior, warm light, watercolor style',
-  '中国山水画风格的竹林,留白构图,水墨',
-  'cyberpunk city street at night, neon signs, rain reflections',
-]
 
 const useStyles = createStyles(({ token, css }) => ({
   section: css`
@@ -106,15 +105,74 @@ const useStyles = createStyles(({ token, css }) => ({
     cursor: pointer;
     &:hover { color: ${token.colorTextSecondary}; }
   `,
-  example: css`
-    padding: 4px 6px;
+  templateChips: css`
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    &::-webkit-scrollbar { display: none; }
+  `,
+  chip: css`
+    flex: none;
+    padding: 2px 9px;
+    border: 1px solid ${token.colorBorderSecondary};
+    border-radius: 999px;
+    background: transparent;
+    color: ${token.colorTextTertiary};
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+    cursor: pointer;
+    &:hover { color: ${token.colorText}; border-color: ${token.colorBorder}; }
+  `,
+  chipActive: css`
+    border-color: ${token.colorPrimaryBorder};
+    background: ${token.colorPrimaryBg};
+    color: ${token.colorPrimary};
+  `,
+  templateList: css`
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 216px;
+    overflow-y: auto;
+  `,
+  template: css`
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 5px 7px;
     border: 0;
     border-radius: ${token.borderRadiusSM}px;
     background: transparent;
-    color: ${token.colorTextSecondary};
     text-align: left;
     cursor: pointer;
     &:hover { background: ${token.colorFillQuaternary}; }
+  `,
+  templateLabel: css`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: ${token.colorText};
+    font-size: 12px;
+  `,
+  templateSize: css`
+    flex: none;
+    color: ${token.colorTextQuaternary};
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  `,
+  templateHint: css`
+    color: ${token.colorTextTertiary};
+    font-size: 11px;
+    line-height: 16px;
+  `,
+  templateEmpty: css`
+    padding: 8px 7px;
+    color: ${token.colorTextTertiary};
+    font-size: 11px;
   `,
 }))
 
@@ -127,6 +185,7 @@ export default function ImageInputSection({
   maskDataUrl,
   upload,
   onPromptChange,
+  onApplyTemplate,
   onFile,
   onPreview,
   onClearImage,
@@ -141,15 +200,19 @@ export default function ImageInputSection({
   maskDataUrl: string | null
   upload: ReferenceUploadState
   onPromptChange: (value: string) => void
+  onApplyTemplate: (template: ImageStyleTemplate) => void
   onFile: (file?: File) => void
   onPreview: (url: string) => void
   onClearImage: () => void
   onEditMask: () => void
   onClearMask: () => void
 }) {
-  const { styles } = useStyles()
+  const { styles, cx } = useStyles()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [examplesOpen, setExamplesOpen] = useState(false)
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [templateQuery, setTemplateQuery] = useState('')
+  const [templateCategory, setTemplateCategory] = useState<ImageStyleCategoryId | null>(null)
+  const templates = filterImageStyleTemplates(templateQuery, templateCategory)
 
   return (
     <section className={styles.section}>
@@ -229,25 +292,67 @@ export default function ImageInputSection({
       />
       <button
         type="button"
-        onClick={() => setExamplesOpen((open) => !open)}
+        onClick={() => setTemplatesOpen((open) => !open)}
         className={styles.examplesToggle}
       >
-        <span>示例 Prompt</span>
-        <ChevronDown size={13} style={{ transform: examplesOpen ? 'rotate(180deg)' : undefined }} />
+        <span><Sparkles size={11} style={{ marginRight: 4 }} />风格模板</span>
+        <ChevronDown size={13} style={{ transform: templatesOpen ? 'rotate(180deg)' : undefined }} />
       </button>
-      {examplesOpen && EXAMPLE_PROMPTS.map((example) => (
-        <button
-          key={example}
-          type="button"
-          onClick={() => {
-            onPromptChange(example)
-            setExamplesOpen(false)
-          }}
-          className={styles.example}
-        >
-          <Sparkles size={11} style={{ marginRight: 4 }} />{example}
-        </button>
-      ))}
+      {templatesOpen && (
+        <>
+          <Input
+            size="small"
+            allowClear
+            prefix={<Search size={12} />}
+            placeholder="搜模板、风格或场景，如 海报 / 电商 / UI"
+            value={templateQuery}
+            onChange={(event) => setTemplateQuery(event.target.value)}
+          />
+          <div className={styles.templateChips}>
+            <button
+              type="button"
+              onClick={() => setTemplateCategory(null)}
+              className={cx(styles.chip, templateCategory === null && styles.chipActive)}
+            >
+              全部
+            </button>
+            {IMAGE_STYLE_CATEGORIES.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() =>
+                  setTemplateCategory((current) => (current === category.id ? null : category.id))
+                }
+                className={cx(styles.chip, templateCategory === category.id && styles.chipActive)}
+              >
+                {category.label}
+              </button>
+            ))}
+          </div>
+          <div className={styles.templateList}>
+            {templates.length === 0 && <div className={styles.templateEmpty}>没有匹配的模板</div>}
+            {templates.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => {
+                  onApplyTemplate(template)
+                  setTemplatesOpen(false)
+                }}
+                className={styles.template}
+              >
+                <span className={styles.templateLabel}>
+                  {template.label}
+                  <span className={styles.templateSize}>
+                    {imageStyleCategoryLabel(template.category)} · {template.size.replace('x', '×')}
+                  </span>
+                </span>
+                <span className={styles.templateHint}>{template.hint}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   )
 }

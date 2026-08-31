@@ -20,8 +20,12 @@ import {
   imageModel,
   type ImageOutputSettings,
 } from './image-generation-models'
+import {
+  IMAGE_PROMPT_MAX,
+  templateAspectRatio,
+  type ImageStyleTemplate,
+} from '../lib/image-style-templates'
 
-const PROMPT_MAX = 500
 const PAGE_SIZE = 60
 
 const DEFAULT_OUTPUT: ImageOutputSettings = {
@@ -217,6 +221,18 @@ export default function ImageGenerationWorkspace({
     () => groupImageGenerationHistory([...sessionImages, ...history]),
     [history, sessionImages],
   )
+  /** 点模板:填入骨架,并把推荐画幅落到当前模型吃的那个字段上。 */
+  function applyStyleTemplate(template: ImageStyleTemplate): void {
+    setPrompt(template.skeleton.slice(0, IMAGE_PROMPT_MAX))
+    const ratio = templateAspectRatio(template.size)
+    setOutput((current) => ({
+      ...current,
+      size: template.size,
+      geminiAspectRatio: ratio,
+      grokAspectRatio: ratio,
+    }))
+  }
+
   async function refreshHealth() {
     setHealth(await api.imageGen.health())
   }
@@ -449,13 +465,14 @@ export default function ImageGenerationWorkspace({
 
         <ImageInputSection
           prompt={prompt}
-          promptMax={PROMPT_MAX}
+          promptMax={IMAGE_PROMPT_MAX}
           acceptsImage={model.acceptsImage}
           acceptsMask={model.acceptsMask}
           baseImage={baseImage}
           maskDataUrl={maskDataUrl}
           upload={upload}
           onPromptChange={setPrompt}
+          onApplyTemplate={applyStyleTemplate}
           onFile={handleFile}
           onPreview={setPreview}
           onClearImage={clearInputImage}
