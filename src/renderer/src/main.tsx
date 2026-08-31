@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
+import { App as AntApp } from 'antd'
 import { ThemeProvider, createGlobalStyle } from 'antd-style'
 import { piDarkTheme, piLightTheme } from './theme'
 import App from './App'
@@ -86,7 +87,16 @@ function Root() {
   return (
     <ThemeProvider appearance={appearance} theme={appearance === 'dark' ? piDarkTheme : piLightTheme}>
       <CssVarBridge />
-      <App appearance={appearance} onToggleTheme={toggleAppearance} />
+      {/*
+        antd 的静态 message/Modal.confirm 拿不到 ThemeProvider 的 context,切暗色时
+        通知条不跟着变(控制台还会刷 "Static function can not consume context")。
+        包一层 App provider,组件里统一用 AntApp.useApp()。
+        antd v6 默认开 cssVar,这时 component={false} 会另报一条警告,所以老老实实渲染
+        一个 div —— 它夹在 #root 和 App 的 shell 之间,height:100% 才能把高度链接上。
+      */}
+      <AntApp component="div" style={{ height: '100%' }}>
+        <App appearance={appearance} onToggleTheme={toggleAppearance} />
+      </AntApp>
     </ThemeProvider>
   )
 }

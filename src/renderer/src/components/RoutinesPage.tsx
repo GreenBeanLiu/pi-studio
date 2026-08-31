@@ -501,14 +501,6 @@ const useStyles = createStyles(({ token, css }) => ({
 }))
 
 export default function RoutinesPage({ workspace }: { workspace: Workspace | null }) {
-  return (
-    <AntApp component={false}>
-      <RoutinesInner workspace={workspace} />
-    </AntApp>
-  )
-}
-
-function RoutinesInner({ workspace }: { workspace: Workspace | null }) {
   const { styles } = useStyles()
   const { message } = AntApp.useApp()
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createStyles, cx } from 'antd-style'
-import { Alert, Input, Button, Modal, Select, Switch, Tag, Popconfirm, message } from 'antd'
+import { Alert, App as AntApp, Input, Button, Modal, Select, Switch, Tag, Popconfirm } from 'antd'
 import { Activity, Bot, Globe, Info, Trash2, Plus, Image as ImageIcon, Pencil, RefreshCw } from 'lucide-react'
 import {
   api,
@@ -326,6 +326,9 @@ export default function SettingsModal({
   onSandboxToggled?: () => void
 }) {
   const { styles } = useStyles()
+  // 静态 message/Modal 消费不到 ThemeProvider 的 context(切主题时不跟着变),
+  // 走 App provider 拿实例 —— provider 在 main.tsx 的 <AntApp> 上。
+  const { message, modal } = AntApp.useApp()
 
   const [category, setCategory] = useState<Category>('model')
   const [settings, setSettings] = useState<Settings>(() => createDefaultSettingsView())
@@ -411,7 +414,7 @@ export default function SettingsModal({
     const restoreBackup = api.diagnostics.restoreBackup
     if (!restoreBackup || !selectedBackup) return
     const backup = backups.find((item) => item.name === selectedBackup)
-    Modal.confirm({
+    modal.confirm({
       title: '恢复本地数据并重启？',
       content: `将恢复到 ${backup ? formatBackupLabel(backup) : selectedBackup}。当前数据会先保存为保护点，应用随后重启。`,
       okText: '恢复并重启',

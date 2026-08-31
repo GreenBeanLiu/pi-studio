@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { message as antdMessage } from 'antd'
+import { App as AntApp } from 'antd'
 import { createStyles } from 'antd-style'
 import TitleBar from './components/TitleBar'
 import NavRail from './components/NavRail'
@@ -54,6 +54,7 @@ type AppProps = {
 
 export default function App({ appearance, onToggleTheme }: AppProps) {
   const { styles } = useStyles()
+  const { message } = AntApp.useApp()
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [recentWorkspaces, setRecentWorkspaces] = useState<Workspace[]>([])
@@ -230,12 +231,12 @@ export default function App({ appearance, onToggleTheme }: AppProps) {
   const exportStartupDiagnostics = useCallback(async () => {
     try {
       const result = await exportGlobalDiagnostics(api)
-      if ('error' in result) antdMessage.error(result.error)
-      else if ('ok' in result) antdMessage.success('诊断包已导出')
+      if ('error' in result) message.error(result.error)
+      else if ('ok' in result) message.success('诊断包已导出')
     } catch (error) {
-      antdMessage.error(error instanceof Error ? error.message : '导出诊断包失败')
+      message.error(error instanceof Error ? error.message : '导出诊断包失败')
     }
-  }, [])
+  }, [message])
 
   // 动作全部复用页面已有的 command,不另写一套业务逻辑
   useAppShortcuts(

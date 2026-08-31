@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
-import { Spin, Popover, Segmented, Switch, Button, message as antdMessage, Modal, Tabs, Empty, Input } from 'antd'
+import { Spin, Popover, Segmented, Switch, Button, App as AntApp, Modal, Tabs, Empty, Input } from 'antd'
 import { Markdown } from '@lobehub/ui'
 import {
   SendHorizontal,
@@ -84,26 +84,6 @@ import { applyStreamingMessage, assistantErrorOf, beginStreamingMessage } from '
 import { useGitDiff, type GitDiffDeps } from './use-git-diff'
 import { buildMemorySuggestion } from './chat-memory-note'
 
-/**
- * useGitDiff 只认注入进来的环境(见 use-git-diff.ts)。这里把它接到真的 IPC 和 antd 上。
- * 模块级常量 —— 引用稳定,不会每次渲染都让 hook 里的 useCallback 失效。
- */
-const gitDiffDeps: GitDiffDeps = {
-  git: api.git,
-  notifyError: (message) => antdMessage.error(message),
-  notifySuccess: (message) => antdMessage.success(message),
-  confirmDiscard: (onOk) => {
-    Modal.confirm({
-      title: '撤销本次 Agent 运行变更？',
-      content: '只会恢复到本次运行开始时的工作区快照；运行前已有的未提交修改和文件会保留。',
-      okText: '撤销本次变更',
-      cancelText: '取消',
-      okButtonProps: { danger: true },
-      onOk,
-    })
-  },
-}
-
 type Props = {
   workspace: Workspace | null
   /** Agent subprocess is still booting for this workspace */
@@ -124,6 +104,9 @@ export default function ChatPane({
   onDiagnosticsExporterChange,
 }: Props) {
   const { styles, cx, theme: token } = useStyles()
+  // 静态 message/Modal 消费不到 ThemeProvider 的 context(切主题时不跟着变),
+  // 走 App provider 拿实例 —— provider 在 main.tsx 的 <AntApp> 上。
+  const { message, modal } = AntApp.useApp()
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [toolExecutions, setToolExecutions] = useState<Record<string, ToolExecutionState>>({})
   const [runtimeCapabilities, setRuntimeCapabilities] = useState<PiRuntimeCapabilities | null>(null)
@@ -145,6 +128,29 @@ export default function ChatPane({
   const [slashDismissed, setSlashDismissed] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
+  /**
+   * useGitDiff 只认注入进来的环境(见 use-git-diff.ts)。这里把它接到真的 IPC 和 antd 上。
+   * useApp() 给的 message/modal 引用是稳定的,所以这个 memo 实际只算一次 ——
+   * hook 里的 useCallback 不会每次渲染都失效。
+   */
+  const gitDiffDeps = useMemo<GitDiffDeps>(
+    () => ({
+      git: api.git,
+      notifyError: (text) => message.error(text),
+      notifySuccess: (text) => message.success(text),
+      confirmDiscard: (onOk) => {
+        modal.confirm({
+          title: '撤销本次 Agent 运行变更？',
+          content: '只会恢复到本次运行开始时的工作区快照；运行前已有的未提交修改和文件会保留。',
+          okText: '撤销本次变更',
+          cancelText: '取消',
+          okButtonProps: { danger: true },
+          onOk,
+        })
+      },
+    }),
+    [message, modal],
+  )
   const gitDiff = useGitDiff(workspace, gitDiffDeps)
   // 事件订阅那个 effect 的依赖是 [],只能捕获引用稳定的东西。showSnapshot 是
   // useCallback([]),满足条件;gitDiff 对象本身每次渲染都是新的,别整个捕。
@@ -414,7 +420,7 @@ export default function ChatPane({
           )
         }
         if (event.method === 'notify') {
-          const notify = event.notifyType === 'error' ? antdMessage.error : event.notifyType === 'warning' ? antdMessage.warning : antdMessage.info
+          const notify = event.notifyType === 'error' ? message.error : event.notifyType === 'warning' ? message.warning : message.info
           notify(event.message)
         } else if (event.method === 'input' || event.method === 'select' || event.method === 'editor') {
           api.pi
@@ -515,7 +521,7 @@ export default function ChatPane({
               if ('ok' in result && result.snapshot.status.trim()) {
                 // showSnapshot 是 useCallback([]),引用稳定,可以安全地被这个 [] deps 的 effect 捕获
                 showDiffSnapshot(result.snapshot)
-                antdMessage.info('Agent 修改了工作区，请检查后接受或回滚')
+                message.info('Agent 修改了工作区，请检查后接受或回滚')
                 if (completedRunId) {
                   const timestamp = new Date().toISOString()
                   setRunRecords((prev) =>
@@ -539,7 +545,7 @@ export default function ChatPane({
               if (suggestion) {
                 setMemorySuggestion(suggestion)
                 setMemorySuggestionDraft(suggestion.content)
-                antdMessage.info('已生成 Workspace Memory 建议，可在“记忆建议”中确认')
+                message.info('已生成 Workspace Memory 建议，可在“记忆建议”中确认')
               }
             })
             .catch(() => {
@@ -552,7 +558,7 @@ export default function ChatPane({
               if (suggestion) {
                 setMemorySuggestion(suggestion)
                 setMemorySuggestionDraft(suggestion.content)
-                antdMessage.info('已生成 Workspace Memory 建议，可在“记忆建议”中确认')
+                message.info('已生成 Workspace Memory 建议，可在“记忆建议”中确认')
               }
             })
           if (!document.hasFocus()) {
@@ -761,8 +767,8 @@ export default function ChatPane({
           confirmed ? 'done' : 'aborted',
         )
       } catch (err) {
-        const message = (err as Error).message ?? '审批处理失败'
-        antdMessage.error(message)
+        const failure = (err as Error).message ?? '审批处理失败'
+        message.error(failure)
       }
     },
     [appendApprovalTimeline],
@@ -772,9 +778,9 @@ export default function ChatPane({
     if (runRecords.length === 0) return
     try {
       await navigator.clipboard.writeText(JSON.stringify(runRecords, null, 2))
-      antdMessage.success('运行记录 JSON 已复制')
+      message.success('运行记录 JSON 已复制')
     } catch (err) {
-      antdMessage.error((err as Error).message ?? '复制运行记录失败')
+      message.error((err as Error).message ?? '复制运行记录失败')
     }
   }, [runRecords])
 
@@ -868,12 +874,12 @@ export default function ChatPane({
       })
 
       if ('error' in result) {
-        antdMessage.error(result.error)
+        message.error(result.error)
       } else if ('ok' in result) {
-        antdMessage.success('诊断包已导出')
+        message.success('诊断包已导出')
       }
     } catch (err) {
-      antdMessage.error((err as Error).message ?? '导出诊断包失败')
+      message.error((err as Error).message ?? '导出诊断包失败')
     }
   }, [
     workspace,
@@ -906,12 +912,12 @@ export default function ChatPane({
       try {
         const result = await api.sessions.exportCurrent(format)
         if ('error' in result) {
-          antdMessage.error(result.error)
+          message.error(result.error)
         } else if ('ok' in result) {
-          antdMessage.success(format === 'json' ? '会话 JSON 已导出' : '会话 Markdown 已导出')
+          message.success(format === 'json' ? '会话 JSON 已导出' : '会话 Markdown 已导出')
         }
       } catch (err) {
-        antdMessage.error((err as Error).message ?? '导出会话失败')
+        message.error((err as Error).message ?? '导出会话失败')
       } finally {
         setSessionExportLoading(null)
       }
@@ -926,14 +932,14 @@ export default function ChatPane({
     try {
       const result = await api.memory.load()
       if ('error' in result) {
-        antdMessage.error(result.error)
+        message.error(result.error)
         setMemoryOpen(false)
         return
       }
       setMemoryPath(result.memory.path)
       setMemoryDraft(result.memory.content)
     } catch (err) {
-      antdMessage.error((err as Error).message ?? '读取 Workspace Memory 失败')
+      message.error((err as Error).message ?? '读取 Workspace Memory 失败')
       setMemoryOpen(false)
     } finally {
       setMemoryLoading(false)
@@ -946,15 +952,15 @@ export default function ChatPane({
     try {
       const result = await api.memory.save(memoryDraft)
       if ('error' in result) {
-        antdMessage.error(result.error)
+        message.error(result.error)
         return
       }
       setMemoryPath(result.memory.path)
       setMemoryDraft(result.memory.content)
       setMemoryOpen(false)
-      antdMessage.success('Workspace Memory 已保存，下一轮任务生效')
+      message.success('Workspace Memory 已保存，下一轮任务生效')
     } catch (err) {
-      antdMessage.error((err as Error).message ?? '保存 Workspace Memory 失败')
+      message.error((err as Error).message ?? '保存 Workspace Memory 失败')
     } finally {
       setMemorySaving(false)
     }
@@ -966,7 +972,7 @@ export default function ChatPane({
     try {
       const loaded = await api.memory.load()
       if ('error' in loaded) {
-        antdMessage.error(loaded.error)
+        message.error(loaded.error)
         return
       }
 
@@ -974,7 +980,7 @@ export default function ChatPane({
       const nextContent = `${current}\n\n${memorySuggestionDraft.trim()}\n`
       const saved = await api.memory.save(nextContent)
       if ('error' in saved) {
-        antdMessage.error(saved.error)
+        message.error(saved.error)
         return
       }
 
@@ -983,9 +989,9 @@ export default function ChatPane({
       setMemorySuggestion(null)
       setMemorySuggestionDraft('')
       setMemorySuggestionOpen(false)
-      antdMessage.success('记忆建议已写入 Workspace Memory，下一轮任务生效')
+      message.success('记忆建议已写入 Workspace Memory，下一轮任务生效')
     } catch (err) {
-      antdMessage.error((err as Error).message ?? '保存记忆建议失败')
+      message.error((err as Error).message ?? '保存记忆建议失败')
     } finally {
       setMemorySuggestionSaving(false)
     }
@@ -1015,13 +1021,13 @@ export default function ChatPane({
           await api.pi.followUp(text, imgs)
         }
       } catch (err) {
-        const message = (err as Error).message ?? '发送失败'
-        setError(message)
+        const failure = (err as Error).message ?? '发送失败'
+        setError(failure)
         if (!sending) {
           setSending(false)
           setInput(text)
           setImages(imgs ?? [])
-          if (message.includes('must be accepted or reverted')) {
+          if (failure.includes('must be accepted or reverted')) {
             void gitDiff.openDiff()
           }
         }
@@ -1410,7 +1416,7 @@ export default function ChatPane({
     if (imageFiles.length === 0) return
     e.preventDefault()
     if (runtimeCapabilities?.features.images === false) {
-      antdMessage.warning('当前 Pi Runtime 不支持图片输入')
+      message.warning('当前 Pi Runtime 不支持图片输入')
       return
     }
     for (const file of imageFiles) {
@@ -2249,6 +2255,7 @@ function CopyMessageButton({
   text: string
   styles: StylesType
 }): ReactNode {
+  const { message } = AntApp.useApp()
   const [copied, setCopied] = useState(false)
   return (
     <button
@@ -2260,7 +2267,7 @@ function CopyMessageButton({
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         } catch (err) {
-          antdMessage.error((err as Error).message ?? '复制失败')
+          message.error((err as Error).message ?? '复制失败')
         }
       }}
     >

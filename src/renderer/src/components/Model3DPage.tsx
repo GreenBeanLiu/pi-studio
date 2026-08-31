@@ -252,7 +252,7 @@ function scoreColor(score: number): string {
   return score >= 80 ? '#52c41a' : score >= 60 ? '#faad14' : '#ff4d4f'
 }
 
-function Model3DPageInner(): React.JSX.Element {
+export default function Model3DPage(): React.JSX.Element {
   const { styles, cx } = useStyles()
   const { message } = AntApp.useApp()
   const supportsBlender = api.platform === 'win32'
@@ -910,14 +910,5 @@ function Model3DPageInner(): React.JSX.Element {
         )}
       </div>
     </div>
-  )
-}
-
-/** 项目没有全局 antd App provider,包一层才能用 useApp() 拿 message。 */
-export default function Model3DPage(): React.JSX.Element {
-  return (
-    <AntApp component={false} style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0 }}>
-      <Model3DPageInner />
-    </AntApp>
   )
 }
