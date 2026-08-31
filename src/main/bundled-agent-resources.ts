@@ -14,6 +14,8 @@ import { appendAppLog, normalizeError } from './app-log'
  * - skill  object-to-threejs-procedural(参考图→程序化 three.js 建模,
  *   改编自 vinhhien112/Three.js-Object-Sculptor-Codex-Plugin,MIT)
  * - skill  interface-review
+ * - skill  gpt-image-2-style-library(gpt-image-2 出图选型与提示词,
+ *   模板元数据改编自 freestylefly/awesome-gpt-image-2,MIT)
  * - 扩展   pi-studio-imagegen(云端生图工具,凭据走 spawn 环境变量)
  */
 function syncBundledDir(sourceName: string, destName: string, logTag: string): void {
