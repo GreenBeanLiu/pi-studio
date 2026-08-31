@@ -75,6 +75,7 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
       name: '公众号封面图',
       type: 'imagegen',
       engine: 'openai',
+      size: '1536x1024',
       prompt:
         '为这篇微信公众号文章生成一张横版封面图（16:9），画面简洁有吸引力、贴合主题，不要文字和 Logo。\n\n文章正文：{{steps.公众号初稿.output}}',
     },
@@ -95,6 +96,7 @@ export const ROUTINE_NODE_PRESETS: RoutineNodePreset[] = [
       name: '应用图标母图',
       type: 'imagegen',
       engine: 'openai',
+      size: '1024x1024',
       prompt:
         '为「{{routine.input}}」设计应用图标母图。1024×1024 正方形 PNG，透明背景，主体居中，四周保留约 20% 安全边距；符号简洁、轮廓清晰、在 16px 仍可辨认。不要预先添加圆角、外框、投影、文字、水印或设备模型。',
     },

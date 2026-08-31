@@ -10,6 +10,15 @@ describe('routine workflow node schemas', () => {
     ).toMatchObject({ channelId: 'channel-1' })
   })
 
+  it('accepts an imagegen canvas but rejects sizes the API does not know', () => {
+    const imagegen = routineStepSchema('imagegen')
+    const base = { id: 'step', name: '生图', type: 'imagegen' as const, prompt: '画一只猫' }
+    expect(imagegen.parse({ ...base, size: '1536x1024' })).toMatchObject({ size: '1536x1024' })
+    // 留空 = 服务端默认,不是错误
+    expect(imagegen.parse(base)).toMatchObject({ type: 'imagegen' })
+    expect(() => imagegen.parse({ ...base, size: '4096x4096' })).toThrow('输入无效')
+  })
+
   it('validates optional output fields and image descriptors', () => {
     expect(() => stepProductSchema.parse({ output: 'done', imageUrl: 123 })).toThrow('StepProduct')
     expect(

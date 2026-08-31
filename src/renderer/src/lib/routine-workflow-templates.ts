@@ -79,6 +79,7 @@ export function memeWorkflowTemplate(workspacePath: string): RoutineWorkflowTemp
         name: '生成表情包',
         type: 'imagegen',
         engine: 'openai',
+        size: '1024x1024',
         prompt:
           '生成一张 1:1 正方形中文聊天表情包，只生成单张图片，不要九宫格或多格漫画。' +
           '严格执行下面的策划案：人物或动物表情夸张但清晰，主体突出，背景简洁，在手机聊天缩略图中仍容易辨认。' +

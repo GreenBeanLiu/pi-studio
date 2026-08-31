@@ -51,6 +51,7 @@ import {
   api,
   type Channel,
   type AppIconPlatform,
+  type ImageGenSize,
   type Routine,
   type RoutineNotify,
   type RoutineRun,
@@ -118,11 +119,24 @@ type FormState = {
   pushEachStep?: boolean
 }
 
+/** '' = 不传 size,让服务端定;其余取值与生图页保持一致。 */
+const ROUTINE_IMAGE_SIZES: { value: '' | ImageGenSize; label: string }[] = [
+  { value: '', label: '服务端默认' },
+  { value: '1024x1024', label: '1024×1024 方' },
+  { value: '1024x1536', label: '1024×1536 竖' },
+  { value: '1536x1024', label: '1536×1024 横' },
+  { value: '1024x1792', label: '1024×1792 长竖' },
+  { value: '1792x1024', label: '1792×1024 长横' },
+  { value: '512x512', label: '512×512' },
+  { value: '256x256', label: '256×256' },
+  { value: 'auto', label: 'auto' },
+]
+
 const createStep = (type: RoutineStepType = 'agent'): RoutineStep => ({
   id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
   name: '',
   type,
-  ...(type === 'imagegen' ? { engine: 'openai' as const } : {}),
+  ...(type === 'imagegen' ? { engine: 'openai' as const, imageRef: '' } : {}),
   ...(type === 'model3d' ? { imageRef: '{{prev.imageUrl}}', provider: 'tripo' as const } : {}),
   ...(type === 'dressup' ? { personRef: '', garmentRef: '', prompt: '' } : {}),
   ...(type === 'app-icon'
@@ -704,7 +718,13 @@ export default function RoutinesPage({ workspace }: { workspace: Workspace | nul
           type,
           ...(type !== 'notify' && type !== 'folder-input' ? { prompt: step.prompt ?? '' } : {}),
           ...(type === 'folder-input' ? { path: step.path ?? '' } : {}),
-          ...(type === 'imagegen' ? { engine: step.engine ?? ('openai' as const) } : {}),
+          ...(type === 'imagegen'
+            ? {
+                engine: step.engine ?? ('openai' as const),
+                imageRef: step.imageRef ?? '',
+                ...(step.size ? { size: step.size } : {}),
+              }
+            : {}),
           ...(type === 'model3d'
             ? {
                 imageRef: step.imageRef ?? '{{prev.imageUrl}}',
@@ -1072,15 +1092,34 @@ export default function RoutinesPage({ workspace }: { workspace: Workspace | nul
                       </>
                     )}
                     {step.type === 'imagegen' && (
-                      <div className={styles.formRow}>
-                        <span className={styles.hint}>引擎</span>
-                        <Select
-                          value={step.engine ?? 'openai'}
-                          onChange={(v) => updateStep(step.id, { engine: v })}
-                          style={{ width: 200 }}
-                          options={[{ value: 'openai', label: '云端 gpt-image-2' }]}
+                      <>
+                        <div className={styles.formRow}>
+                          <span className={styles.hint}>引擎</span>
+                          <Select
+                            value={step.engine ?? 'openai'}
+                            onChange={(v) => updateStep(step.id, { engine: v })}
+                            style={{ width: 200 }}
+                            options={[{ value: 'openai', label: '云端 gpt-image-2' }]}
+                          />
+                          <span className={styles.hint}>尺寸</span>
+                          <Select<'' | ImageGenSize>
+                            value={step.size ?? ''}
+                            onChange={(v) => updateStep(step.id, { size: v || undefined })}
+                            style={{ width: 160 }}
+                            options={ROUTINE_IMAGE_SIZES}
+                          />
+                        </div>
+                        <RoutineImageReferencePicker
+                          label="参考图"
+                          title="选择参考图"
+                          value={step.imageRef ?? ''}
+                          placeholder="留空即文生图；可填 {{prev.imageUrl}}、工作区路径或图片 URL"
+                          onChange={(imageRef) => updateStep(step.id, { imageRef })}
                         />
-                      </div>
+                        <span className={styles.hint}>
+                          填了参考图就是照着改，不是从零画；接在上一个生图节点后用 {'{{prev.imageUrl}}'} 即可。
+                        </span>
+                      </>
                     )}
                     {step.type === 'model3d' && (
                       <>

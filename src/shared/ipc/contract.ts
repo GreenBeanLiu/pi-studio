@@ -486,8 +486,10 @@ export type RoutineStep = {
   format?: 'markdown' | 'html'
   /** model3d:图生 3D 服务商 */
   provider?: 'tripo' | 'hi3d'
-  /** model3d:输入图模板(默认 {{prev.imageUrl}}) */
+  /** model3d / app-icon:输入图模板(默认 {{prev.imageUrl}});imagegen:可选参考图,留空即文生图 */
   imageRef?: string
+  /** imagegen:输出尺寸,留空走服务端默认 */
+  size?: ImageGenSize
   /** app-icon:资源包显示名称 */
   appName?: string
   /** app-icon:导出平台 */

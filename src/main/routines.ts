@@ -20,7 +20,10 @@ import { remoteControl } from './remote-control'
 import { parseRoutineSave } from '../shared/ipc/validators'
 import { isRoutineStepComplete } from './routine-step-validation'
 import { latestAssistantFailure, latestAssistantText, type AgentMessage } from './agent-message'
-import type { RoutineStepType as SharedRoutineStepType } from '../shared/ipc/contract'
+import type {
+  ImageGenSize as SharedImageGenSize,
+  RoutineStepType as SharedRoutineStepType,
+} from '../shared/ipc/contract'
 import { readRoutineMaterialFolder } from './routine-material-folder'
 import { inferRoutineImageRole, selectWechatImageAssets, type RoutineImageAsset } from './routine-assets'
 import { configureRoutineCloudOutbox, queueRoutineCloudSync, routineSyncOrigin } from './routine-cloud-sync'
@@ -68,8 +71,13 @@ export type RoutineStep = {
   format?: RoutineArtifactFormat
   /** model3d:图生 3D 服务商 */
   provider?: 'tripo' | 'hi3d'
-  /** model3d:输入图的模板(默认 {{prev.imageUrl}});解析成 URL 走图生 3D,否则用 prompt 文生 3D */
+  /**
+   * model3d:输入图的模板(默认 {{prev.imageUrl}});解析成 URL 走图生 3D,否则用 prompt 文生 3D。
+   * app-icon:母图。imagegen:可选参考图,留空即文生图。
+   */
   imageRef?: string
+  /** imagegen:输出尺寸,留空走服务端默认 */
+  size?: SharedImageGenSize
   /** app-icon:导出包内显示的应用名称(支持 {{…}} 变量) */
   appName?: string
   /** app-icon:需要导出的目标平台 */
@@ -248,6 +256,7 @@ function normalizeStep(step: Partial<RoutineStep>): RoutineStep {
     ...(step.format !== undefined ? { format: step.format } : {}),
     ...(step.provider !== undefined ? { provider: step.provider } : {}),
     ...(step.imageRef !== undefined ? { imageRef: step.imageRef } : {}),
+    ...(step.size !== undefined ? { size: step.size } : {}),
     ...(typeof step.appName === 'string' ? { appName: step.appName } : {}),
     ...(platforms !== undefined ? { platforms } : {}),
     ...(typeof step.backgroundColor === 'string' ? { backgroundColor: step.backgroundColor } : {}),
@@ -364,6 +373,10 @@ export function routineStepSchema<K extends RoutineStepType>(type: K): { parse: 
         !typedOptionalsValid ||
         !platformsValid ||
         (step.engine !== undefined && !['openai', 'comfy'].includes(step.engine)) ||
+        (step.size !== undefined &&
+          !['256x256', '512x512', '1024x1024', '1024x1536', '1536x1024', '1024x1792', '1792x1024', 'auto'].includes(
+            step.size,
+          )) ||
         (step.provider !== undefined && !['tripo', 'hi3d'].includes(step.provider)) ||
         (step.format !== undefined && !['html', 'markdown'].includes(step.format)) ||
         !isRoutineStepComplete(step as RoutineStep)
@@ -570,14 +583,36 @@ async function runAgentStep(
   }
 }
 
+/**
+ * 生图节点的参考图。留空就是文生图(不像 model3d/app-icon 那样默认吃上一步的图 ——
+ * 那会让每个生图节点都悄悄变成改图)。已经是公网图就直接透传给云端,
+ * 省掉「下载成 data URL 再上传回 R2」这一趟;工作区内的相对路径才需要读盘。
+ */
+export async function resolveImagegenReference(
+  step: RoutineStep,
+  ctx: RunContext,
+  signal: AbortSignal,
+): Promise<string[] | undefined> {
+  const raw = (step.imageRef ?? '').trim()
+  if (!raw) return undefined
+  const reference = interpolate(raw, ctx).trim()
+  if (!reference) return undefined
+  if (reference.includes('{{')) throw new Error(`生图节点的参考图没有解析出来: ${reference}`)
+  if (/^https?:\/\//i.test(reference)) return [reference]
+  return [await routineImageDataUrl(ctx.routine.workspacePath, reference, signal)]
+}
+
 async function runImagegenStep(step: RoutineStep, ctx: RunContext, signal: AbortSignal): Promise<StepProduct> {
   const prompt = interpolate(step.prompt ?? '', ctx)
   if (!prompt.trim()) throw new Error('生图节点的提示词为空')
+  const referenceUrls = await resolveImagegenReference(step, ctx, signal)
   const result = await generateImage(
     {
       prompt,
       // 老 routine 数据可能还存着 'comfy':本地引擎已移除,统一回退云端
       engine: step.engine === 'comfy' || !step.engine ? 'openai' : step.engine,
+      ...(referenceUrls ? { referenceUrls } : {}),
+      ...(step.size ? { size: step.size } : {}),
       downloadResult: false,
     },
     signal,
@@ -731,11 +766,11 @@ async function routineImageDataUrl(workspacePath: string, reference: string, sig
   const target = isAbsolute(reference) ? resolve(reference) : resolve(root, reference)
   const rel = relative(root, target)
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error('换装图片必须位于当前工作区内')
+    throw new Error('工作流图片必须位于当前工作区内')
   }
-  if (!existsSync(target)) throw new Error(`找不到换装图片: ${reference}`)
+  if (!existsSync(target)) throw new Error(`找不到工作流图片: ${reference}`)
   const mime = IMAGE_MIME_BY_EXTENSION[extname(target).toLowerCase()]
-  if (!mime) throw new Error('换装图片仅支持 PNG、JPG 或 WebP')
+  if (!mime) throw new Error('工作流图片仅支持 PNG、JPG 或 WebP')
   const bytes = readFileSync(target)
   if (bytes.length > 20 * 1024 * 1024) throw new Error('工作流图片超过 20MB')
   return `data:${mime};base64,${bytes.toString('base64')}`

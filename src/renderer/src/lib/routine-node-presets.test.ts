@@ -18,6 +18,18 @@ describe('routine node presets', () => {
     )
   })
 
+  it('ships a canvas with the image presets instead of hiding it in prose', () => {
+    // 以前比例只能写在提示词正文里,加了 step.size 之后预设自己带
+    expect(createRoutineStepFromPreset('media.cover')).toMatchObject({
+      type: 'imagegen',
+      size: '1536x1024',
+    })
+    expect(createRoutineStepFromPreset('media.app-icon-master')).toMatchObject({
+      type: 'imagegen',
+      size: '1024x1024',
+    })
+  })
+
   it('creates a dressup workflow node with independent person and garment inputs', () => {
     expect(createRoutineStepFromPreset('media.dressup-video')).toMatchObject({
       type: 'dressup',
