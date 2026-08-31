@@ -1,79 +1,73 @@
 # 生图参数缺口
 
-三个出图入口共用后端 `/imagegen`，但各自暴露的参数差很多。这份是待补清单。
+三个出图入口共用后端 `/imagegen`，但各自暴露的参数差很多。P0–P4 已于 2026-08-31 补完，
+这份留作对照表和后续待办。
 
 ## 现状对照
 
 | 参数 | main `generateImage()` | ImageGen 页面 | 聊天 `image_gen` | 工作流 `imagegen` 步 |
 | --- | --- | --- | --- | --- |
-| `prompt` | 有 | 有（**截断到 500 字符**） | 有 | 有 |
+| `prompt` | 有 | 有（上限 4000，超了禁用按钮不截断） | 有 | 有 |
 | `engine` | 有 | 有（模型选择器） | 无，写死云端默认 | 有 |
-| `model` | 有 | 有 | 无 | **无**，只传 engine |
-| `size` | 有 | 有（8 档） | 有（**只 4 档**） | **无** |
-| `quality` | 有 | 有 | 无 | 无 |
-| `background` | 有 | 有 | 无 | 无 |
+| `model` | 有 | 有 | 无 | 无，只传 engine |
+| `size` | 有 | 有（8 档） | 有（8 档） | 有（8 档 + 服务端默认） |
+| `quality` | 有 | 有 | 有 | 无 |
+| `background` | 有 | 有 | 有 | 无 |
 | `outputFormat` | 有 | 有 | 无 | 无 |
 | `outputCompression` | 有 | 有 | 无 | 无 |
 | `moderation` | 有 | 有 | 无 | 无 |
 | `responseFormat` | 有 | 有 | 无 | 无 |
-| `n`（一次生成几张） | 有 | 有 | 无，固定 1 | 无，固定 1 |
+| `n`（一次生成几张） | 有 | 有 | 有（1–4） | 无，固定 1 |
 | `aspectRatio`（gemini/grok） | 有 | 有 | 无 | 无 |
 | `imageSize`（gemini/grok 分辨率） | 有 | 有 | 无 | 无 |
-| `providerStyle` | 有 | **无** | 无 | 无 |
-| `referenceUrls`（参考图） | 有 | 有 | 有（`referencePaths`） | **无** |
-| `maskDataUrl`（蒙版） | 有 | 有 | 无 | 无 |
+| `providerStyle` | 有 | 有 | 无 | 无 |
+| `referenceUrls`（参考图） | 有 | 有 | 有（`referencePaths`） | 有（`imageRef`） |
+| `maskDataUrl`（蒙版） | 有 | 有 | 无（见下） | 无 |
 
-## 按优先级
+## 已完成
 
-### P0 — `prompt` 500 字符上限
+**P0 提示词上限**（`IMAGE_PROMPT_MAX`，在 `src/renderer/src/lib/image-style-templates.ts`）
+500 → 4000，且不再硬截断：超限时计数标红、生成按钮禁用并给出提示。
+原来的 `value.slice(0, promptMax)` 会把粘进来的长提示词无声吃掉尾巴，
+而风格库 541 个案例里 66% 超过 500 字符，p90 是 2748。
+4000 取自 OpenAI images API 里最保守的那档；**后端 `/imagegen` 的真实上限没有核实过**，
+如果中继那边更宽，这个值还可以再放。
 
-上限常量是 `src/renderer/src/lib/image-style-templates.ts` 的 `IMAGE_PROMPT_MAX = 500`
-（原先在 `ImageGenerationWorkspace.tsx`，为了让数据层测试守住「模板骨架装得下」才挪过来的），
-`ImageInputSection` 里是硬截断（`value.slice(0, promptMax)`），粘长提示词会被无声吃掉尾巴。
+**P1 工作流参考图** 复用 `imageRef` 字段（`model3d` / `app-icon` 已在用），
+配 `RoutineImageReferencePicker`。默认留空 = 文生图 —— 刻意不学 `model3d`
+默认吃 `{{prev.imageUrl}}`，否则每个生图节点都会悄悄变成改图。
+已是公网图直接透传给云端，省掉「下载成 data URL 再传回 R2」这一趟；
+配了参考图但没解析出来会报错，不静默退回文生图。
 
-风格库 541 个案例里 **360 条（66%）超过 500 字符**，p90 是 2748，最长 8143。
-中位数 1041。也就是说这个上限挡掉了大部分工业级提示词，也挡住了模板选择器。
+**P2 工作流尺寸** `RoutineStep.size`，节点编辑器里一个 Select（含「服务端默认」）。
+`media.cover`、`media.app-icon-master` 和「表情包生成」模板已改成带 `size`，
+不再靠提示词正文描述比例。
 
-要确认的是后端 `/imagegen` 有没有真实上限；如果没有，这里应该放宽到 4000 左右并改成
-软提示（超了标红但不截断），而不是静默 slice。
+**P3 聊天工具** `size` 从 4 档补到 8 档，新增 `quality` / `background` / `n`(1–4)。
+`n > 1` 时把每张图都带回给 agent 挑。工具与参数描述里点明了
+「透明背景传 `background=transparent`，别只在 prompt 里写」和「每张都单独计费」。
 
-风格模板的骨架都控制在 150 字符以内，在当前 500 的上限下可用（留了填占位符的余量），
-`image-style-templates.test.ts` 会守住这条。放宽上限后骨架可以写得更细。
+**P4 `providerStyle`** 生图页高级区加了 `vivid` / `natural` 的 Select。
 
-### P1 — 工作流 `imagegen` 步没有参考图入口
+## 待办
 
-`dressup` 有 `personRef` / `garmentRef`，`model3d` 有 `imageRef`，唯独 `imagegen` 没有。
-结果是工作流里做不了「上一步出图 → 这一步照着改」。
-`runImagegenStep`（`src/main/routines.ts`）只传 `prompt` / `engine` / `downloadResult`。
+**聊天工具的蒙版没做。** 蒙版要一张涂抹出来的 PNG，agent 手上没有这个东西，
+而中继要的是上传后的 `maskUrl`。要做的话得先有「让 agent 引用页面上刚画好的蒙版」这条路径，
+不是加个参数就行。
 
-补法需要动四处：
-1. `RoutineStep` 加字段（`src/shared/ipc/contract.ts`）
-2. `routineNodeSchemas('imagegen')` 校验（`src/main/routine-node-schema.ts`）
-3. 节点编辑 UI（`RoutinesPage.tsx`）
-4. `runImagegenStep` 传下去（`src/main/routines.ts`）
+**工作流步骤缺 `quality` / `background` / `n`。** 加法和 P2 完全一样（契约 → schema →
+节点编辑 UI → `runImagegenStep`），只是当时没做。透明背景在工作流里目前还只能靠提示词描述。
 
-### P2 — 工作流 `imagegen` 步没有 size
+**`resources/pi-extensions/` 没有静态检查覆盖**，但有行为测试。
+两个 tsconfig 的 `include` 都不含这个目录，`eslint` 也只扫 `src` 和 `tests`，
+所以那两个扩展的 TS 从来没被 typecheck 过；`@sinclair/typebox` 甚至不在本仓库依赖里
+（由 pi 宿主提供），单独跑 `tsc` 也解析不了它。
 
-同上四处。当前比例只能靠 prompt 正文描述，`media.app-icon-master` 那类预设就是这么绕的。
-加了之后 `routine-node-presets.ts` 里的预设可以直接带尺寸。
-
-### P3 — 聊天 `image_gen` 工具参数太窄
-
-只有 `prompt` / `size`（4 档） / `referencePaths`。缺 `quality`、`background`、`n`、蒙版。
-透明背景现在只能靠 prompt 里写「transparent background」哄模型，命中率不如直接传
-`background: 'transparent'`。
-
-这条最好补：扩展自己走 `cloudFetch('/imagegen')`，body 是 `Record<string, unknown>`，
-**只改 `resources/pi-extensions/pi-studio-imagegen.ts` 一个文件**
-（`Type.Object` 加字段 + body 加字段），不用动主进程。
-`size` 的 4 档也可以直接对齐页面的 8 档。
-
-### P4 — 页面缺 `providerStyle`
-
-`vivid` / `natural` 在契约和 `generateImage()` 里都有，`ImageOutputSection` 的高级区没放。
-一行 Select 的事。
+真正的保护是 `tests/imagegen-extension.test.ts` —— 它把扩展通过 pi 真加载起来，
+检查注册出的 schema 和实际发给中继的 body，比 typecheck 管用。改这个扩展时以那份测试为准。
+`pi-studio-codex-sessions.ts` 没有同等的测试。
 
 ## 备注
 
-聊天工具和工作流是**两条独立代码路径**：工作流走主进程 `generateImage()`（参数齐全，只是没传），
-聊天工具走扩展自己的 HTTP 调用。补参数时别指望改一处两边都生效。
+聊天工具和工作流是**两条独立代码路径**：工作流走主进程 `generateImage()`，
+聊天工具走扩展自己的 `cloudFetch('/imagegen')`。补参数时别指望改一处两边生效。
