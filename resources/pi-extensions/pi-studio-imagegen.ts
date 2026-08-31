@@ -59,13 +59,45 @@ const parameters = Type.Object({
   size: Type.Optional(
     Type.Union(
       [
+        Type.Literal('256x256'),
+        Type.Literal('512x512'),
         Type.Literal('1024x1024'),
         Type.Literal('1024x1536'),
         Type.Literal('1536x1024'),
+        Type.Literal('1024x1792'),
+        Type.Literal('1792x1024'),
         Type.Literal('auto'),
       ],
-      { description: '输出尺寸,默认 1024x1024。表情包用 1024x1024。' },
+      {
+        description:
+          '输出尺寸,默认 1024x1024。竖版用 1024x1536,横版用 1536x1024。表情包用 1024x1024。',
+      },
     ),
+  ),
+  quality: Type.Optional(
+    Type.Union(
+      [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('auto')],
+      {
+        description:
+          '出图质量,默认 auto。high 明显更慢,只在用户明确要高质量或成品图时用;草图和表情包用 low。',
+      },
+    ),
+  ),
+  background: Type.Optional(
+    Type.Union(
+      [Type.Literal('auto'), Type.Literal('transparent'), Type.Literal('opaque')],
+      {
+        description:
+          '背景,默认 auto。App 图标、贴纸、需要抠图的素材直接传 transparent,比在 prompt 里写「透明背景」可靠。',
+      },
+    ),
+  ),
+  n: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 4,
+      description: '一次生成几张,默认 1。用户要多个方案挑选时才 >1,每张都单独计费。',
+    }),
   ),
   referencePaths: Type.Optional(
     Type.Array(Type.String(), {
@@ -293,7 +325,8 @@ export default function piStudioImagegen(pi: ExtensionAPI): void {
       '调用 pi-studio 的云端生图,直接产出一张图片。' +
       '适合表情包、插图、头像、封面、概念图这类"用户要一张图"的请求。' +
       '结果会作为图片返回,你能看见成品,可以据此判断要不要改提示词重画。' +
-      '画面内文字要在 prompt 里逐字写明。',
+      '画面内文字要在 prompt 里逐字写明。' +
+      '透明背景传 background=transparent,别只在 prompt 里写;高质量成品传 quality=high(会慢很多)。',
     promptSnippet: 'image_gen: 云端生成图片(表情包/插图/头像/封面),返回图片本身',
     parameters,
     async execute(
@@ -323,16 +356,27 @@ export default function piStudioImagegen(pi: ExtensionAPI): void {
           prompt,
           batchId: crypto.randomUUID(),
           size: params.size ?? '1024x1024',
+          ...(params.quality ? { quality: params.quality } : {}),
+          ...(params.background ? { background: params.background } : {}),
+          ...(params.n && params.n > 1 ? { n: params.n } : {}),
           ...(referenceUrls.length > 0 ? { referenceUrls } : {}),
         },
         signal,
       )
 
-      const image = await download(urls[0], signal)
+      // n > 1 时中继会回多张,全部带回去,agent 才能挑
+      const images = await Promise.all(urls.map((url) => download(url, signal)))
       return {
         content: [
-          { type: 'image', data: image.data, mimeType: image.mimeType },
-          { type: 'text', text: `已生成图片:${urls[0]}` },
+          ...images.map((image) => ({
+            type: 'image' as const,
+            data: image.data,
+            mimeType: image.mimeType,
+          })),
+          {
+            type: 'text' as const,
+            text: urls.length > 1 ? `已生成 ${urls.length} 张图片:\n${urls.join('\n')}` : `已生成图片:${urls[0]}`,
+          },
         ],
         details: { urls, referenceCount: referenceUrls.length },
       }

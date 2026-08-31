@@ -128,8 +128,89 @@ describe('bundled image_gen extension', () => {
 
   it('loads through pi and registers image_gen with prompt required', async () => {
     const tool = await loadImageGenTool()
-    expect(Object.keys(tool.parameters.properties)).toEqual(['prompt', 'size', 'referencePaths'])
+    expect(Object.keys(tool.parameters.properties)).toEqual([
+      'prompt',
+      'size',
+      'quality',
+      'background',
+      'n',
+      'referencePaths',
+    ])
     expect(tool.parameters.required).toEqual(['prompt'])
+    // 尺寸要和生图页一致,不能只剩三档
+    const size = tool.parameters.properties.size as { anyOf: { const: string }[] }
+    expect(size.anyOf.map((option) => option.const)).toEqual([
+      '256x256',
+      '512x512',
+      '1024x1024',
+      '1024x1536',
+      '1536x1024',
+      '1024x1792',
+      '1792x1024',
+      'auto',
+    ])
+  })
+
+  it('forwards transparency and quality as real parameters, not prompt begging', async () => {
+    const calls = stubCloud(RESULT_SSE)
+    const tool = await loadImageGenTool()
+    await tool.execute(
+      'call-1',
+      { prompt: '图标', size: '1024x1024', background: 'transparent', quality: 'high' },
+      undefined,
+      undefined,
+      { cwd: PROJECT_ROOT },
+    )
+
+    expect(calls[0].body).toMatchObject({
+      prompt: '图标',
+      size: '1024x1024',
+      background: 'transparent',
+      quality: 'high',
+    })
+  })
+
+  it('omits the optional knobs the agent did not set', async () => {
+    const calls = stubCloud(RESULT_SSE)
+    const tool = await loadImageGenTool()
+    await tool.execute('call-1', { prompt: '猫' }, undefined, undefined, { cwd: PROJECT_ROOT })
+
+    // 没传就别塞进 body,交给服务端的默认值
+    expect(calls[0].body).not.toHaveProperty('quality')
+    expect(calls[0].body).not.toHaveProperty('background')
+    expect(calls[0].body).not.toHaveProperty('n')
+  })
+
+  it('brings back every image when the agent asks for several', async () => {
+    const calls = stubCloud(
+      'event: result\ndata: {"urls":["https://r2.example/a.png","https://r2.example/b.png"]}\n\n',
+    )
+    const tool = await loadImageGenTool()
+
+    const result = await tool.execute('call-1', { prompt: '猫', n: 2 }, undefined, undefined, {
+      cwd: PROJECT_ROOT,
+    })
+
+    expect(calls[0].body).toMatchObject({ n: 2 })
+    // 两张图都得回给模型,否则它没法挑
+    expect(result.content.map((c) => c.type)).toEqual(['image', 'image', 'text'])
+    expect(result.content[2].text).toContain('https://r2.example/a.png')
+    expect(result.content[2].text).toContain('https://r2.example/b.png')
+    expect(result.details).toEqual({
+      urls: ['https://r2.example/a.png', 'https://r2.example/b.png'],
+      referenceCount: 0,
+    })
+  })
+
+  it('keeps n = 1 on the single-image shape', async () => {
+    stubCloud(RESULT_SSE)
+    const tool = await loadImageGenTool()
+    const result = await tool.execute('call-1', { prompt: '猫', n: 1 }, undefined, undefined, {
+      cwd: PROJECT_ROOT,
+    })
+
+    expect(result.content.map((c) => c.type)).toEqual(['image', 'text'])
+    expect(result.content[1].text).toBe('已生成图片:https://r2.example/out.png')
   })
 
   it('returns the image itself so both the model and the card can see it', async () => {
