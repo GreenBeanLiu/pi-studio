@@ -37,6 +37,7 @@ const DEFAULT_OUTPUT: ImageOutputSettings = {
   outputCompression: 90,
   moderation: 'auto',
   responseFormat: 'b64_json',
+  providerStyle: 'vivid',
   requestUser: '',
   advanced: false,
   geminiAspectRatio: '1:1',
@@ -451,8 +452,10 @@ export default function ImageGenerationWorkspace({
     }
   }
 
+  const promptTooLong = prompt.length > IMAGE_PROMPT_MAX
   const canGenerate =
     pending.length < 3 &&
+    !promptTooLong &&
     (!!prompt.trim() || (!!baseImage && model.acceptsImage)) &&
     !!health?.keyConfigured
 
@@ -487,7 +490,12 @@ export default function ImageGenerationWorkspace({
           onChange={(patch) => setOutput((current) => ({ ...current, ...patch }))}
         />
 
-        {!canGenerate && !health?.ok && (
+        {promptTooLong && (
+          <div className={styles.warning}>
+            提示词超出 {IMAGE_PROMPT_MAX} 字符上限（当前 {prompt.length}），请精简后再生成。
+          </div>
+        )}
+        {!canGenerate && !promptTooLong && !health?.ok && (
           <div className={styles.warning}>当前模型服务不可用，请检查云端生图配置或刷新状态。</div>
         )}
         <div style={{ display: 'flex', gap: 8 }}>

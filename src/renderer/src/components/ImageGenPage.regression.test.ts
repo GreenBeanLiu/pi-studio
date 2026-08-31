@@ -8,6 +8,7 @@ const output = readFileSync(new URL('./ImageOutputSection.tsx', import.meta.url)
 const historyRow = readFileSync(new URL('./ImageHistoryBatchRow.tsx', import.meta.url), 'utf8')
 const mainImageGen = readFileSync(new URL('../../../main/image-gen.ts', import.meta.url), 'utf8')
 const input = readFileSync(new URL('./ImageInputSection.tsx', import.meta.url), 'utf8')
+const models = readFileSync(new URL('./image-generation-models.ts', import.meta.url), 'utf8')
 
 describe('Image generation workspace regressions', () => {
   it('uses the modular workspace instead of the legacy tab page', () => {
@@ -71,5 +72,18 @@ describe('Image generation workspace regressions', () => {
     // 提示词上限挪进 lib 才能被数据层测试守住
     expect(workspace).toContain('promptMax={IMAGE_PROMPT_MAX}')
     expect(workspace).not.toContain('const PROMPT_MAX =')
+  })
+
+  it('stops silently truncating long prompts', () => {
+    // 旧行为是 value.slice(0, promptMax),粘 1000 字的提示词会被无声吃掉尾巴
+    expect(input).not.toContain('slice(0, promptMax)')
+    expect(input).toContain('prompt.length > promptMax ? styles.captionOver')
+    expect(workspace).toContain('const promptTooLong = prompt.length > IMAGE_PROMPT_MAX')
+    expect(workspace).toContain('!promptTooLong &&')
+  })
+
+  it('exposes providerStyle alongside the other advanced gpt parameters', () => {
+    expect(output).toContain("['vivid', 'natural']")
+    expect(models).toContain('providerStyle: args.output.providerStyle,')
   })
 })

@@ -105,6 +105,10 @@ const useStyles = createStyles(({ token, css }) => ({
     cursor: pointer;
     &:hover { color: ${token.colorTextSecondary}; }
   `,
+  captionOver: css`
+    color: ${token.colorError};
+    font-variant-numeric: tabular-nums;
+  `,
   templateChips: css`
     display: flex;
     gap: 4px;
@@ -282,11 +286,13 @@ export default function ImageInputSection({
 
       <div className={styles.caption}>
         <span>{baseImage ? '修改说明（可留空）' : '文字描述'}</span>
-        <span>{prompt.length} / {promptMax}</span>
+        <span className={prompt.length > promptMax ? styles.captionOver : undefined}>
+          {prompt.length} / {promptMax}
+        </span>
       </div>
       <Input.TextArea
         value={prompt}
-        onChange={(event) => onPromptChange(event.target.value.slice(0, promptMax))}
+        onChange={(event) => onPromptChange(event.target.value)}
         placeholder={baseImage ? '可留空生成图片变体，或描述希望怎样修改' : '描述你想生成的图片…'}
         autoSize={{ minRows: 4, maxRows: 9 }}
       />

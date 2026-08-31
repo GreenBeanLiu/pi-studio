@@ -21,6 +21,8 @@ describe('image style templates', () => {
     for (const template of IMAGE_STYLE_TEMPLATES) {
       // 骨架本身塞满输入框就没法填占位符了,留一半余量
       expect(template.skeleton.length).toBeLessThanOrEqual(IMAGE_PROMPT_MAX / 2)
+      // 上限放宽后上面那条会变得很松,再钉一个绝对值:骨架是待填的架子,不是成品长文
+      expect(template.skeleton.length).toBeLessThanOrEqual(300)
     }
   })
 

@@ -7,6 +7,7 @@ import type {
   ImageGenEngine,
   ImageGenModeration,
   ImageGenOutputFormat,
+  ImageGenProviderStyle,
   ImageGenQuality,
   ImageGenResponseFormat,
   ImageGenSize,
@@ -95,6 +96,7 @@ export type ImageOutputSettings = {
   outputCompression: number
   moderation: ImageGenModeration
   responseFormat: ImageGenResponseFormat
+  providerStyle: ImageGenProviderStyle
   requestUser: string
   advanced: boolean
   geminiAspectRatio: GeminiImageAspectRatio
@@ -120,6 +122,7 @@ export type ImageGenerationRequest = {
   outputCompression?: number
   moderation?: ImageGenModeration
   responseFormat?: ImageGenResponseFormat
+  providerStyle?: ImageGenProviderStyle
   user?: string
 }
 
@@ -161,6 +164,7 @@ export function buildImageGenerationRequest(args: {
         ...(args.output.outputFormat !== 'png' ? { outputCompression: args.output.outputCompression } : {}),
         moderation: args.output.moderation,
         responseFormat: args.output.responseFormat,
+        providerStyle: args.output.providerStyle,
         ...(args.output.requestUser.trim() ? { user: args.output.requestUser.trim() } : {}),
       } : {}),
     }

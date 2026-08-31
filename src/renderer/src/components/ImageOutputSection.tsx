@@ -166,6 +166,7 @@ export default function ImageOutputSection({
               <label>压缩<InputNumber min={0} max={100} disabled={value.outputFormat === 'png'} value={value.outputCompression} onChange={(outputCompression) => onChange({ outputCompression: outputCompression ?? 0 })} /></label>
               <label>审核<Select value={value.moderation} options={['auto', 'low'].map((item) => ({ value: item, label: item }))} onChange={(moderation) => onChange({ moderation })} /></label>
               <label>响应<Select value={value.responseFormat} options={['b64_json', 'url'].map((item) => ({ value: item, label: item }))} onChange={(responseFormat) => onChange({ responseFormat })} /></label>
+              <label>风格<Select value={value.providerStyle} options={['vivid', 'natural'].map((item) => ({ value: item, label: item }))} onChange={(providerStyle) => onChange({ providerStyle })} /></label>
               <label>用户<Input maxLength={64} value={value.requestUser} onChange={(event) => onChange({ requestUser: event.target.value })} /></label>
             </div>
           )}

@@ -11,6 +11,7 @@ const output: ImageOutputSettings = {
   outputCompression: 85,
   moderation: 'auto',
   responseFormat: 'url',
+  providerStyle: 'natural',
   requestUser: 'pi-studio-test',
   advanced: true,
   geminiAspectRatio: '16:9',

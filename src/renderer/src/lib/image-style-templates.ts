@@ -11,10 +11,12 @@ import type { GeminiImageAspectRatio, GrokImageAspectRatio, ImageGenSize } from 
  */
 
 /**
- * 提示词输入框的字符上限。模板骨架都远小于这个值,留出填占位符的余量;
- * 调整上限时 image-style-templates.test.ts 会守住「骨架必须装得下」这条不变量。
+ * 提示词输入框的字符上限。原来是 500,但工业级提示词普遍上千字(风格库 541 个案例里
+ * 66% 超过 500,p90 是 2748),旧上限是硬截断,粘长提示词会被无声吃掉尾巴。
+ * 4000 取自 OpenAI images API 里最保守的那档;超了不再截断,改成禁用生成按钮 + 标红计数。
+ * image-style-templates.test.ts 守住「骨架必须装得下」这条不变量。
  */
-export const IMAGE_PROMPT_MAX = 500
+export const IMAGE_PROMPT_MAX = 4000
 
 export type ImageStyleCategoryId =
   | 'ui'
