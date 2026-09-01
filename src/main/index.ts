@@ -22,6 +22,7 @@ import { syncBundledExtensions, syncBundledSkills } from './bundled-agent-resour
 import { startSharedMemoryService, stopSharedMemoryService } from './shared-memory'
 import { sharedMemoryPath } from './workspace-memory'
 import { applyPendingDataRestore, createStartupDataBackup } from './local-data-backup'
+import { createQuitGuard, DEFAULT_QUIT_CLEANUP_TIMEOUT_MS } from './quit-cleanup'
 
 // 无桌面会话环境下的调试口子:PI_REMOTE_DEBUG_PORT=9223 pnpm dev 后可用 CDP 驱动/截图
 if (process.env.PI_REMOTE_DEBUG_PORT)
@@ -314,12 +315,32 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
+const quitGuard = createQuitGuard({
+  cleanup: async () => {
+    tray?.destroy()
+    tray = null
+    appendAppLog('info', 'app', 'App quitting')
+    clearAllGitRunChanges()
+    await Promise.allSettled([piClientManager.stop(), stopSharedMemoryService()])
+  },
+  quit: () => app.quit(),
+  timeoutMs: DEFAULT_QUIT_CLEANUP_TIMEOUT_MS,
+  onOutcome: (outcome) => {
+    if (outcome === 'done') {
+      appendAppLog('info', 'app', 'Agent cleanup finished')
+      return
+    }
+    // 超时就意味着可能有 agent 进程活过了这次退出 —— 留下能对账的证据,
+    // 而不是静默地当成收干净了。
+    appendAppLog('error', 'app', 'Agent cleanup did not finish before quit', {
+      timeoutMs: DEFAULT_QUIT_CLEANUP_TIMEOUT_MS,
+      liveAgents: piClientManager.liveAgentCount(),
+      jobs: piClientManager.agentJobs(),
+    })
+  },
+})
+
+app.on('before-quit', (event) => {
   isQuitting = true
-  tray?.destroy()
-  tray = null
-  appendAppLog('info', 'app', 'App quitting')
-  clearAllGitRunChanges()
-  piClientManager.stop().catch(() => {})
-  void stopSharedMemoryService()
+  quitGuard.handleBeforeQuit(event)
 })
