@@ -223,8 +223,8 @@ export type DesktopApi = {
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: ImageGenSize
-      aspectRatio?: GeminiImageAspectRatio
-      imageSize?: GeminiImageResolution
+      aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+      imageSize?: GeminiImageResolution | GrokImageResolution
       n?: number
       quality?: ImageGenQuality
       background?: ImageGenBackground
@@ -303,13 +303,23 @@ export type DesktopApi = {
 
 export type LlmProfileListResult = { ok: true; profiles: LlmProviderProfile[] } | { error: string }
 
-export type ImageGenEngine = 'openai' | 'gemini'
+export type ImageGenEngine = 'openai' | 'gemini' | 'grok'
 export type ImageModel =
   | 'gpt-image-2'
   | 'gemini-3-pro-image-preview'
+  | 'grok-imagine-image'
+  | 'grok-imagine-image-quality'
+  | 'grok-imagine-image-2.0'
 
 export type GeminiImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
 export type GeminiImageResolution = '1K' | '2K' | '4K'
+
+// Grok 只吃比例、不吃 size,而且比例集合比 Gemini 宽(有 20:9 这种超宽)。
+// 分辨率只到 2K —— 4K 会被后端挡下。
+export type GrokImageAspectRatio =
+  | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
+  | '2:1' | '1:2' | '19.5:9' | '9:19.5' | '20:9' | '9:20' | 'auto'
+export type GrokImageResolution = '1K' | '2K'
 export type Model3DHealth = {
   configured: boolean
   /** 各 3D 服务商密钥是否就绪;探测失败时缺失 */

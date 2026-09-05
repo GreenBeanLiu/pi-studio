@@ -3,6 +3,8 @@ import { createStyles } from 'antd-style'
 
 import type {
   GeminiImageAspectRatio,
+  GrokImageAspectRatio,
+  GrokImageResolution,
   GeminiImageResolution,
   ImageGenQuality,
   ImageGenSize,
@@ -16,6 +18,12 @@ const GPT_SIZES: ImageGenSize[] = [
 ]
 const GEMINI_RATIOS: GeminiImageAspectRatio[] = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']
 const GEMINI_SIZES: GeminiImageResolution[] = ['1K', '2K', '4K']
+const GROK_RATIOS: GrokImageAspectRatio[] = [
+  '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
+  '2:1', '1:2', '19.5:9', '9:19.5', '20:9', '9:20', 'auto',
+]
+// 只有 1K/2K —— 4K 会被后端 400 挡下
+const GROK_SIZES: GrokImageResolution[] = ['1K', '2K']
 const QUALITIES: ImageGenQuality[] = ['low', 'medium', 'high', 'auto', 'standard', 'hd']
 
 // 全部走主题 token,不再硬编码浅色 —— 之前 rgba(0,0,0,…) 在暗色下几乎不可见
@@ -172,6 +180,15 @@ export default function ImageOutputSection({
           <Options values={GEMINI_RATIOS} value={value.geminiAspectRatio} onChange={(geminiAspectRatio) => onChange({ geminiAspectRatio })} />
           <span className={styles.label}>分辨率</span>
           <Options values={GEMINI_SIZES} value={value.geminiImageSize} onChange={(geminiImageSize) => onChange({ geminiImageSize })} />
+        </>
+      )}
+
+      {model.parameters === 'grok' && (
+        <>
+          <span className={styles.label}>画幅比例</span>
+          <Options values={GROK_RATIOS} value={value.grokAspectRatio} onChange={(grokAspectRatio) => onChange({ grokAspectRatio })} />
+          <span className={styles.label}>分辨率</span>
+          <Options values={GROK_SIZES} value={value.grokImageSize} onChange={(grokImageSize) => onChange({ grokImageSize })} />
         </>
       )}
 

@@ -1391,7 +1391,7 @@ export default function SettingsModal({
                 </span>
                 <Select
                   value={settings.imageEngine || 'openai'}
-                  onChange={(v) => patch({ imageEngine: v as 'openai' | 'gemini' })}
+                  onChange={(v) => patch({ imageEngine: v as 'openai' | 'gemini' | 'grok' })}
                   style={{ width: 220 }}
                   options={[
                     { value: 'openai', label: 'GPT Image 2' },

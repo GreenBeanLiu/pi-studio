@@ -218,7 +218,7 @@ export type ImageGenOptions = {
 export async function generateImage(
   payload: {
     prompt: string
-    engine: 'openai' | 'gemini'
+    engine: 'openai' | 'gemini' | 'grok'
     batchId?: string
     model?: ImageModel
     referenceUrls?: string[]
@@ -300,7 +300,7 @@ export function registerImageGenHandlers(): void {
       _e,
       payload: {
         prompt: string
-        engine: 'openai' | 'gemini'
+        engine: 'openai' | 'gemini' | 'grok' | 'grok'
         batchId?: string
         model?: ImageModel
         referenceUrls?: string[]
@@ -381,7 +381,7 @@ export function registerImageGenHandlers(): void {
       // engine 是遗留字段(cloudGenerate 只认 model),但类型上必填 —— 按模型名推,
       // 别随手塞一个和 model 对不上的值
       const model = (payload.model ?? '').toLowerCase()
-      const engine = model.includes('gemini') ? 'gemini' : 'openai'
+      const engine = model.includes('gemini') ? 'gemini' : model.includes('grok') ? 'grok' : 'openai'
       const result = await generateImage({
         ...payload,
         engine,

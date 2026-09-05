@@ -127,7 +127,7 @@ export function loadSettings(): SettingsData {
     feishuAppSecret: decryptField(raw, 'feishuAppSecret', 'feishuAppSecretEncrypted'),
     feishuChatId: (raw.feishuChatId as string) ?? DEFAULTS.feishuChatId,
     imageEngine:
-      raw.imageEngine === 'openai' || raw.imageEngine === 'gemini'
+      raw.imageEngine === 'openai' || raw.imageEngine === 'gemini' || raw.imageEngine === 'grok'
         ? raw.imageEngine
         : DEFAULTS.imageEngine,
     cloudImageRelay: (raw.cloudImageRelay as string) ?? DEFAULTS.cloudImageRelay,

@@ -1,5 +1,7 @@
 import type {
   GeminiImageAspectRatio,
+  GrokImageAspectRatio,
+  GrokImageResolution,
   GeminiImageResolution,
   ImageGenBackground,
   ImageGenEngine,
@@ -20,7 +22,7 @@ export type ImageModelDefinition = {
   group: '云端模型'
   engine: ImageGenEngine
   cloudModel?: Exclude<ImageModel, 'gpt-image-2'>
-  parameters: 'gpt' | 'gemini'
+  parameters: 'gpt' | 'gemini' | 'grok'
   acceptsImage: boolean
   acceptsMask: boolean
 }
@@ -47,6 +49,41 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
     acceptsImage: true,
     acceptsMask: false,
   },
+  // 2026-09-05 恢复:grok 从 3A 搬到 heilovehei 的 grok 分组后重新可用。
+  // 都不吃参考图(这家的 grok 只有文生图),出图 5-10 秒,比 gpt-image-2 的 ~29 秒快得多。
+  {
+    key: 'grok-imagine-image',
+    label: 'Grok Image',
+    description: '标准文生图 · 快',
+    group: '云端模型',
+    engine: 'grok',
+    cloudModel: 'grok-imagine-image',
+    parameters: 'grok',
+    acceptsImage: false,
+    acceptsMask: false,
+  },
+  {
+    key: 'grok-imagine-image-quality',
+    label: 'Grok Image 高质量',
+    description: '高质量文生图',
+    group: '云端模型',
+    engine: 'grok',
+    cloudModel: 'grok-imagine-image-quality',
+    parameters: 'grok',
+    acceptsImage: false,
+    acceptsMask: false,
+  },
+  {
+    key: 'grok-imagine-image-2.0',
+    label: 'Grok Image 2.0',
+    description: '新版文生图 · 会改写提示词',
+    group: '云端模型',
+    engine: 'grok',
+    cloudModel: 'grok-imagine-image-2.0',
+    parameters: 'grok',
+    acceptsImage: false,
+    acceptsMask: false,
+  },
 ] as const
 
 const MODEL_BY_KEY = new Map(IMAGE_MODELS.map((model) => [model.key, model]))
@@ -59,6 +96,7 @@ export function imageModel(key: ImageModel): ImageModelDefinition {
 
 export function defaultImageModel(engine: string | undefined): ImageModel {
   if (engine === 'gemini') return 'gemini-3-pro-image-preview'
+  if (engine === 'grok') return 'grok-imagine-image'
   return 'gpt-image-2'
 }
 
@@ -76,6 +114,8 @@ export type ImageOutputSettings = {
   advanced: boolean
   geminiAspectRatio: GeminiImageAspectRatio
   geminiImageSize: GeminiImageResolution
+  grokAspectRatio: GrokImageAspectRatio
+  grokImageSize: GrokImageResolution
 }
 
 export type ImageGenerationRequest = {
@@ -86,8 +126,8 @@ export type ImageGenerationRequest = {
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
-  aspectRatio?: GeminiImageAspectRatio
-  imageSize?: GeminiImageResolution
+  aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
+  imageSize?: GeminiImageResolution | GrokImageResolution
   n: number
   quality?: ImageGenQuality
   background?: ImageGenBackground
@@ -147,6 +187,13 @@ export function buildImageGenerationRequest(args: {
       ...base,
       aspectRatio: args.output.geminiAspectRatio,
       imageSize: args.output.geminiImageSize,
+    }
+  }
+  if (model.parameters === 'grok') {
+    return {
+      ...base,
+      aspectRatio: args.output.grokAspectRatio,
+      imageSize: args.output.grokImageSize,
     }
   }
   return base

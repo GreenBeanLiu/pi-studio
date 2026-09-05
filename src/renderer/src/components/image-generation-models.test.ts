@@ -16,6 +16,8 @@ const output: ImageOutputSettings = {
   advanced: true,
   geminiAspectRatio: '16:9',
   geminiImageSize: '2K',
+  grokAspectRatio: '20:9',
+  grokImageSize: '2K',
 }
 
 describe('image generation model catalog', () => {
@@ -23,10 +25,10 @@ describe('image generation model catalog', () => {
     expect(defaultImageModel('openai')).toBe('gpt-image-2')
     // Gemini Flash currently returns 400 through the configured relay; Pro is verified.
     expect(defaultImageModel('gemini')).toBe('gemini-3-pro-image-preview')
-    // 已移除的引擎:'comfy'(本地引擎)和 'grok'(2026-09-04 随 3A 下架删掉),
-    // 老设置里存的值必须回退到云端默认,而不是抛错或返回一个不存在的模型
+    // grok 2026-09-04 随 3A 下架移除,09-05 改挂 heilovehei 的 grok 分组后恢复
+    expect(defaultImageModel('grok')).toBe('grok-imagine-image')
+    // 本地引擎已移除:老设置里存的 'comfy' 回退到云端默认
     expect(defaultImageModel('comfy')).toBe('gpt-image-2')
-    expect(defaultImageModel('grok')).toBe('gpt-image-2')
   })
 
   it('builds one four-image GPT batch from an image-only input', () => {

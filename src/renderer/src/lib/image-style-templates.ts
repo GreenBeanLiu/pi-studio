@@ -1,4 +1,4 @@
-import type { GeminiImageAspectRatio, ImageGenSize } from './api'
+import type { GeminiImageAspectRatio, GrokImageAspectRatio, ImageGenSize } from './api'
 
 /**
  * 生图风格模板。分类、风格/场景标签和每个模板的适用范围来自
@@ -46,7 +46,7 @@ export type ImageStyleTemplate = {
   hint: string
   /** 搜索用的风格与场景词 */
   tags: readonly string[]
-  /** 推荐画幅;gpt 模型直接用,gemini 走 templateAspectRatio 换算 */
+  /** 推荐画幅;gpt 模型直接用,gemini/grok 走 templateAspectRatio 换算 */
   size: ImageGenSize
   /** 填进提示词输入框的六段式骨架,【】是待填占位符 */
   skeleton: string
@@ -385,10 +385,10 @@ export function filterImageStyleTemplates(
 }
 
 /**
- * gemini 不吃 size,只吃画幅比例。模板的三种画幅都落在它支持的比例上,
+ * gemini / grok 不吃 size,只吃画幅比例。模板的三种画幅都落在两家共有的比例上,
  * 所以换模型点同一个模板,画幅意图不会丢。
  */
-export function templateAspectRatio(size: ImageGenSize): GeminiImageAspectRatio {
+export function templateAspectRatio(size: ImageGenSize): GeminiImageAspectRatio & GrokImageAspectRatio {
   if (size === '1024x1536' || size === '1024x1792') return '3:4'
   if (size === '1536x1024' || size === '1792x1024') return '4:3'
   return '1:1'
