@@ -1,6 +1,6 @@
 import { app } from 'electron'
-import { join } from 'path'
-import { cpSync, existsSync, readdirSync, rmSync } from 'fs'
+import { dirname, join } from 'path'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'fs'
 import { agentConfigDir } from './settings'
 import { appendAppLog, normalizeError } from './app-log'
 
@@ -18,8 +18,29 @@ import { appendAppLog, normalizeError } from './app-log'
  *   模板元数据改编自 freestylefly/awesome-gpt-image-2,MIT)
  * - 扩展   pi-studio-imagegen(云端生图工具,凭据走 spawn 环境变量)
  */
+/**
+ * 递归拷贝一棵目录树,只用 readdir/stat/copyFile 三个原语。
+ *
+ * 不能用 `cpSync(..., { recursive: true })` —— 打开 asar 之后源路径在归档里,
+ * 而 **Electron 的 asar 补丁没实现 cpSync 的目录递归**:2026-09-06 实测,
+ * 主进程(process.type=browser)和 ELECTRON_RUN_AS_NODE 两种模式下都返回 ENOENT,
+ * 尽管 fs.cpSync 确实被那层补丁包装过。同一批实测里 readdirSync / statSync /
+ * copyFileSync / readFileSync / ESM import 在 asar 上都正常,所以换成这三个原语
+ * 手工走一遍即可,resources/ 不必从归档里解出来。
+ */
+function copyTree(src: string, dest: string): void {
+  if (statSync(src).isDirectory()) {
+    mkdirSync(dest, { recursive: true })
+    for (const name of readdirSync(src)) copyTree(join(src, name), join(dest, name))
+    return
+  }
+  mkdirSync(dirname(dest), { recursive: true })
+  copyFileSync(src, dest)
+}
+
 function syncBundledDir(sourceName: string, destName: string, logTag: string): void {
-  // asar 已禁用,dev 与打包环境下 getAppPath() 都指向含 resources/ 的应用根
+  // 打包后 getAppPath() 指向 app.asar 内部,dev 下指向应用根;两种情况下
+  // resources/ 都在它下面,读取由 Electron 的 asar 补丁透明处理
   const src = join(app.getAppPath(), 'resources', sourceName)
   if (!existsSync(src)) {
     appendAppLog('warn', logTag, `内置 ${destName} 目录缺失,跳过同步`, { src })
@@ -31,7 +52,7 @@ function syncBundledDir(sourceName: string, destName: string, logTag: string): v
     try {
       const dest = join(destRoot, name)
       rmSync(dest, { recursive: true, force: true })
-      cpSync(join(src, name), dest, { recursive: true })
+      copyTree(join(src, name), dest)
     } catch (err) {
       appendAppLog('error', logTag, `内置 ${destName} 同步失败: ${name}`, normalizeError(err))
     }
