@@ -1,6 +1,6 @@
 import type { ModelRoute } from './model-route'
 
-export type ImageEngine = '' | 'openai' | 'gemini' | 'grok'
+export type ImageEngine = '' | 'openai' | 'gemini'
 
 export type Workspace = {
   path: string

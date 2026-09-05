@@ -223,8 +223,8 @@ export type DesktopApi = {
       referenceUrls?: string[]
       maskDataUrl?: string
       size?: ImageGenSize
-      aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
-      imageSize?: GeminiImageResolution | GrokImageResolution
+      aspectRatio?: GeminiImageAspectRatio
+      imageSize?: GeminiImageResolution
       n?: number
       quality?: ImageGenQuality
       background?: ImageGenBackground
@@ -293,19 +293,6 @@ export type DesktopApi = {
     historyDelete: (id: string) => Promise<{ ok: boolean }>
     onProgress: (cb: (data: { id: string; status: string; progress: number; prompt?: string }) => void) => () => void
   }
-  videoGen: {
-    health: () => Promise<VideoGenHealth>
-    generate: (payload: {
-      prompt: string
-      imageDataUrl?: string
-      duration?: 5 | 10 | 15
-      aspectRatio?: GrokVideoAspectRatio
-      resolution?: GrokVideoResolution
-    }) => Promise<VideoGenHistoryItem | { error: string }>
-    history: () => Promise<VideoGenHistoryItem[]>
-    historyDelete: (id: string) => Promise<{ ok: boolean }>
-    onProgress: (cb: (data: { id: string; provider: 'grok'; status: string; prompt?: string }) => void) => () => void
-  }
   update: {
     onAvailable: (cb: (data: { version: string }) => void) => () => void
     onDownloaded: (cb: (data: { version: string }) => void) => () => void
@@ -316,32 +303,13 @@ export type DesktopApi = {
 
 export type LlmProfileListResult = { ok: true; profiles: LlmProviderProfile[] } | { error: string }
 
-export type ImageGenEngine = 'openai' | 'gemini' | 'grok'
+export type ImageGenEngine = 'openai' | 'gemini'
 export type ImageModel =
   | 'gpt-image-2'
   | 'gemini-3-pro-image-preview'
-  | 'grok-imagine-image'
-  | 'grok-imagine-image-quality'
 
 export type GeminiImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'
 export type GeminiImageResolution = '1K' | '2K' | '4K'
-export type GrokImageAspectRatio =
-  | '1:1'
-  | '16:9'
-  | '9:16'
-  | '4:3'
-  | '3:4'
-  | '3:2'
-  | '2:3'
-  | '2:1'
-  | '1:2'
-  | '19.5:9'
-  | '9:19.5'
-  | '20:9'
-  | '9:20'
-  | 'auto'
-export type GrokImageResolution = '1K' | '2K'
-
 export type Model3DHealth = {
   configured: boolean
   /** 各 3D 服务商密钥是否就绪;探测失败时缺失 */
@@ -387,28 +355,6 @@ export type DressupHistoryItem = {
   mode: 'std' | 'pro'
   duration: '5' | '10'
   videoUrl: string
-  cloudVideoUrl?: string
-  createdAt: number
-}
-
-export type GrokVideoAspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3'
-export type GrokVideoResolution = '480p' | '720p'
-
-export type VideoGenHealth = {
-  configured: boolean
-  grokReady?: boolean
-  model?: string
-}
-
-export type VideoGenHistoryItem = {
-  id: string
-  provider: 'grok'
-  prompt: string
-  duration: 5 | 10 | 15
-  aspectRatio: string
-  resolution: string
-  videoUrl: string
-  filePath?: string
   cloudVideoUrl?: string
   createdAt: number
 }

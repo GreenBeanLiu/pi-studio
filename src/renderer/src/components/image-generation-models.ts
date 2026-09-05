@@ -1,8 +1,6 @@
 import type {
   GeminiImageAspectRatio,
   GeminiImageResolution,
-  GrokImageAspectRatio,
-  GrokImageResolution,
   ImageGenBackground,
   ImageGenEngine,
   ImageGenModeration,
@@ -22,7 +20,7 @@ export type ImageModelDefinition = {
   group: '云端模型'
   engine: ImageGenEngine
   cloudModel?: Exclude<ImageModel, 'gpt-image-2'>
-  parameters: 'gpt' | 'gemini' | 'grok'
+  parameters: 'gpt' | 'gemini'
   acceptsImage: boolean
   acceptsMask: boolean
 }
@@ -49,28 +47,6 @@ export const IMAGE_MODELS: readonly ImageModelDefinition[] = [
     acceptsImage: true,
     acceptsMask: false,
   },
-  {
-    key: 'grok-imagine-image',
-    label: 'Grok Image',
-    description: '标准文生图',
-    group: '云端模型',
-    engine: 'grok',
-    cloudModel: 'grok-imagine-image',
-    parameters: 'grok',
-    acceptsImage: false,
-    acceptsMask: false,
-  },
-  {
-    key: 'grok-imagine-image-quality',
-    label: 'Grok Image 高质量',
-    description: '高质量文生图',
-    group: '云端模型',
-    engine: 'grok',
-    cloudModel: 'grok-imagine-image-quality',
-    parameters: 'grok',
-    acceptsImage: false,
-    acceptsMask: false,
-  },
 ] as const
 
 const MODEL_BY_KEY = new Map(IMAGE_MODELS.map((model) => [model.key, model]))
@@ -83,7 +59,6 @@ export function imageModel(key: ImageModel): ImageModelDefinition {
 
 export function defaultImageModel(engine: string | undefined): ImageModel {
   if (engine === 'gemini') return 'gemini-3-pro-image-preview'
-  if (engine === 'grok') return 'grok-imagine-image'
   return 'gpt-image-2'
 }
 
@@ -101,8 +76,6 @@ export type ImageOutputSettings = {
   advanced: boolean
   geminiAspectRatio: GeminiImageAspectRatio
   geminiImageSize: GeminiImageResolution
-  grokAspectRatio: GrokImageAspectRatio
-  grokImageSize: GrokImageResolution
 }
 
 export type ImageGenerationRequest = {
@@ -113,8 +86,8 @@ export type ImageGenerationRequest = {
   referenceUrls?: string[]
   maskDataUrl?: string
   size?: ImageGenSize
-  aspectRatio?: GeminiImageAspectRatio | GrokImageAspectRatio
-  imageSize?: GeminiImageResolution | GrokImageResolution
+  aspectRatio?: GeminiImageAspectRatio
+  imageSize?: GeminiImageResolution
   n: number
   quality?: ImageGenQuality
   background?: ImageGenBackground
@@ -174,13 +147,6 @@ export function buildImageGenerationRequest(args: {
       ...base,
       aspectRatio: args.output.geminiAspectRatio,
       imageSize: args.output.geminiImageSize,
-    }
-  }
-  if (model.parameters === 'grok') {
-    return {
-      ...base,
-      aspectRatio: args.output.grokAspectRatio,
-      imageSize: args.output.grokImageSize,
     }
   }
   return base

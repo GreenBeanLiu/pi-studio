@@ -42,8 +42,6 @@ const DEFAULT_OUTPUT: ImageOutputSettings = {
   advanced: false,
   geminiAspectRatio: '1:1',
   geminiImageSize: '1K',
-  grokAspectRatio: '1:1',
-  grokImageSize: '1K',
 }
 
 type PendingBatch = { id: string; prompt: string; model: string; count: number }
@@ -230,7 +228,6 @@ export default function ImageGenerationWorkspace({
       ...current,
       size: template.size,
       geminiAspectRatio: ratio,
-      grokAspectRatio: ratio,
     }))
   }
 

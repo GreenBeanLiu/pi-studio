@@ -98,7 +98,6 @@ const METHODS = {
     'onScored',
   ],
   dressup: ['health', 'generate', 'workflow', 'history', 'historyDelete', 'onProgress'],
-  videoGen: ['health', 'generate', 'history', 'historyDelete', 'onProgress'],
   update: ['onAvailable', 'onDownloaded', 'onError', 'install'],
 } as const satisfies MethodList
 

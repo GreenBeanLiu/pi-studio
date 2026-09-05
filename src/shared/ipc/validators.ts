@@ -180,7 +180,7 @@ export function parseRoutineSave(value: unknown): ParsedRoutineSave {
 // settings:save 原来直接 `...settings` 落盘:多余字段跟着持久化,
 // cloudImageKey 不是字符串时 `.trim()` 直接抛 TypeError 崩掉 handler。
 
-const IMAGE_ENGINES = ['', 'openai', 'gemini', 'grok'] as const
+const IMAGE_ENGINES = ['', 'openai', 'gemini'] as const
 
 function stringField(value: unknown, label: string): string {
   if (value === undefined || value === null) return ''

@@ -16,8 +16,6 @@ const output: ImageOutputSettings = {
   advanced: true,
   geminiAspectRatio: '16:9',
   geminiImageSize: '2K',
-  grokAspectRatio: '20:9',
-  grokImageSize: '2K',
 }
 
 describe('image generation model catalog', () => {
@@ -25,9 +23,10 @@ describe('image generation model catalog', () => {
     expect(defaultImageModel('openai')).toBe('gpt-image-2')
     // Gemini Flash currently returns 400 through the configured relay; Pro is verified.
     expect(defaultImageModel('gemini')).toBe('gemini-3-pro-image-preview')
-    expect(defaultImageModel('grok')).toBe('grok-imagine-image')
-    // 本地引擎已移除:老设置里存的 'comfy' 回退到云端默认
+    // 已移除的引擎:'comfy'(本地引擎)和 'grok'(2026-09-04 随 3A 下架删掉),
+    // 老设置里存的值必须回退到云端默认,而不是抛错或返回一个不存在的模型
     expect(defaultImageModel('comfy')).toBe('gpt-image-2')
+    expect(defaultImageModel('grok')).toBe('gpt-image-2')
   })
 
   it('builds one four-image GPT batch from an image-only input', () => {
@@ -57,18 +56,21 @@ describe('image generation model catalog', () => {
     expect(request.n).toBe(1)
   })
 
-  it('ignores unsupported image input and maps Grok output parameters', () => {
+
+  it('forces a masked edit to one image', () => {
     const request = buildImageGenerationRequest({
-      modelKey: 'grok-imagine-image-quality',
-      prompt: 'a robot',
-      batchId: 'batch-3',
+      modelKey: 'gpt-image-2',
+      prompt: 'replace the sky',
+      batchId: 'batch-2',
       referenceUrls: ['https://assets.example/input.png'],
+      maskDataUrl: 'data:image/png;base64,mask',
       output,
     })
-    expect(request.referenceUrls).toBeUndefined()
-    expect(request.model).toBe('grok-imagine-image-quality')
-    expect(request.aspectRatio).toBe('20:9')
-    expect(request.imageSize).toBe('2K')
-    expect(request.n).toBe(4)
+    expect(request.n).toBe(1)
   })
+
+  // 2026-09-04 删掉了一条 "acceptsImage: false 的模型要丢掉 referenceUrls" 的用例 ——
+  // 它是拿 grok-imagine-image-quality 驱动的,而 grok 已随 3A 下架移除。目录里现在
+  // 每个模型都 acceptsImage: true,那条分支暂时没有模型能覆盖到;代码里保留着,
+  // 等下一个不吃参考图的模型进来再补测试。
 })
