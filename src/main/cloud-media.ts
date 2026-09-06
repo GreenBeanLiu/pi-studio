@@ -1,13 +1,14 @@
 import { getCloudConnection } from './cloud-connection'
 import { writeFileSync } from 'fs'
 import { abortSignalWithTimeout } from './abort-signal'
+import { cloudFetch } from './cloud-fetch'
 
 export async function cloudMediaFetch(path: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
   const cloud = getCloudConnection()
   if (!cloud.available) throw new Error(cloud.error ?? '云端服务未配置')
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', cloud.key)
-  return fetch(`${cloud.relay}${path}`, {
+  return cloudFetch(`${cloud.relay}${path}`, {
     ...init,
     headers,
     redirect: 'error',
@@ -67,7 +68,7 @@ export async function readCloudSseResult(
 }
 
 export async function downloadCloudMedia(url: string, destination: string, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(url, {
+  const response = await cloudFetch(url, {
     signal: abortSignalWithTimeout(signal, 180_000),
   })
   if (!response.ok) throw new Error(`媒体下载失败 HTTP ${response.status}`)

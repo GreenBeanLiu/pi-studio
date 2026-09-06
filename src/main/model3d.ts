@@ -5,6 +5,7 @@ import { getCloudConnection } from './cloud-connection'
 import { abortSignalWithTimeout } from './abort-signal'
 import { appendAppLog, normalizeError } from './app-log'
 import { reviewModelRender, type VisionReview } from './vision-review'
+import { cloudFetch as netFetch } from './cloud-fetch'
 
 /**
  * 3D 生成:Tripo3D 调用已抽离到服务端(trigger.dev `gen-model-3d` 任务),客户端
@@ -103,7 +104,7 @@ async function cloudFetch(path: string, init: RequestInit = {}, timeoutMs = 30_0
   if (!cloud.available) throw new Error(cloud.error ?? '云端 3D 服务未配置(设置 → 生图 → 云端中继)')
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', cloud.key)
-  return fetch(`${cloud.relay}${path}`, {
+  return netFetch(`${cloud.relay}${path}`, {
     ...init,
     headers,
     redirect: 'error',
@@ -131,7 +132,7 @@ async function uploadReference(dataUrl: string): Promise<string> {
 }
 
 async function download(url: string, dest: string): Promise<void> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) })
+  const res = await netFetch(url, { signal: AbortSignal.timeout(120_000) })
   if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`)
   writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
 }
@@ -178,7 +179,7 @@ async function genGptImage(prompt: string): Promise<string> {
 
 /** 拉一张远程图片转成 data URL(给 AI 视觉评审当参考图)。 */
 async function urlToDataUrl(url: string): Promise<string> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+  const res = await netFetch(url, { signal: AbortSignal.timeout(60_000) })
   if (!res.ok) throw new Error(`取图失败 HTTP ${res.status}`)
   const ct = res.headers.get('content-type') || 'image/png'
   return `data:${ct};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`

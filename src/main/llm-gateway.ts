@@ -4,6 +4,7 @@ import type {
   LlmProviderHealth,
   LlmProviderProfile,
 } from '../shared/contracts'
+import { cloudFetch } from './cloud-fetch'
 
 export type { LlmProfileWrite, LlmProviderHealth, LlmProviderProfile } from '../shared/contracts'
 
@@ -112,7 +113,7 @@ async function gatewayJson<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${relay.replace(/\/+$/, '')}${path}`, {
+  const response = await cloudFetch(`${relay.replace(/\/+$/, '')}${path}`, {
     ...init,
     headers: {
       Accept: 'application/json',

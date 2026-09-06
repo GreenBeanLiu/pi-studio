@@ -1,5 +1,6 @@
 import { prepareAgentRuntime } from './agent-runtime-config'
 import { getCloudConnection } from './cloud-connection'
+import { cloudFetch } from './cloud-fetch'
 
 /**
  * AI 视觉还原度评审:把参考图(或提示词)和 3D 模型渲染图交给当前聊天模型对比打分。
@@ -66,7 +67,7 @@ async function callGateway(
   question: string,
   imageDataUrls: string[],
 ): Promise<string> {
-  const resp = await fetch(endpoint, {
+  const resp = await cloudFetch(endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey.trim()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
