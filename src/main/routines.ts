@@ -38,6 +38,7 @@ import {
   type SchedulableSchedule,
 } from './routine-scheduler'
 import type { WorkflowNodeContext } from './workflow-node-registry'
+import { cloudFetch } from './cloud-fetch'
 
 /**
  * 例行任务(Routines):定时执行一条由类型化节点组成的流水线。
@@ -729,7 +730,7 @@ async function runModel3dStep(step: RoutineStep, ctx: RunContext, signal: AbortS
       .replace(/[^\w一-龥-]+/g, '_')
       .slice(0, 40) || 'model'
   const glbPath = join(dir, `${Date.now()}-${safe}.glb`)
-  const res = await fetch(modelUrl, {
+  const res = await cloudFetch(modelUrl, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
   })
   if (!res.ok) throw new Error(`下载模型失败 HTTP ${res.status}`)
@@ -751,7 +752,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
 async function routineImageDataUrl(workspacePath: string, reference: string, signal: AbortSignal): Promise<string> {
   if (/^data:image\//i.test(reference)) return reference
   if (/^https?:\/\//i.test(reference)) {
-    const response = await fetch(reference, {
+    const response = await cloudFetch(reference, {
       redirect: 'error',
       signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
     })

@@ -5,6 +5,7 @@ import { join } from 'path'
 import { appendAppLog, normalizeError } from './app-log'
 import type { Routine, RoutineRun, RoutineStep, RoutineStepResult } from './routines'
 import type { WorkflowDeleteOutbox } from './workflow-delete-outbox'
+import { cloudFetch } from './cloud-fetch'
 
 declare const __TRAILAI_API_URL__: string
 
@@ -156,7 +157,7 @@ async function cloudRequest(
   headers.set('Accept', 'application/json')
   if (options.body) headers.set('Content-Type', 'application/json')
   if (credential) headers.set('Authorization', `Bearer ${credential.token}`)
-  return fetch(`${routineSyncOrigin()}${path}`, {
+  return cloudFetch(`${routineSyncOrigin()}${path}`, {
     ...options,
     headers,
     signal: AbortSignal.timeout(15_000),

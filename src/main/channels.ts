@@ -8,6 +8,7 @@ import { abortSignalWithTimeout } from './abort-signal'
 import { appendAppLog, normalizeError } from './app-log'
 import { imageInsertionPositions } from './feishu-doc-layout'
 import { extractWechatDigest, extractWechatTitle, markdownToWechatHtml } from './wechat-article'
+import { cloudFetch } from './cloud-fetch'
 
 /**
  * 通知渠道注册表:渠道是配置数据,不是代码分支。
@@ -108,7 +109,7 @@ export async function sendToChannel(channel: Channel, payload: NotifyPayload, si
     case 'wechat-official':
       throw new Error('微信公众号渠道只能用于「微信公众号草稿」节点,不能作为通知渠道')
     case 'webhook': {
-      const res = await fetch(channel.url, {
+      const res = await cloudFetch(channel.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -208,7 +209,7 @@ async function postFeishuWebhook(url: string, secret: string, card: FeishuCard, 
     body.timestamp = timestamp
     body.sign = createHmac('sha256', `${timestamp}\n${secret.trim()}`).update('').digest('base64')
   }
-  const res = await fetch(url, {
+  const res = await cloudFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -235,7 +236,7 @@ async function feishuJson(
   url: string,
   init: RequestInit,
 ): Promise<Record<string, unknown> & { code?: number; msg?: string }> {
-  const res = await fetch(url, {
+  const res = await cloudFetch(url, {
     ...init,
     signal: abortSignalWithTimeout(init.signal ?? undefined, 15_000),
   })
@@ -371,7 +372,7 @@ async function uploadFeishuDocImage(
     contentType = match[1]
     buffer = Buffer.from(match[2], 'base64')
   } else {
-    const response = await fetch(imageUrl, {
+    const response = await cloudFetch(imageUrl, {
       signal: abortSignalWithTimeout(signal, 20_000),
     })
     if (!response.ok) throw new Error(`下载配图失败: HTTP ${response.status}`)
@@ -391,7 +392,7 @@ async function uploadFeishuDocImage(
     new Blob([new Uint8Array(buffer)], { type: contentType }),
     `pi-studio-cover-${index + 1}.${extension}`,
   )
-  const upload = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', {
+  const upload = await cloudFetch('https://open.feishu.cn/open-apis/drive/v1/medias/upload_all', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -499,7 +500,7 @@ export async function createFeishuDoc(
 type WechatOfficialChannel = Extract<Channel, { type: 'wechat-official' }>
 
 async function getWechatAccessToken(channel: WechatOfficialChannel, signal?: AbortSignal): Promise<string> {
-  const response = await fetch(
+  const response = await cloudFetch(
     `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(channel.appId)}&secret=${encodeURIComponent(channel.appSecret)}`,
     { signal: abortSignalWithTimeout(signal, 15_000) },
   )
@@ -532,7 +533,7 @@ async function imageBuffer(imageUrl: string, signal?: AbortSignal): Promise<{ bu
     if (!match) throw new Error('微信配图 data URL 无法解析')
     return { buffer: Buffer.from(match[2], 'base64'), contentType: match[1] }
   }
-  const response = await fetch(imageUrl, {
+  const response = await cloudFetch(imageUrl, {
     signal: abortSignalWithTimeout(signal, 20_000),
   })
   if (!response.ok) throw new Error(`下载微信配图失败: HTTP ${response.status}`)
@@ -554,7 +555,7 @@ async function uploadWechatInlineImage(
   const filename = `pi-studio-inline-${index + 1}.${extension}`
   const form = new FormData()
   form.append('media', new Blob([new Uint8Array(buffer)], { type: contentType }), filename)
-  const response = await fetch(
+  const response = await cloudFetch(
     `https://api.weixin.qq.com/cgi-bin/media/uploadimg?access_token=${encodeURIComponent(token)}`,
     {
       method: 'POST',
@@ -578,7 +579,7 @@ async function uploadWechatCover(token: string, imageUrl: string, signal?: Abort
   const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
   const form = new FormData()
   form.append('media', new Blob([new Uint8Array(buffer)], { type: contentType }), `pi-studio-cover.${extension}`)
-  const response = await fetch(
+  const response = await cloudFetch(
     `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${encodeURIComponent(token)}&type=image`,
     {
       method: 'POST',
@@ -614,7 +615,7 @@ export async function createWechatDraft(
     inlineUrls.push(await uploadWechatInlineImage(token, images.inline[i], i, signal))
   }
   const articleTitle = extractWechatTitle(markdown, title)
-  const response = await fetch(
+  const response = await cloudFetch(
     `https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${encodeURIComponent(token)}`,
     {
       method: 'POST',

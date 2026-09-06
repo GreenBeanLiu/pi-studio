@@ -18,6 +18,7 @@ import type {
 } from '../shared/ipc/contract'
 import type { RoutineSchedule, RoutineStepProgress } from './routines'
 import type { Workspace } from '../shared/contracts'
+import { cloudFetch } from './cloud-fetch'
 
 type ProjectionProvider = {
   snapshot: () => SessionProjectionSnapshot
@@ -768,7 +769,7 @@ class RemoteControlManager {
     try {
       const cred = await ensureCredential()
       const origin = routineSyncOrigin().replace(/\/+$/, '')
-      const res = await fetch(`${origin}/remote/pair/start`, {
+      const res = await cloudFetch(`${origin}/remote/pair/start`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${cred.token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_name: hostname(), platform: process.platform }),
@@ -789,7 +790,7 @@ class RemoteControlManager {
     try {
       const cred = await ensureCredential()
       const origin = routineSyncOrigin().replace(/\/+$/, '')
-      const res = await fetch(`${origin}/remote/pair/reset`, {
+      const res = await cloudFetch(`${origin}/remote/pair/reset`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${cred.token}` },
       })

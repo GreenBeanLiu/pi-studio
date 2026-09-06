@@ -23,5 +23,8 @@ import { net } from 'electron'
  * 满足这个前提;如果哪天要在 ready 之前打网络,得自己等 `app.whenReady()`。
  */
 export function cloudFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+  // 单测里没有 Electron 运行时,net 是 undefined —— 那时退回全局 fetch,
+  // 好让测试照常 mock。真机上 net 永远在,所以这条分支不会影响线上行为。
+  if (!net?.fetch) return fetch(String(input), init)
   return net.fetch(String(input), init)
 }

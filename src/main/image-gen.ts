@@ -5,6 +5,7 @@ import { resolveCloudImageResult } from './image-gen-result'
 import { abortSignalWithTimeout } from './abort-signal'
 import { remoteControl } from './remote-control'
 import type { ImageModel } from '../shared/ipc/contract'
+import { cloudFetch as netFetch } from './cloud-fetch'
 
 // 本地 ComfyUI 引擎已移除(2026-07-17):生图全走云端(TrailAI 中继)。
 // Provider 调度、Hatchet 执行和 R2 归档均在服务端。
@@ -50,7 +51,7 @@ async function cloudFetch(path: string, init: RequestInit = {}, timeoutMs = 8000
   if (!cloud.available) throw new Error(cloud.error ?? '云端图像服务未配置')
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', cloud.key)
-  return fetch(`${cloud.relay}${path}`, {
+  return netFetch(`${cloud.relay}${path}`, {
     ...init,
     headers,
     redirect: 'error',

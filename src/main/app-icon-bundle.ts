@@ -15,6 +15,7 @@ import { createHash, randomUUID } from 'crypto'
 import { basename, dirname, isAbsolute, relative, resolve } from 'path'
 import { isContainedPath } from '../shared/ipc/validators'
 import { abortSignalWithTimeout } from './abort-signal'
+import { cloudFetch } from './cloud-fetch'
 import {
   ANDROID_ADAPTIVE_SPECS,
   ANDROID_LEGACY_SPECS,
@@ -420,7 +421,7 @@ async function loadSource(source: string, workspacePath: string, signal?: AbortS
   if (/^data:image\//i.test(source)) {
     image = nativeImage.createFromDataURL(source)
   } else if (/^https?:\/\//i.test(source)) {
-    const response = await fetch(source, {
+    const response = await cloudFetch(source, {
       signal: abortSignalWithTimeout(signal, 90_000),
     })
     if (!response.ok) throw new Error(`下载图标母图失败 HTTP ${response.status}`)

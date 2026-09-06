@@ -1,3 +1,4 @@
+import { cloudFetch } from './cloud-fetch'
 /**
  * ACP(Agent Client Protocol)官方 agent 目录。
  *
@@ -144,7 +145,7 @@ export type AcpRegistryDependencies = {
 export function defaultAcpRegistryDependencies(): AcpRegistryDependencies {
   return {
     fetchRegistry: async () => {
-      const response = await fetch(ACP_REGISTRY_URL, { signal: AbortSignal.timeout(15_000) })
+      const response = await cloudFetch(ACP_REGISTRY_URL, { signal: AbortSignal.timeout(15_000) })
       if (!response.ok) {
         throw new Error(`ACP registry responded ${response.status} ${response.statusText}`)
       }
