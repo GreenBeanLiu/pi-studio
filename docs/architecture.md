@@ -101,6 +101,18 @@ flowchart LR
 - main/headless 共用路径不能静态 import Electron。`RuntimeHost.startCompiled()` 要能在 eval CLI 里跑。
 - 日志写入和读取失败都不能阻断 agent 启动；诊断证据是副作用，不是业务前置条件。
 
+### 2.1 Control Plane Runtime Targets
+
+`personal-agent-runtime` 已经承担任务控制面的职责：任务入队、审批、lease、worker heartbeat、执行记录和巡检接口。它现在把可选执行目标显式声明成 runtime target contract，而不是让 mobile/backend 从字符串猜语义：
+
+| target | role | execution_locus | 语义 |
+|--------|------|-----------------|------|
+| `auto` | `router` | `control-plane` | 控制面根据任务是否需要本地工具选择目标 |
+| `personal-agent-engine` | `cloud-agent-runtime` | `cloud` | 云端 agent loop / provider / 云端工具 |
+| `pi-studio:<device>` | `local-tool-runtime` | `gateway` | 通过 remote relay 进入用户设备，访问本地文件、shell、桌面 IPC、本地 MCP |
+
+当前阶段 `pi-studio` 桌面仍然跑完整 Pi agent loop；这个 contract 先把它投影成“本地 tool runtime/gateway”。下一阶段如果把 provider 和 agent loop 搬到云端，`pi-studio:<device>` 这条目标可以收窄为纯本地 tool executor，控制面协议不用换。
+
 ---
 
 ## 3. 手机遥控链路（本次新增的部分）
@@ -210,6 +222,7 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - `remote.ts` — `RemoteClient`：claim / WS / 指令 / 事件回调
 - `protocol.ts` — 协议类型
 - `screens/PairingScreen.tsx` · `screens/ChatScreen.tsx`
+- `harness.ts` — Harness 控制面 client；接收 `role`、`execution_locus`、`capabilities` 形式的 runtime target contract
 
 ---
 
@@ -219,3 +232,4 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - 中转广播给**所有** controller，多设备同时连会各自收到全量事件流
 - 会话状态仍然只存在 agent 子进程和本地 jsonl 里。中转的 backlog 只兜住重连那一小段，
   不是会话存储 —— 桌面不在线时手机依然什么都做不了
+- control plane 已能声明 runtime 角色，但还没有把 tool call 协议拆成 `server/client/gateway` 三类可恢复 async operation；桌面 Pi 进程仍是完整 agent loop。
