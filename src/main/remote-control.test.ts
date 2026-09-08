@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   steer: vi.fn(),
   followUp: vi.fn(),
   abort: vi.fn(),
+  bash: vi.fn(),
   newSession: vi.fn(),
   getState: vi.fn(),
   getMessages: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('./pi-client', () => ({
     steer: mocks.steer,
     followUp: mocks.followUp,
     abort: mocks.abort,
+    bash: mocks.bash,
     newSession: mocks.newSession,
     getState: mocks.getState,
     getMessages: mocks.getMessages,
@@ -211,6 +213,51 @@ describe('remote-control command protocol', () => {
     await vi.waitFor(() =>
       expect(ws.lastSent()).toEqual({ type: 'result', id: 8, error: 'agent is busy' }),
     )
+  })
+
+  it('executes a claimed local shell tool operation through the active Pi runtime', async () => {
+    mocks.bash.mockResolvedValue({ stdout: 'ok', exitCode: 0 })
+    const ws = await connect()
+
+    ws.receive({
+      id: 'tool-command-1',
+      type: 'executeToolOperation',
+      operationId: 'toolop-1',
+      toolName: 'shell.exec',
+      arguments: { command: ' pwd ' },
+    })
+
+    await vi.waitFor(() => expect(mocks.bash).toHaveBeenCalledWith('pwd'))
+    expect(ws.lastSent()).toEqual({
+      type: 'result',
+      id: 'tool-command-1',
+      data: { operationId: 'toolop-1', ok: true, result: { stdout: 'ok', exitCode: 0 } },
+    })
+  })
+
+  it('rejects malformed or unsupported local tool operations before touching Pi', async () => {
+    const ws = await connect()
+
+    ws.receive({ id: 'tool-command-2', type: 'executeToolOperation', operationId: 'toolop-2', toolName: 'local.read' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'tool-command-2',
+        error: 'unsupported local tool: local.read',
+        code: 'UNSUPPORTED_TOOL',
+      }),
+    )
+
+    ws.receive({ id: 'tool-command-3', type: 'executeToolOperation', operationId: 'toolop-3', toolName: 'shell.exec' })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'tool-command-3',
+        error: 'arguments.command is required',
+        code: 'INVALID_TOOL_ARGUMENTS',
+      }),
+    )
+    expect(mocks.bash).not.toHaveBeenCalled()
   })
 
   // 手机端据此弹「打开工作目录」而不是笼统报一句失败 —— 桌面冷启动后没人点

@@ -119,6 +119,23 @@ flowchart LR
 文件这一类，后续再把 shell、desktop IPC 和 dynamic MCP 也映射成 runtime
 capability。
 
+它也已经有第一版 source-based 可恢复本地 tool operation 协议：
+
+```text
+cloud agent/runtime
+  -> POST /harness/tool-operations {source: client|local|gateway}
+  -> task.status = waiting_for_async_tool
+  -> ToolOperationWorker claim pi-studio:<device>
+  -> remote-control executeToolOperation
+  -> POST /harness/tool-operations/{id}/resume {tool_result}
+  -> task 回到 pending 并重新入队，下一次 ExecutionRequest.metadata 带 resumed_tool_results
+```
+
+当前桌面 gateway 只实现 `shell.exec` / `bash` 这一类本地命令执行；本地文件、
+desktop IPC 和本地 MCP 会复用同一个 operation envelope 继续加。agent loop 还没有
+把模型 tool call 自动拆成 server/client/gateway 三类并接 provider-native session
+resume，这一层先把 source 判定、持久化暂停、领取、执行和 `tool_result` 回灌立住。
+
 ---
 
 ## 3. 手机遥控链路（本次新增的部分）
@@ -208,7 +225,7 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - `main/pi-runtime.ts` — 包装 `@earendil-works/pi-coding-agent` 的 `RpcClient`，负责 start、handshake、进程清理
 - `main/pi-client.ts` — 前台聊天会话管理、事件投影、后台会话池协调
 - `main/runtime-event-recorder.ts` / `main/runtime-event-log.ts` — host 级运行事件 JSONL 写入与 diagnostics 摘要投影
-- `main/remote-control.ts` — host 侧 WS：收指令分发到 RpcClient、转发 agent 事件
+- `main/remote-control.ts` — host 侧 WS：收指令分发到 RpcClient、转发 agent 事件；`executeToolOperation` 是 control plane 下发本地 tool 的 gateway 入口
 - `main/sandbox.ts` / `sandbox-wsl.ts` — 可选把 agent 关进 WSL bubblewrap 或 Docker
 - `main/llm-gateway.ts` — 云端 LLM 网关对接
 - `main/routines.ts` / `routine-scheduler.ts` — 定时例程
@@ -238,4 +255,4 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - 中转广播给**所有** controller，多设备同时连会各自收到全量事件流
 - 会话状态仍然只存在 agent 子进程和本地 jsonl 里。中转的 backlog 只兜住重连那一小段，
   不是会话存储 —— 桌面不在线时手机依然什么都做不了
-- control plane 已能声明并消费 runtime 角色/能力，但还没有把 tool call 协议拆成 `server/client/gateway` 三类可恢复 async operation；桌面 Pi 进程仍是完整 agent loop。
+- control plane 已能声明并消费 runtime 角色/能力，并有 durable async tool operation 队列；当前只接了桌面 `shell.exec` gateway，还没有把模型 tool call 自动拆成 `server/client/gateway` 三类并接 provider-native session resume，桌面 Pi 进程仍是完整 agent loop。

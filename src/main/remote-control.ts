@@ -25,6 +25,10 @@ type ProjectionProvider = {
   changes: (sessionId: string | null, afterSeq: number) => SessionProjectionChanges
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -87,6 +91,7 @@ const HEARTBEAT_DEAD_MS = 60_000
 export const SUPPORTED_COMMANDS = [
   'capabilities',
   'prompt',
+  'executeToolOperation',
   'steer',
   'followUp',
   'abort',
@@ -517,6 +522,27 @@ class RemoteControlManager {
           await piClientManager.prompt(String(msg.text ?? ''), msg.images as ImageContent[] | undefined)
           this.reply(msg.id)
           break
+        case 'executeToolOperation': {
+          const operationId = String(msg.operationId ?? msg.operation_id ?? '').trim()
+          const toolName = String(msg.toolName ?? msg.tool_name ?? msg.name ?? '').trim()
+          const args = isRecord(msg.arguments) ? msg.arguments : isRecord(msg.args) ? msg.args : {}
+          if (!operationId || !toolName) {
+            this.replyError(msg.id, 'operationId and toolName are required', 'INVALID_TOOL_OPERATION')
+            break
+          }
+          if (toolName !== 'shell.exec' && toolName !== 'bash') {
+            this.replyError(msg.id, `unsupported local tool: ${toolName}`, 'UNSUPPORTED_TOOL')
+            break
+          }
+          const command = typeof args.command === 'string' ? args.command.trim() : ''
+          if (!command) {
+            this.replyError(msg.id, 'arguments.command is required', 'INVALID_TOOL_ARGUMENTS')
+            break
+          }
+          const result = await piClientManager.bash(command)
+          this.reply(msg.id, { operationId, ok: true, result })
+          break
+        }
         case 'steer':
           await piClientManager.steer(String(msg.text ?? ''), msg.images as ImageContent[] | undefined)
           this.reply(msg.id)
