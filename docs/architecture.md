@@ -113,6 +113,12 @@ flowchart LR
 
 当前阶段 `pi-studio` 桌面仍然跑完整 Pi agent loop；这个 contract 先把它投影成“本地 tool runtime/gateway”。下一阶段如果把 provider 和 agent loop 搬到云端，`pi-studio:<device>` 这条目标可以收窄为纯本地 tool executor，控制面协议不用换。
 
+`personal-agent-runtime` 的 dispatch 已经开始消费这个 contract：带 workspace、
+`local_files_required=true` 或 `local-files` label 的任务会要求
+`tool.local-files`，显式选到不具备该能力的 target 时 fail closed。当前只覆盖本地
+文件这一类，后续再把 shell、desktop IPC 和 dynamic MCP 也映射成 runtime
+capability。
+
 ---
 
 ## 3. 手机遥控链路（本次新增的部分）
@@ -232,4 +238,4 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - 中转广播给**所有** controller，多设备同时连会各自收到全量事件流
 - 会话状态仍然只存在 agent 子进程和本地 jsonl 里。中转的 backlog 只兜住重连那一小段，
   不是会话存储 —— 桌面不在线时手机依然什么都做不了
-- control plane 已能声明 runtime 角色，但还没有把 tool call 协议拆成 `server/client/gateway` 三类可恢复 async operation；桌面 Pi 进程仍是完整 agent loop。
+- control plane 已能声明并消费 runtime 角色/能力，但还没有把 tool call 协议拆成 `server/client/gateway` 三类可恢复 async operation；桌面 Pi 进程仍是完整 agent loop。
