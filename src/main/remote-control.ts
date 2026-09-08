@@ -25,6 +25,14 @@ type ProjectionProvider = {
   changes: (sessionId: string | null, afterSeq: number) => SessionProjectionChanges
 }
 
+type RemoteCommandFailure = { error: string; code: string }
+type LocalToolOperationReply = {
+  operationId: string
+  ok: true
+  result: unknown
+} | RemoteCommandFailure
+type LocalToolHandler = (args: Record<string, unknown>) => Promise<unknown>
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -56,6 +64,37 @@ function withProviderLabel<T extends { provider: string }>(
 ): T & { providerLabel?: string } {
   const providerLabel = providerLabels[model.provider]
   return { ...model, ...(providerLabel ? { providerLabel } : {}) }
+}
+
+async function executeShellTool(args: Record<string, unknown>): Promise<unknown> {
+  const command = typeof args.command === 'string' ? args.command.trim() : ''
+  if (!command) {
+    return { error: 'arguments.command is required', code: 'INVALID_TOOL_ARGUMENTS' }
+  }
+  return piClientManager.bash(command)
+}
+
+const LOCAL_TOOL_HANDLERS = {
+  'shell.exec': executeShellTool,
+  bash: executeShellTool,
+} satisfies Record<string, LocalToolHandler>
+
+async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<LocalToolOperationReply> {
+  const operationId = String(msg.operationId ?? msg.operation_id ?? '').trim()
+  const toolName = String(msg.toolName ?? msg.tool_name ?? msg.name ?? '').trim()
+  const args = isRecord(msg.arguments) ? msg.arguments : isRecord(msg.args) ? msg.args : {}
+  if (!operationId || !toolName) {
+    return { error: 'operationId and toolName are required', code: 'INVALID_TOOL_OPERATION' }
+  }
+  const handler = LOCAL_TOOL_HANDLERS[toolName as keyof typeof LOCAL_TOOL_HANDLERS]
+  if (!handler) {
+    return { error: `unsupported local tool: ${toolName}`, code: 'UNSUPPORTED_TOOL' }
+  }
+  const result = await handler(args)
+  if (isRecord(result) && typeof result.error === 'string' && typeof result.code === 'string') {
+    return { error: result.error, code: result.code }
+  }
+  return { operationId, ok: true, result }
 }
 
 export type RemoteStatus = 'disabled' | 'connecting' | 'connected' | 'error'
@@ -523,24 +562,12 @@ class RemoteControlManager {
           this.reply(msg.id)
           break
         case 'executeToolOperation': {
-          const operationId = String(msg.operationId ?? msg.operation_id ?? '').trim()
-          const toolName = String(msg.toolName ?? msg.tool_name ?? msg.name ?? '').trim()
-          const args = isRecord(msg.arguments) ? msg.arguments : isRecord(msg.args) ? msg.args : {}
-          if (!operationId || !toolName) {
-            this.replyError(msg.id, 'operationId and toolName are required', 'INVALID_TOOL_OPERATION')
+          const result = await executeLocalToolOperation(msg)
+          if ('error' in result) {
+            this.replyError(msg.id, result.error, result.code)
             break
           }
-          if (toolName !== 'shell.exec' && toolName !== 'bash') {
-            this.replyError(msg.id, `unsupported local tool: ${toolName}`, 'UNSUPPORTED_TOOL')
-            break
-          }
-          const command = typeof args.command === 'string' ? args.command.trim() : ''
-          if (!command) {
-            this.replyError(msg.id, 'arguments.command is required', 'INVALID_TOOL_ARGUMENTS')
-            break
-          }
-          const result = await piClientManager.bash(command)
-          this.reply(msg.id, { operationId, ok: true, result })
+          this.reply(msg.id, result)
           break
         }
         case 'steer':

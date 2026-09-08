@@ -228,11 +228,35 @@ describe('remote-control command protocol', () => {
     })
 
     await vi.waitFor(() => expect(mocks.bash).toHaveBeenCalledWith('pwd'))
-    expect(ws.lastSent()).toEqual({
-      type: 'result',
-      id: 'tool-command-1',
-      data: { operationId: 'toolop-1', ok: true, result: { stdout: 'ok', exitCode: 0 } },
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'tool-command-1',
+        data: { operationId: 'toolop-1', ok: true, result: { stdout: 'ok', exitCode: 0 } },
+      }),
+    )
+  })
+
+  it('accepts the bash tool alias and args payload for local tool operations', async () => {
+    mocks.bash.mockResolvedValue({ stdout: 'ok', exitCode: 0 })
+    const ws = await connect()
+
+    ws.receive({
+      id: 'tool-command-alias',
+      type: 'executeToolOperation',
+      operation_id: 'toolop-legacy',
+      tool_name: 'bash',
+      args: { command: 'echo ok' },
     })
+
+    await vi.waitFor(() => expect(mocks.bash).toHaveBeenCalledWith('echo ok'))
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'tool-command-alias',
+        data: { operationId: 'toolop-legacy', ok: true, result: { stdout: 'ok', exitCode: 0 } },
+      }),
+    )
   })
 
   it('rejects malformed or unsupported local tool operations before touching Pi', async () => {
