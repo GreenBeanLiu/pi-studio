@@ -105,7 +105,8 @@ flowchart LR
 
 ## 3. 手机遥控链路（本次新增的部分）
 
-中转**不解析消息内容**，纯文本帧透传；一个「装机(installation)」= 一个房间。
+中转**不解析 payload**，纯文本帧透传；一个「装机(installation)」= 一个房间。
+它只读信封的 `type`：为了就地回 ping，以及决定哪些帧要编号留底供重连补发（见下）。
 
 ```mermaid
 sequenceDiagram
@@ -139,6 +140,17 @@ sequenceDiagram
     R->>M: 透传（广播给所有 controller）
     Note over M: message_start/update/end<br/>tool_execution_* → 渲染
 ```
+
+**广播帧补发**：中转给 host 推来的广播帧（`event` / `hostEvent`）编号，并按房间留一小段
+backlog（256 帧 / 4 MB 封顶）。controller 重连时用握手子协议 `pi-studio-resume.<seq>` 带上
+自己的游标，只补断线期间错过的那一段；补发跑完才放它进房间，所以补发的帧一定排在实时帧前面。
+
+补不上时（backlog 被挤掉，或两端都离开超过 5 分钟房间已重建）中转回
+`{"type":"resume","complete":false}`，手机据此整体重取一次，而不是拿着有洞的事件流往下拼。
+
+定向答复（`result`）和快照（`sessionProjection`）**不补发**：重连时那条请求早已被客户端
+reject，补发只会被当成认不出的 id 丢掉；旧快照补过去反而会盖掉新的。中转仍然不解析
+payload —— 它只读信封的 `type`。
 
 **鉴权分层**：`role=host` 用桌面装机 token（比对 `installations.token_hash`）；
 `role=controller` 用签名 token（`remote_pairings` + HMAC，30 天过期）。握手失败 close 4401。
@@ -188,7 +200,7 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 
 **云端 `pi-studio-backend/`**
 - `app.py` — 挂载 4 个 router
-- `remote.py` — 配对 + WS 房间（`Room{host, controllers}`）
+- `remote.py` — 配对 + WS 房间（`Room{host, controllers, seq, backlog}`）+ 重连补发
 - `llm_gateway.py` — profile 管理 + `/v1` 透传
 - `pi_studio_api.py` — 装机注册、workflow/run 同步
 - `imagegen.py` + `hatchet-worker/` — 图像/3D 生成异步任务
@@ -204,5 +216,6 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 ## 6. 现状与缺口
 
 - 手机端只到 **P0**：纯文本渲染 assistant 消息，未做 Markdown / thinking 折叠 / 工具卡 / 子代理卡（见 `pi-studio-mobile/todo.md` P1–P2）
-- 手机端重连是**固定 4 秒**，todo 里写的指数退避尚未实现（`src/remote.ts:57`）
 - 中转广播给**所有** controller，多设备同时连会各自收到全量事件流
+- 会话状态仍然只存在 agent 子进程和本地 jsonl 里。中转的 backlog 只兜住重连那一小段，
+  不是会话存储 —— 桌面不在线时手机依然什么都做不了
