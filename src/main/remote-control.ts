@@ -6,6 +6,7 @@ import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { NO_WORKSPACE_ERROR } from './pi-client'
+import { LocalFileToolError, LOCAL_FILE_MAX_BYTES, readLocalFile, writeLocalFile } from './local-file-tools'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type {
   ImageGenHistoryItem,
@@ -77,6 +78,8 @@ async function executeShellTool(args: Record<string, unknown>): Promise<unknown>
 const LOCAL_TOOL_HANDLERS = {
   'shell.exec': executeShellTool,
   bash: executeShellTool,
+  'local.read': async (args) => readLocalFile(piClientManager.getWorkspacePath(), args),
+  'local.write': async (args) => writeLocalFile(piClientManager.getWorkspacePath(), args),
 } satisfies Record<string, LocalToolHandler>
 
 async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<LocalToolOperationReply> {
@@ -90,7 +93,17 @@ async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<
   if (!handler) {
     return { error: `unsupported local tool: ${toolName}`, code: 'UNSUPPORTED_TOOL' }
   }
-  const result = await handler(args)
+  let result: unknown
+  try {
+    result = await handler(args)
+  } catch (error) {
+    if (error instanceof LocalFileToolError) return { error: error.message, code: error.code }
+    if (toolName === 'local.read' || toolName === 'local.write') {
+      const code = (error as NodeJS.ErrnoException).code
+      return { error: errMsg(error), code: code || 'LOCAL_FILE_ERROR' }
+    }
+    throw error
+  }
   if (isRecord(result) && typeof result.error === 'string' && typeof result.code === 'string') {
     return { error: result.error, code: result.code }
   }
@@ -555,6 +568,8 @@ class RemoteControlManager {
           this.reply(msg.id, {
             commands: [...SUPPORTED_COMMANDS],
             hostEvents: [...HOST_EVENT_CHANNELS],
+            localTools: Object.keys(LOCAL_TOOL_HANDLERS),
+            localFileMaxBytes: LOCAL_FILE_MAX_BYTES,
           })
           break
         case 'prompt':

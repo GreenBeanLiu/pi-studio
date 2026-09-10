@@ -58,6 +58,12 @@ describe('runtime smoke release gate', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it('enables file and durable resume checks only when requested', () => {
+    const run = vi.fn(() => ({ status: 0 }))
+    runRuntimeSmoke({ ...environment(), PI_STUDIO_SMOKE_FILES: '1' }, run)
+    expect(run.mock.calls[0][1]).toContain('--file-roundtrip')
+  })
+
   it.each([
     [{ status: 1 }, 'exit=1'],
     [{ status: null, signal: 'SIGTERM' }, 'signal=SIGTERM'],

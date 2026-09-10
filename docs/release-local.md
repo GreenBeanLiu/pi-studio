@@ -71,3 +71,13 @@ This checks the running host, not the unopened installer: install and start the
 candidate build on the selected device first when validating that build. It does
 not attest the host's version, perform an LLM turn, or validate task resume; the
 full agent E2E remains a separate check. No installation or restart is automatic.
+
+To include file tools and the durable resume queue, set
+`$env:PI_STUDIO_SMOKE_FILES = '1'` before either command. This requires a host
+advertising `local.read` and `local.write`. It creates a uniquely named
+`.tooltransport-smoke-<id>.txt` in the selected workspace, verifies that a second
+create fails without overwriting it, and reads back the original Unicode content.
+An isolated temporary runtime database verifies pause, claim, success/error result,
+requeue and continuation prompt injection. The file remains as smoke evidence;
+the temporary database is closed and removed. This does not call an LLM or prove
+provider-native session resume. Unset this variable to return to shell-only smoke.

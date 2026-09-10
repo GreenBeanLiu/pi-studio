@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const mocks = vi.hoisted(() => ({
   prompt: vi.fn(),
@@ -259,15 +262,36 @@ describe('remote-control command protocol', () => {
     )
   })
 
+  it('round trips files and propagates file errors through the remote protocol', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pi-remote-files-'))
+    mocks.getWorkspacePath.mockReturnValue(workspace)
+    const ws = await connect()
+    const base = { type: 'executeToolOperation', operationId: 'file-op' }
+    const args = { workspace, path: 'test.txt' }
+    try {
+      ws.receive({ ...base, id: 'write', toolName: 'local.write', arguments: { ...args, content: 'hello' } })
+      await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'write', data: { ok: true, result: { bytes: 5 } } }))
+      ws.receive({ ...base, id: 'duplicate', toolName: 'local.write', arguments: { ...args, content: 'replaced' } })
+      await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'duplicate', error: expect.stringContaining('EEXIST'), code: 'EEXIST' }))
+      ws.receive({ ...base, id: 'read', toolName: 'local.read', arguments: args })
+      await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'read', data: { ok: true, result: { content: 'hello' } } }))
+      ws.receive({ ...base, id: 'missing', toolName: 'local.read', arguments: { ...args, path: 'missing.txt' } })
+      await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'missing', code: 'ENOENT' }))
+    } finally {
+      mocks.getWorkspacePath.mockReset()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects malformed or unsupported local tool operations before touching Pi', async () => {
     const ws = await connect()
 
-    ws.receive({ id: 'tool-command-2', type: 'executeToolOperation', operationId: 'toolop-2', toolName: 'local.read' })
+    ws.receive({ id: 'tool-command-2', type: 'executeToolOperation', operationId: 'toolop-2', toolName: 'local.unknown' })
     await vi.waitFor(() =>
       expect(ws.lastSent()).toEqual({
         type: 'result',
         id: 'tool-command-2',
-        error: 'unsupported local tool: local.read',
+        error: 'unsupported local tool: local.unknown',
         code: 'UNSUPPORTED_TOOL',
       }),
     )
@@ -438,7 +462,10 @@ describe('remote-control command protocol', () => {
       expect(ws.lastSent()).toEqual({
         type: 'result',
         id: 50,
-        data: { commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS] },
+        data: {
+          commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS],
+          localTools: ['shell.exec', 'bash', 'local.read', 'local.write'], localFileMaxBytes: 65536,
+        },
       }),
     )
   })

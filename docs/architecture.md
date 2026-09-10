@@ -131,10 +131,29 @@ cloud agent/runtime
   -> task 回到 pending 并重新入队，下一次 ExecutionRequest.metadata 带 resumed_tool_results
 ```
 
-当前桌面 gateway 只实现 `shell.exec` / `bash` 这一类本地命令执行；本地文件、
+当前桌面 gateway 实现 `shell.exec` / `bash` 和 `local.read` / `local.write`；
 desktop IPC 和本地 MCP 会复用同一个 operation envelope 继续加。agent loop 还没有
 把模型 tool call 自动拆成 server/client/gateway 三类并接 provider-native session
 resume，这一层先把 source 判定、持久化暂停、领取、执行和 `tool_result` 回灌立住。
+
+### 本地文件工具 v1
+
+`capabilities.localTools` 列出已实现的工具，`localFileMaxBytes` 为 65536。
+旧 host 没有这两个字段时，调用方不能推定它支持文件工具。
+
+```json
+{"type":"executeToolOperation","operationId":"toolop-1","toolName":"local.write","arguments":{"workspace":"D:\\Works\\example","path":"note.txt","content":"hello"}}
+```
+
+- 两个工具都要求 `arguments.workspace` 为桌面当前工作区的绝对路径，`path` 为工作区内相对文件路径。
+- `local.read` 返回 `{path, content, bytes, encoding: "utf-8"}`。
+- `local.write` 接收 `content`，返回 `{path, bytes, encoding: "utf-8"}`。默认独占创建；显式 `overwrite: true` 时先写临时文件再替换。父目录必须存在。
+- 仅处理不超过 64 KiB 的 UTF-8 文本；拒绝二进制、目录、符号链接、Windows junction、路径穿越和设备路径。大文件仍应走 artifact 通道。
+- 工作区不匹配返回 `WORKSPACE_MISMATCH`；已存在、缺失文件等保留 `EEXIST` / `ENOENT`；错误经 worker 转成 `ok: false` 的持久化恢复结果。
+- 这些是已认证 controller 的本机文件操作，不经过模型审批 UI；不把路径检查当作能隔离本机恶意进程并发替换目录的 OS 沙箱。
+
+`PI_STUDIO_SMOKE_FILES=1` 可让发布 smoke 追加真实写入、拒绝重复创建、读回和持久化恢复队列检查。
+它使用独立临时数据库并留下唯一命名的测试文件，不会创建正式业务任务。
 
 ---
 
@@ -255,4 +274,4 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - 中转广播给**所有** controller，多设备同时连会各自收到全量事件流
 - 会话状态仍然只存在 agent 子进程和本地 jsonl 里。中转的 backlog 只兜住重连那一小段，
   不是会话存储 —— 桌面不在线时手机依然什么都做不了
-- control plane 已能声明并消费 runtime 角色/能力，并有 durable async tool operation 队列；当前只接了桌面 `shell.exec` gateway，还没有把模型 tool call 自动拆成 `server/client/gateway` 三类并接 provider-native session resume，桌面 Pi 进程仍是完整 agent loop。
+- control plane 已能声明并消费 runtime 角色/能力，并有 durable async tool operation 队列；当前接了桌面 shell 和文本文件读写 gateway，还没有把模型 tool call 自动拆成 `server/client/gateway` 三类并接 provider-native session resume，桌面 Pi 进程仍是完整 agent loop。

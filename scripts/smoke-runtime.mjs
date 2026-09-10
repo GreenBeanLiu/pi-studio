@@ -25,6 +25,7 @@ export function runRuntimeSmoke(env = process.env, run = spawnSync) {
     '--device-id', deviceId,
     '--workspace', workspace,
     '--command', 'pwd',
+    ...(env.PI_STUDIO_SMOKE_FILES === '1' ? ['--file-roundtrip'] : []),
   ], {
     cwd: runtimePath,
     env: {
