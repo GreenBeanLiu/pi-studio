@@ -15,20 +15,28 @@ const dryRun = args.has('--dry-run')
 const skipBuild = args.has('--skip-build')
 const installAfterPublish = args.has('--install')
 const allowDirty = args.has('--allow-dirty')
+const verifyOnly = args.has('--verify-only')
+const smokeRuntime = args.has('--smoke-runtime')
 const help = args.has('--help') || args.has('-h')
 
 if (help) {
   console.log(`
-Usage: node scripts/release-local.mjs [options]
+Usage: node scripts/release-local.js [options]
 
 Options:
   --dry-run       Print commands without running them
   --skip-build    Reuse current dist/ artifacts
   --install       Silently install the generated setup exe after publishing
   --allow-dirty   Allow releasing with uncommitted working-tree changes
+  --verify-only   Validate local artifacts without tagging, pushing or publishing
+  --smoke-runtime  Check the configured online host before publishing (or finishing verification)
   --help          Show this message
 `)
   process.exit(0)
+}
+
+if (verifyOnly && installAfterPublish) {
+  throw new Error('--verify-only cannot be combined with --install')
 }
 
 function readJson(path) {
@@ -280,7 +288,7 @@ function installSilently(artifacts) {
 
 logStep(`Preparing pi-studio ${tag}`)
 if (!commandExists('git')) throw new Error('git is not available')
-if (!commandExists('gh')) throw new Error('gh is not available or not logged in')
+if (!verifyOnly && !commandExists('gh')) throw new Error('gh is not available or not logged in')
 if (!commandExists('pnpm')) throw new Error('pnpm is not available')
 assertCleanTree()
 
@@ -305,6 +313,16 @@ const artifacts = dryRun
       exeSize: 0,
     }
   : prepareArtifacts()
+
+if (smokeRuntime) {
+  logStep('Verifying ToolTransport on the configured online pi-studio host')
+  run(process.execPath, [join(root, 'scripts', 'smoke-runtime.mjs')])
+}
+
+if (verifyOnly) {
+  console.log(`\nVerified locally: ${tag}; nothing published`)
+  process.exit(0)
+}
 
 logStep('Tagging and pushing current HEAD')
 ensureTag()

@@ -28,3 +28,46 @@ node scripts/release-local.js --skip-build
 `--skip-build` reuses existing release artifacts but still runs `pnpm run check`; it never bypasses the encoding, typecheck, test, or lint gates.
 
 Before running a real release, bump `package.json` version, commit it, and make sure `gh` is logged in.
+
+## ToolTransport Release Gate
+
+The runtime smoke checks an explicitly selected online desktop through the backend:
+device discovery, controller authentication, `executeToolOperation` capability,
+workspace opening, and a successful `shell.exec` running `pwd`.
+It uses the existing `personal-agent-runtime` CLI and its `.env`; service tokens
+stay out of command arguments and this repository.
+
+Configure the target in the current PowerShell session:
+
+```powershell
+$env:PI_STUDIO_SMOKE_DEVICE_ID = 'pi-studio:<device-id>'
+$env:PI_STUDIO_SMOKE_WORKSPACE = 'D:\Works\personal-agent-runtime'
+# Optional when the runtime is not the sibling checkout:
+$env:PI_STUDIO_RUNTIME_PATH = 'D:\Works\personal-agent-runtime'
+# Optional when Python is not in that checkout's .venv:
+# $env:PI_STUDIO_RUNTIME_PYTHON = 'C:\path\to\python.exe'
+
+pnpm.cmd run smoke:runtime
+pnpm.cmd run release:verify --skip-build
+```
+
+`release:verify` runs the normal release checks, verifies installer hashes, and
+runs the remote smoke without creating tags, pushing, uploading, or installing.
+Omit `--skip-build` to build a fresh installer first. A dirty checkout still
+requires `--allow-dirty`. This local verification does not require `gh`.
+
+To enforce the same smoke before a real publication:
+
+```powershell
+pnpm.cmd run release:local --smoke-runtime
+```
+
+Any smoke failure or its three-minute timeout stops the release before tag/push/upload.
+Plain `release:local`, `package:win`, and CI publishing do not enable this remote gate.
+The host must already be running with remote access enabled. The smoke opens the
+specified workspace, so use a dedicated validation workspace on that device.
+
+This checks the running host, not the unopened installer: install and start the
+candidate build on the selected device first when validating that build. It does
+not attest the host's version, perform an LLM turn, or validate task resume; the
+full agent E2E remains a separate check. No installation or restart is automatic.

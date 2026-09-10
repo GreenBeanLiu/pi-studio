@@ -19,6 +19,8 @@
     "package:win": "pnpm run verify && electron-builder --win --publish always",
     "release:local": "node scripts/release-local.js",
     "release:dry": "node scripts/release-local.js --dry-run --skip-build",
+    "release:verify": "node scripts/release-local.js --verify-only --smoke-runtime",
+    "smoke:runtime": "node scripts/smoke-runtime.mjs",
     "smoke": "node scripts/smoke-launch.mjs"
   },
   "dependencies": {
