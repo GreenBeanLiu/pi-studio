@@ -29,7 +29,7 @@
 - Mobile 当前本地 `918d1fd` 已包含 `waiting_for_async_tool`，未用远端旧 UI 覆盖本地修复。
 - Cloudflare Provider 保留本地多上游/provider health 契约；远端单路由重写未直接合并，待消费者契约核对后单独迁移。
 
-本轮验证：Runtime **415 passed**；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**，类型检查通过。以上均为本地测试，不等价于真实设备 E2E。
+本轮验证：Runtime **415 passed**；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。以上均为本地测试，不等价于真实设备 E2E。
 
 ## 2. 仓库与部署基线
 
@@ -38,13 +38,13 @@
 | 仓库 | 本地 HEAD | 本次抓取的远端 HEAD | 核查结论 |
 | --- | --- | --- | --- |
 | `pi-studio` | `aa718a2` | `origin/master@aa718a2` | 已同步；包含工作区库存上报和桌面 v2 scope 校验 |
-| `personal-agent-runtime` | `22307b3` + 本地修复 | `origin/main@586f806` | 已合入远端 v2；本地保留结构化错误码，并修复 workspace 绑定与离线过期 |
+| `personal-agent-runtime` | `55efbe5` | `origin/main@586f806` | 已合入远端 v2；保留结构化错误码，并修复 workspace 绑定、离线过期和 v2 能力握手 |
 | `personal-agent-engine` | `45a5ae2` + 本地修复 | `origin/main@45a5ae2` | 已同步远端；Code Mode 已兼容 Windows |
 | `pi-studio-backend` | `d6a0d24` | `origin/main@d6a0d24` | 已同步远端并通过 Python/worker 验证 |
 | `pi-studio-mobile` | `918d1fd` | `origin/master@bd014f9` | 已分叉；远端有新工作区、双目标、增量事件；本地有尚未合入的异步工具状态和类型 |
 | `pi-cf-agent-provider` | `4f15972` | `origin/main@d3adc89` | 暂未合并；远端简化了上游路由，本地还有 provider 契约与 tool payload 透传声明 |
 
-Runtime 本地未提交文件在本轮原样保留：
+Runtime 本轮已提交并保留的文件包括：
 
 - `docs/native-tool-transport.md`
 - `src/personal_harness/executors/pi_studio.py`
@@ -53,7 +53,7 @@ Runtime 本地未提交文件在本轮原样保留：
 - `tests/test_worker.py`
 - `tests/test_pi_studio_remote_executor.py`，未跟踪。
 
-这些改动的功能是保留 `WORKSPACE_MISMATCH`、`EEXIST`、`ENOENT` 等错误码。合并时需与远端新增的 `ExecutionFailure` 分类协作，不能用其中一种实现覆盖另一种。作者归属不作为判断完成度的依据。
+这些改动的功能是保留 `WORKSPACE_MISMATCH`、`EEXIST`、`ENOENT` 等错误码，并与远端 `ExecutionFailure` 分类协作。作者归属不作为判断完成度的依据。
 
 ### 2.2 服务器已经更新，但版本标识未同步
 
@@ -134,20 +134,20 @@ Runtime 本地未提交文件在本轮原样保留：
 
 验收：工具等待期间持续更新、可取消；恢复后自动显示下一轮；断网重连不丢 cursor、不重复事件，历史过多时继续正确翻页。
 
-### 4.5 P0：v2 仍缺少严格版本协商与混合版本保护
+### 4.5 P0：v2 版本协商与混合版本保护（代码层已完成）
 
-依据：桌面只通过 `Number(protocolVersion) >= 2` 决定校验；capabilities 仅报告工具名字等信息，未报告逐项 schema/协议版本。Runtime 新操作直接生成 v2。
+历史依据：桌面曾只通过 `Number(protocolVersion) >= 2` 决定校验；capabilities 仅报告工具名字等信息，未报告逐项 schema/协议版本。Runtime 新操作直接生成 v2。
 
 代码层面的风险：未知/非法版本处理不严格；旧桌面可能忽略 v2 元数据按旧 handler 执行。`scope.permissions` 是请求数据，不等于经过验证的审批凭据。v2 用原始路径字符串比较，跨 Windows 分隔符和路径表示形式也需验证。
 
-计划：显式协商支持版本、工具 schema 和执行限制；非法或未知版本 fail closed。新 native 写任务不能静默降级到不验证 scope 的旧 host。旧 v1 兼容应限定在明确的旧调用路径，不代表所有入口都可以绕过新约束。
+处理：桌面 capabilities 现在显式声明 tool protocol 版本、支持版本和每个工具的 `schemaVersion`；Runtime 发 v2 操作前先握手校验，未知版本、缺少 v2 声明或未知工具 schema 都 fail closed。桌面也拒绝未知协议版本。v1 仍仅保留给明确的旧 smoke/兼容路径，不代表 v2 入口可以降级。
 
-验收：新/旧 Runtime × 新/旧 desktop 的四种组合有测试；不支持的能力返回可解释错误；Windows 等价路径可识别，真正不同目录不能通过。
+验收：已完成代码级能力握手和可解释错误回归；新/旧 Runtime × 新/旧 desktop 的真实四组合、设备构建号和协议证据仍需 E2E。
 
 ### 4.6 合并和版本核对是发布前置条件
 
-- 本地 `38c0e91` 的严格参数类型、空参数与 Unicode 校验尚未进入 `586f806`，必须保留并适配 v2 元数据生成。
-- 未提交的工具错误码回传必须与远端失败分类一起保留，UI 和模型才能区分业务错误、环境离线与路由不满足。
+- 本地 `38c0e91` 的严格参数类型、空参数与 Unicode 校验已随 Runtime 集成提交，v2 元数据生成和错误分类均有回归覆盖。
+- 工具错误码回传已与远端失败分类一起保留，UI 和模型可以区分业务错误、环境离线与路由不满足。
 - 版本环境变量和实际发布 SHA 不一致会误导健康检查、回滚与故障排查，需统一 release manifest 和健康信息。
 - CF Provider 远端已主动移除旧多路由状态/健康接口。本轮实际合并时出现 README、入口和测试冲突，已退出未完成合并；先确认消费者是否使用旧契约，再决定兼容层；不要把被简化的整套路由逻辑盲目恢复。
 
@@ -173,7 +173,7 @@ Runtime 本地未提交文件在本轮原样保留：
 1. ~~修复 Registry 审批快照问题，优先保证 workspace_id 主入口。~~ 已完成本地回归；保留真实设备验收。
 2. ~~独立 deadline 回收器，覆盖 offline / missing / discovery failure。~~ 已完成离线目标回归；保留真实设备验收。
 3. ~~合并手机等待态，补齐工具失败码、到期与取消的展示。~~ 本地代码已具备并通过 Mobile 测试；保留真实 API 验收。
-4. 增加严格版本协商，关闭 native 写任务的隐式 v1 降级。
+4. ~~增加严格版本协商，关闭 native 写任务的隐式 v1 降级。~~ 已完成代码实现；保留真实四组合验收。
 5. 在真实设备执行下面的验收矩阵，最后再发布整套版本。
 
 | 场景 | 必须观察到的证据 |
@@ -249,14 +249,14 @@ Runtime 本地未提交文件在本轮原样保留：
 
 | 工作包 | 主要文件/仓库 | 完成标志 |
 | --- | --- | --- |
-| A：Runtime 集成 | `native_tools.py`、`tool_transport.py`、`executors/pi_studio.py`、`worker.py` | 已完成本地集成和全量测试；待版本协商门禁 |
+| A：Runtime 集成 | `native_tools.py`、`tool_transport.py`、`executors/pi_studio.py`、`worker.py` | 已完成本地集成、能力握手和全量测试；待真实设备 |
 | B：绑定与审批 | `providers.py`、`orchestrator.py`、`routing.py`、`store.py` | 已验证 registry 写任务只审批一次，绑定变更失败 |
 | C：独立过期回收 | Runtime `store.py`、`worker.py` | 已验证离线目标按 deadline 结束等待 |
 | D：手机整合 | mobile `harness.ts`、`harness-ui.tsx`、`HarnessTaskScreen.tsx` | 本地等待态已生效；待真实 API 轮询/cursor 验收 |
-| E：版本与发布门禁 | desktop `remote-control.ts`、Runtime gateway、部署脚本 | 逐项协商、版本可追溯、新写任务不静默降级 |
+| E：版本与发布门禁 | desktop `remote-control.ts`、Runtime gateway、部署脚本 | 代码层逐项协商已完成；还需部署 manifest、设备构建号和 E2E 证据 |
 | F：真实验收 | 现有 smoke 脚本扩展，发布记录 | 记录 v2 操作、绑定、一次审批、回读哈希及跨端构建号 |
 
-A 先完成基线；B/C/D 可按不重叠文件和接口协定分工；E 完成后再做 F。分工前固定契约和验收，不能让多个 LLM 同时修改同一工作区的同一文件再依赖“最后一次保存”。
+A/B/C/D/E 的代码层工作已完成本地验证；下一步只做 F 真实验收和发布 manifest。分工前固定契约和验收，不能让多个 LLM 同时修改同一工作区的同一文件再依赖“最后一次保存”。
 
 ## 7. 暂缓事项与发布原则
 
