@@ -26,12 +26,13 @@
 - Runtime 已合入 `origin/main@586f806`，并保留本地结构化工具错误码；新增 workspace 绑定持久化和离线 deadline 回收。
 - Engine 已同步到 `origin/main@45a5ae2`；补上 Windows Code Mode 的本机 IPC 和解释器路径处理。
 - Backend 已同步到 `origin/main@d6a0d24`；移动端和 Hatchet worker 均完成验证。
-- Mobile 当前本地 `918d1fd` 已包含 `waiting_for_async_tool`，未用远端旧 UI 覆盖本地修复。
+- Mobile 当前本地 `97f4fff` 已包含 `waiting_for_async_tool` 和 run event cursor 增量读取，未用远端旧 UI 覆盖本地修复。
 - Cloudflare Provider 保留本地多上游/provider health 契约；远端单路由重写未直接合并，待消费者契约核对后单独迁移。
 
 本轮验证：Runtime **415 passed**（含 v2 file/native smoke 回归）；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。另有一次真实生产 smoke 通过，见第 2.2 节。
 - 已完成一次生产发布：Runtime `946c82f`、Engine `0cdd839`，桌面安装了当前本地构建；生产模式为 `native-tools`。
 - 真实 smoke `task_f7b9373388fc4eddaed3649149b2d020` 通过：一次审批、4 轮模型、3 次网关操作、服务器工具与桌面文件读写均执行，精确回读成功。
+- 生产 run event 接口实测返回 `run_id=run_fd837a5d5fca41068ee88642e50d08d9`、`next_cursor=5`、`has_more=true`；手机端已按该契约增量合并并按旧 Runtime 回退。
 
 ## 2. 仓库与部署基线
 
@@ -43,7 +44,7 @@
 | `personal-agent-runtime` | `946c82f` | `origin/main@586f806` | 已部署；修复 workspace 绑定、离线过期、v2 能力握手，生产 smoke 也发 v2 |
 | `personal-agent-engine` | `0cdd839` | `origin/main@45a5ae2` | 已同步远端；Code Mode 已兼容 Windows |
 | `pi-studio-backend` | `d6a0d24` | `origin/main@d6a0d24` | 已同步远端并通过 Python/worker 验证 |
-| `pi-studio-mobile` | `918d1fd` | `origin/master@bd014f9` | 已分叉；远端有新工作区、双目标、增量事件；本地有尚未合入的异步工具状态和类型 |
+| `pi-studio-mobile` | `97f4fff` | `origin/master@bd014f9` | 已分叉；本地保留异步工具等待态，并接入 Runtime run event cursor 增量读取 |
 | `pi-cf-agent-provider` | `4f15972` | `origin/main@d3adc89` | 暂未合并；远端简化了上游路由，本地还有 provider 契约与 tool payload 透传声明 |
 
 Runtime 本轮已提交并保留的文件包括：
@@ -255,7 +256,7 @@ Runtime 本轮已提交并保留的文件包括：
 | A：Runtime 集成 | `native_tools.py`、`tool_transport.py`、`executors/pi_studio.py`、`worker.py` | 已完成本地集成、能力握手、全量测试和生产 Windows smoke |
 | B：绑定与审批 | `providers.py`、`orchestrator.py`、`routing.py`、`store.py` | 已验证 registry 写任务只审批一次，绑定变更失败 |
 | C：独立过期回收 | Runtime `store.py`、`worker.py` | 已验证离线目标按 deadline 结束等待 |
-| D：手机整合 | mobile `harness.ts`、`harness-ui.tsx`、`HarnessTaskScreen.tsx` | 本地等待态已生效；待真实 API 轮询/cursor 验收 |
+| D：手机整合 | mobile `harness.ts`、`harness-ui.tsx`、`HarnessTaskScreen.tsx` | 等待态和 cursor 增量读取已通过本地测试；生产 cursor 接口已实测，真机 UI 仍待验收 |
 | E：版本与发布门禁 | desktop `remote-control.ts`、Runtime gateway、部署脚本 | Runtime/Engine 已部署；桌面 `270e494` 已安装；旧客户端拒绝和新客户端通过均有证据 |
 | F：真实验收 | 现有 smoke 脚本扩展，发布记录 | Windows v2 已完成；待手机 API、离线 deadline、重连翻页、Mac 和幂等重放矩阵 |
 
