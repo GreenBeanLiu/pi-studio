@@ -83,6 +83,17 @@ const LOCAL_TOOL_HANDLERS = {
   'local.write': async (args) => writeLocalFile(piClientManager.getWorkspacePath(), args),
 } satisfies Record<string, LocalToolHandler>
 
+const TOOL_GATEWAY_MANIFEST = {
+  manifestVersion: 1,
+  operationProtocols: [1, 2],
+  tools: [
+    { name: 'shell.exec', scopeVersion: 1, requiresWorkspace: true },
+    { name: 'bash', scopeVersion: 1, requiresWorkspace: true },
+    { name: 'local.read', scopeVersion: 1, requiresWorkspace: true, maxBytes: LOCAL_FILE_MAX_BYTES },
+    { name: 'local.write', scopeVersion: 1, requiresWorkspace: true, maxBytes: LOCAL_FILE_MAX_BYTES },
+  ],
+} as const
+
 async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<LocalToolOperationReply> {
   const operationId = String(msg.operationId ?? msg.operation_id ?? '').trim()
   const toolName = String(msg.toolName ?? msg.tool_name ?? msg.name ?? '').trim()
@@ -594,6 +605,7 @@ class RemoteControlManager {
             hostEvents: [...HOST_EVENT_CHANNELS],
             localTools: Object.keys(LOCAL_TOOL_HANDLERS),
             localFileMaxBytes: LOCAL_FILE_MAX_BYTES,
+            toolGateway: TOOL_GATEWAY_MANIFEST,
           })
           break
         case 'prompt':
