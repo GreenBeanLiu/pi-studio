@@ -1,9 +1,9 @@
 # Pi Studio 开发现状与后续路线
 
-> 核查时间：2026-09-12 22:52，Asia/Shanghai。
+> 核查时间：2026-09-13 00:20，Asia/Shanghai。
 > 范围：桌面、手机、设备后端、任务 Runtime、Agent Engine、Cloudflare Provider 六个仓库。
-> 本文先记录状态核查和开发规划，随后执行了 M0 基线整合及两项 P0 修复；没有发布生产或重启服务。
-> 本文的“当前完成”以本轮本地工作区和测试结果为依据；真实跨端 E2E 仍需在设备和部署环境执行。
+> 本文先记录状态核查和开发规划，随后执行了 M0 基线整合、P0 修复、生产发布和真实跨端 E2E。
+> 本文把本地代码、已安装桌面、生产 Runtime/Engine 和真实任务证据分开记录。
 
 ## 1. 结论
 
@@ -11,7 +11,7 @@
 
 其他开发已经完成 Workspace Registry、Agent/Tool 双目标、Run 增量事件，以及 ToolOperation v2 核心契约。不能再把这些整体列为待开发，也不应重写一套平行实现。
 
-**下一阶段优先顺序：补齐 v2 跨版本保护 -> 真实跨端验收 -> 版本清单/发布门禁 -> 开放受控 Shell。**
+**下一阶段优先顺序：补齐真实设备矩阵 -> 手机等待态验收 -> 发布清单与回滚门禁 -> 再评估受控 Shell。**
 
 本轮确认了三个直接影响现有流程的问题：
 
@@ -19,7 +19,7 @@
 2. 离线设备的工具操作超过 deadline 后仍停在 pending，任务继续等待，已隔离复现。
 3. 远端手机版缺少本地分支已有的 `waiting_for_async_tool` 状态处理，源码路径显示它会停止任务详情轮询。
 
-前两项已经在本地修复并有回归测试；因此，当前仍不应宣布“v2 全链路已验收”，也不应马上给 native 模型开放任意 Shell/MCP。
+前两项已经在本地修复并有回归测试；Windows 单设备 v2 写任务已经完成生产验收，但跨平台、离线过期、手机等待态和任意 Shell/MCP 仍不能据此宣布完成。
 
 ### 本轮执行结果（2026-09-12）
 
@@ -29,7 +29,9 @@
 - Mobile 当前本地 `918d1fd` 已包含 `waiting_for_async_tool`，未用远端旧 UI 覆盖本地修复。
 - Cloudflare Provider 保留本地多上游/provider health 契约；远端单路由重写未直接合并，待消费者契约核对后单独迁移。
 
-本轮验证：Runtime **415 passed**（含 v2 file/native smoke 回归）；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。以上均为本地测试，不等价于真实设备 E2E。
+本轮验证：Runtime **415 passed**（含 v2 file/native smoke 回归）；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。另有一次真实生产 smoke 通过，见第 2.2 节。
+- 已完成一次生产发布：Runtime `946c82f`、Engine `0cdd839`，桌面安装了当前本地构建；生产模式为 `native-tools`。
+- 真实 smoke `task_f7b9373388fc4eddaed3649149b2d020` 通过：一次审批、4 轮模型、3 次网关操作、服务器工具与桌面文件读写均执行，精确回读成功。
 
 ## 2. 仓库与部署基线
 
@@ -37,8 +39,8 @@
 
 | 仓库 | 本地 HEAD | 本次抓取的远端 HEAD | 核查结论 |
 | --- | --- | --- | --- |
-| `pi-studio` | `4be70ed` | `origin/master@aa718a2` | 已同步；包含工作区库存、v2 scope 校验和 tool protocol 能力声明 |
-| `personal-agent-runtime` | `b3c29ef` | `origin/main@586f806` | 已合入远端 v2；保留结构化错误码，修复 workspace 绑定、离线过期、v2 能力握手和 smoke |
+| `pi-studio` | `270e494` | `origin/master@aa718a2` | 已构建并安装；包含工作区库存、v2 能力声明和 Windows scope 路径规范化 |
+| `personal-agent-runtime` | `946c82f` | `origin/main@586f806` | 已部署；修复 workspace 绑定、离线过期、v2 能力握手，生产 smoke 也发 v2 |
 | `personal-agent-engine` | `0cdd839` | `origin/main@45a5ae2` | 已同步远端；Code Mode 已兼容 Windows |
 | `pi-studio-backend` | `d6a0d24` | `origin/main@d6a0d24` | 已同步远端并通过 Python/worker 验证 |
 | `pi-studio-mobile` | `918d1fd` | `origin/master@bd014f9` | 已分叉；远端有新工作区、双目标、增量事件；本地有尚未合入的异步工具状态和类型 |
@@ -51,27 +53,27 @@ Runtime 本轮已提交并保留的文件包括：
 - `src/personal_harness/tool_transport.py`
 - `src/personal_harness/worker.py`
 - `tests/test_worker.py`
-- `tests/test_pi_studio_remote_executor.py`，未跟踪。
+- `tests/test_pi_studio_remote_executor.py`。
 
 这些改动的功能是保留 `WORKSPACE_MISMATCH`、`EEXIST`、`ENOENT` 等错误码，并与远端 `ExecutionFailure` 分类协作。作者归属不作为判断完成度的依据。
 
-### 2.2 服务器已经更新，但版本标识未同步
+### 2.2 服务器版本与真实验收
 
 对 `trailai-cn` 的只读核查结果：
 
 | 项目 | 实测结果 |
 | --- | --- |
-| Runtime 发布目录 | `/home/ubuntu/personal-harness/releases/586f806` |
-| Engine 发布目录 | `/home/ubuntu/deepseek-harness/releases/45a5ae2` |
-| Runtime 实际安装包 | 34 个 Python 源文件与 `586f806` 发布目录逐文件一致，不只是切换了 symlink |
-| API / Worker | 两个服务均 active/running，启动时间为当日 22:33:33，`NRestarts=0` |
+| Runtime 发布目录 | `/home/ubuntu/personal-harness/releases/946c82f` |
+| Engine 发布目录 | `/home/ubuntu/deepseek-harness/releases/0cdd839` |
+| Runtime 实际安装包 | 已由原子激活脚本安装，`personal_harness.executors.native_tools` 和 Engine bridge import 均验证 |
+| API / Worker | 两个服务均 active，健康检查返回生产数据库；激活前数据库无 running/waiting/queued/tool pending |
 | 默认与审批 | `native-tools`、`write_requires_approval`、独立 Worker |
-| 版本环境变量 | 仍是 Runtime `19a0d70` / Engine `8eee512`，与当前发布目录不一致 |
+| 版本环境变量 | Runtime `personal-agent-runtime@946c82f` / Engine `personal-agent-engine@0cdd839`，与发布目录一致 |
 | 数据库迁移 | 已有 Workspace 表、Run event 信封字段和 ToolOperation v2 字段 |
-| 工作区数量 | 查询时为 2 |
-| 工具执行证据 | 所查生产库仅有 5 条 v1 completed 操作，未见 v2 操作记录 |
+| 生产 smoke | `task_f7b9373388fc4eddaed3649149b2d020`；一次审批、4 turns、3 gateway operations、精确文件复制 |
+| 生产执行进程 | Worker PID `1918017` 与任务 checkpoint 身份匹配 |
 
-结论：新版 Runtime 源码及 schema 已上线；不能据此推断新版桌面/手机已安装，或 v2 已完成真实 E2E。未见 v2 记录仅是本次查询范围内的结果，不代表其他环境没有测试过。
+结论：新版 Runtime/Engine 已上线，桌面候选包已安装并完成 Windows v2 真实闭环。该结论不覆盖手机等待态、Mac、离线 deadline、重连翻页和旧客户端兼容矩阵。
 
 先前的 v1 生产验收仍有价值，但不能替代新 `workspace_id`、双目标和 v2 入口的验收。旧部署记录见 `personal-agent-runtime/docs/production-native-rollout-2026-09-12.md`，阅读时注意其中的历史版本与当前实测不同。
 
@@ -99,8 +101,9 @@ Runtime 本轮已提交并保留的文件包括：
 - Engine 当前组合：**65 passed**；Windows Code Mode 通过本机 IPC 回归。
 - Backend Python：**112 passed**，有 1 条现存 Starlette/httpx 弃用警告；Hatchet worker：**36 passed**，typecheck 通过。
 - Mobile：**154 passed**，typecheck 通过。
-- 本轮测试均为本地隔离测试，不连接真实桌面、不调用真实模型、不创建生产任务；CF Provider 未做分叉合并。
-- 服务器核查仍仅检查服务、源码一致性和数据库结构/计数，没有修改生产状态；新版组合尚未部署。
+- 桌面当前组合：**937 passed，5 skipped**；scope 规范化回归和 typecheck 通过；Windows 安装包已构建并启动。
+- 生产 smoke 已连接真实桌面和真实 API/Worker，创建并完成任务 `task_f7b9373388fc4eddaed3649149b2d020`；成本 `$0.001241232`，未发生第二次审批。
+- Engine/Backend/Mobile/CF Provider 仍以本地测试结果为准；CF Provider 未完成分叉合并。
 
 ### 4.2 P0：Registry 绑定与审批快照不一致
 
@@ -134,15 +137,15 @@ Runtime 本轮已提交并保留的文件包括：
 
 验收：工具等待期间持续更新、可取消；恢复后自动显示下一轮；断网重连不丢 cursor、不重复事件，历史过多时继续正确翻页。
 
-### 4.5 P0：v2 版本协商与混合版本保护（代码层已完成）
+### 4.5 P0：v2 版本协商与混合版本保护（Windows 真实闭环已完成）
 
 历史依据：桌面曾只通过 `Number(protocolVersion) >= 2` 决定校验；capabilities 仅报告工具名字等信息，未报告逐项 schema/协议版本。Runtime 新操作直接生成 v2。
 
 代码层面的风险：未知/非法版本处理不严格；旧桌面可能忽略 v2 元数据按旧 handler 执行。`scope.permissions` 是请求数据，不等于经过验证的审批凭据。v2 用原始路径字符串比较，跨 Windows 分隔符和路径表示形式也需验证。
 
-处理：桌面 capabilities 现在显式声明 tool protocol 版本、支持版本和每个工具的 `schemaVersion`；Runtime 发 v2 操作前先握手校验，未知版本、缺少 v2 声明或未知工具 schema 都 fail closed。桌面也拒绝未知协议版本。v1 仍仅保留给明确的旧 smoke/兼容路径，不代表 v2 入口可以降级。
+处理：桌面 capabilities 现在显式声明 tool protocol 版本、支持版本和每个工具的 `schemaVersion`；Runtime 发 v2 操作前先握手校验，未知版本、缺少 v2 声明或未知工具 schema 都 fail closed。桌面也拒绝未知协议版本。v2 scope 比较按平台规范化绝对路径处理，避免 Windows 斜杠差异造成假失败。v1 仍仅保留给明确的旧 smoke/兼容路径，不代表 v2 入口可以降级。
 
-验收：已完成代码级能力握手和可解释错误回归；新/旧 Runtime × 新/旧 desktop 的真实四组合、设备构建号和协议证据仍需 E2E。
+验收：新 Runtime + 新 Windows desktop 已完成真实生产闭环；旧 desktop 首次 smoke 被正确拒绝为 `tool_protocol_missing`，更新客户端后通过。新/旧 Runtime × 新/旧 desktop 的完整四组合、Mac 和设备构建号仍需矩阵验收。
 
 ### 4.6 合并和版本核对是发布前置条件
 
@@ -164,7 +167,7 @@ Runtime 本轮已提交并保留的文件包括：
 3. 桌面、Engine、Backend 按最新远端基线校验；CF Provider 按实际消费者决定契约兼容，不把旧实现自动视为必须保留。
 4. 核对服务器 manifest、Python 安装包、Engine 路径、桌面安装包和手机构建标识；将版本差异写入发布记录。
 
-**当前交付：** Runtime、Engine、Backend 的本地组合已通过测试；Mobile 保留本地等待态修复；CF Provider 的分叉取舍已记录但尚未完成迁移。生产 manifest、桌面安装包和手机构建标识仍未核对。
+**当前交付：** Runtime/Engine 已按 `946c82f`/`0cdd839` 原子激活；桌面 `270e494` 已构建、安装并完成生产 smoke。Mobile 构建标识和 CF Provider 契约迁移仍未完成。
 
 ### M1：修复当前流程并验收 v2（代码层 P0 已部分完成）
 
@@ -174,19 +177,19 @@ Runtime 本轮已提交并保留的文件包括：
 2. ~~独立 deadline 回收器，覆盖 offline / missing / discovery failure。~~ 已完成离线目标回归；保留真实设备验收。
 3. ~~合并手机等待态，补齐工具失败码、到期与取消的展示。~~ 本地代码已具备并通过 Mobile 测试；保留真实 API 验收。
 4. ~~增加严格版本协商，关闭 native 写任务的隐式 v1 降级。~~ 已完成代码实现；保留真实四组合验收。
-5. 在真实设备执行下面的验收矩阵，最后再发布整套版本。
+5. Windows 核心写任务已完成；继续按下面矩阵补齐跨平台、离线和手机恢复场景。
 
 | 场景 | 必须观察到的证据 |
 | --- | --- |
-| 手机选择已注册工作区 + 云端 Agent + Windows 工具 | 提交的两个 target 独立，实际绑定目录正确，产生 v2 操作 |
-| 同一工作区写任务、多次工具等待 | 一次审批、真实读写与回读一致、原始 call ID 和顺序保留 |
+| 手机选择已注册工作区 + 云端 Agent + Windows 工具 | 待手机真实入口；Runtime/桌面直连等价路径已通过，产生 v2 操作 |
+| 同一工作区写任务、多次工具等待 | 已通过：一次审批、4 轮模型、3 次操作、真实读写与回读一致 |
 | 只读任务 | 不要求写审批，不向模型暴露写工具 |
 | 审批前后修改 registry / 切桌面目录 | 不写入新目录，拒绝或重新授权；事件说明原因 |
 | 完全离线并超过 deadline | 过期事件持久化，任务不永久等待，也不自动改派到另一台电脑 |
 | 工具执行前取消、执行中取消、迟到结果 | 状态不复活；区分“停止等待”和“实际停止副作用” |
 | 断网重连、API/Worker 重启、事件翻页 | cursor 连续、无重复终态、不丢任务与审批证据 |
 | 相同幂等键重放 / 不同参数复用键 | 同请求复用已有操作，不同内容拒绝；不把此项当作设备 exactly-once |
-| 旧桌面 / 新桌面，Windows / Mac | 协议与路径检查一致；不能把 Windows 单端通过当作 Mac 通过 |
+| 旧桌面 / 新桌面，Windows / Mac | 旧桌面已证明 fail closed，新 Windows 已通过；Mac 和完整混合矩阵待做 |
 | 真实错误与环境失败 | ENOENT / scope mismatch / offline 被区分，错误码到达事件、模型和 UI |
 
 **交付：** task/run ID、操作协议版本、设备构建号、审批次数、事件 cursor、产物哈希、服务版本和回滚记录。不要仅写“smoke 通过”。
@@ -245,18 +248,18 @@ Runtime 本轮已提交并保留的文件包括：
 
 ## 6. 下一轮实际应做什么
 
-下一轮只承诺一个可验收切片：**补齐版本协商门禁，并完成一条新版工作区写任务的真实 v2 E2E。** workspace_id 审批、离线过期和手机等待态已经进入代码测试阶段，不再重复重写。
+下一轮优先做一个可验收切片：**把手机入口接到同一条生产 task 链，并验证 `waiting_for_async_tool` 的轮询、cursor 和恢复。** Windows 直连 v2 闭环已经完成，不再重复重写 Runtime/桌面协议。
 
 | 工作包 | 主要文件/仓库 | 完成标志 |
 | --- | --- | --- |
-| A：Runtime 集成 | `native_tools.py`、`tool_transport.py`、`executors/pi_studio.py`、`worker.py` | 已完成本地集成、能力握手和全量测试；待真实设备 |
+| A：Runtime 集成 | `native_tools.py`、`tool_transport.py`、`executors/pi_studio.py`、`worker.py` | 已完成本地集成、能力握手、全量测试和生产 Windows smoke |
 | B：绑定与审批 | `providers.py`、`orchestrator.py`、`routing.py`、`store.py` | 已验证 registry 写任务只审批一次，绑定变更失败 |
 | C：独立过期回收 | Runtime `store.py`、`worker.py` | 已验证离线目标按 deadline 结束等待 |
 | D：手机整合 | mobile `harness.ts`、`harness-ui.tsx`、`HarnessTaskScreen.tsx` | 本地等待态已生效；待真实 API 轮询/cursor 验收 |
-| E：版本与发布门禁 | desktop `remote-control.ts`、Runtime gateway、部署脚本 | 代码层逐项协商已完成；还需部署 manifest、设备构建号和 E2E 证据 |
-| F：真实验收 | 现有 smoke 脚本扩展，发布记录 | smoke 已固定发 v2；仍需记录真实 v2 操作、绑定、一次审批、回读哈希及跨端构建号 |
+| E：版本与发布门禁 | desktop `remote-control.ts`、Runtime gateway、部署脚本 | Runtime/Engine 已部署；桌面 `270e494` 已安装；旧客户端拒绝和新客户端通过均有证据 |
+| F：真实验收 | 现有 smoke 脚本扩展，发布记录 | Windows v2 已完成；待手机 API、离线 deadline、重连翻页、Mac 和幂等重放矩阵 |
 
-A/B/C/D/E 的代码层工作已完成本地验证；下一步只做 F 真实验收和发布 manifest。分工前固定契约和验收，不能让多个 LLM 同时修改同一工作区的同一文件再依赖“最后一次保存”。
+A/B/C/E 的代码层工作已完成本地验证，A/E 已有生产证据；D 和 F 还需手机真实 API、离线、重连和跨平台矩阵。分工前固定契约和验收，不能让多个 LLM 同时修改同一工作区的同一文件再依赖“最后一次保存”。
 
 ## 7. 暂缓事项与发布原则
 
