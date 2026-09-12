@@ -553,6 +553,16 @@ describe('remote-control command protocol', () => {
           commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS],
           localTools: ['shell.exec', 'bash', 'local.read', 'local.write'], localFileMaxBytes: 65536,
           toolProtocol: LOCAL_TOOL_PROTOCOL,
+          toolGateway: {
+            manifestVersion: 1,
+            operationProtocols: [1, 2],
+            tools: [
+              { name: 'shell.exec', scopeVersion: 1, requiresWorkspace: true },
+              { name: 'bash', scopeVersion: 1, requiresWorkspace: true },
+              { name: 'local.read', scopeVersion: 1, requiresWorkspace: true, maxBytes: 65536 },
+              { name: 'local.write', scopeVersion: 1, requiresWorkspace: true, maxBytes: 65536 },
+            ],
+          },
         },
       }),
     )
