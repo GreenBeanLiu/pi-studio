@@ -37,9 +37,9 @@
 
 | 仓库 | 本地 HEAD | 本次抓取的远端 HEAD | 核查结论 |
 | --- | --- | --- | --- |
-| `pi-studio` | `aa718a2` | `origin/master@aa718a2` | 已同步；包含工作区库存上报和桌面 v2 scope 校验 |
-| `personal-agent-runtime` | `55efbe5` | `origin/main@586f806` | 已合入远端 v2；保留结构化错误码，并修复 workspace 绑定、离线过期和 v2 能力握手 |
-| `personal-agent-engine` | `45a5ae2` + 本地修复 | `origin/main@45a5ae2` | 已同步远端；Code Mode 已兼容 Windows |
+| `pi-studio` | `4be70ed` | `origin/master@aa718a2` | 已同步；包含工作区库存、v2 scope 校验和 tool protocol 能力声明 |
+| `personal-agent-runtime` | `b3c29ef` | `origin/main@586f806` | 已合入远端 v2；保留结构化错误码，修复 workspace 绑定、离线过期、v2 能力握手和 smoke |
+| `personal-agent-engine` | `0cdd839` | `origin/main@45a5ae2` | 已同步远端；Code Mode 已兼容 Windows |
 | `pi-studio-backend` | `d6a0d24` | `origin/main@d6a0d24` | 已同步远端并通过 Python/worker 验证 |
 | `pi-studio-mobile` | `918d1fd` | `origin/master@bd014f9` | 已分叉；远端有新工作区、双目标、增量事件；本地有尚未合入的异步工具状态和类型 |
 | `pi-cf-agent-provider` | `4f15972` | `origin/main@d3adc89` | 暂未合并；远端简化了上游路由，本地还有 provider 契约与 tool payload 透传声明 |
