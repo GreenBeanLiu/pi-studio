@@ -283,6 +283,31 @@ describe('remote-control command protocol', () => {
     await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'scope', code: 'SCOPE_MISMATCH' }))
   })
 
+  it('accepts equivalent Windows workspace spellings in v2 scope', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pi-remote-scope-'))
+    const wireWorkspace = workspace.replaceAll('\\', '/')
+    mocks.getWorkspacePath.mockReturnValue(workspace)
+    const ws = await connect()
+    try {
+      ws.receive({
+        id: 'normalized-scope',
+        type: 'executeToolOperation',
+        operationId: 'normalized-scope-op',
+        toolName: 'local.write',
+        protocolVersion: 2,
+        deadlineAt: '2099-01-01T00:00:00Z',
+        scope: { workspace: wireWorkspace, permissions: ['local.write'] },
+        arguments: { workspace: wireWorkspace, path: 'note.txt', content: 'hello' },
+      })
+      await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({
+        id: 'normalized-scope', data: { ok: true, result: { bytes: 5 } },
+      }))
+    } finally {
+      mocks.getWorkspacePath.mockReset()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('round trips files and propagates file errors through the remote protocol', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'pi-remote-files-'))
     mocks.getWorkspacePath.mockReturnValue(workspace)

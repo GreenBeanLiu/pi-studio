@@ -1,5 +1,6 @@
 import { dirname } from 'path'
 import { hostname } from 'os'
+import { isAbsolute, resolve } from 'path'
 import { piClientManager } from './pi-client'
 import { listSessions } from './pi-sessions'
 import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
@@ -37,6 +38,15 @@ type LocalToolHandler = (args: Record<string, unknown>) => Promise<unknown>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function sameWorkspacePath(left: string, right: string): boolean {
+  if (!isAbsolute(left) || !isAbsolute(right)) return false
+  const normalizedLeft = resolve(left)
+  const normalizedRight = resolve(right)
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight
 }
 
 function errMsg(err: unknown): string {
@@ -109,11 +119,11 @@ async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<
     const scope = isRecord(msg.scope) ? msg.scope : {}
     const scopeWorkspace = typeof scope.workspace === 'string' ? scope.workspace : ''
     const argumentWorkspace = typeof args.workspace === 'string' ? args.workspace : ''
-    if (!scopeWorkspace || scopeWorkspace !== argumentWorkspace) {
+    if (!sameWorkspacePath(scopeWorkspace, argumentWorkspace)) {
       return { error: 'tool scope workspace must match arguments.workspace', code: 'SCOPE_MISMATCH' }
     }
     const activeWorkspace = piClientManager.getWorkspacePath()
-    if (scopeWorkspace !== activeWorkspace) {
+    if (!activeWorkspace || !sameWorkspacePath(scopeWorkspace, activeWorkspace)) {
       return { error: 'tool scope workspace is not the active workspace', code: 'SCOPE_MISMATCH' }
     }
     const permissions = scope.permissions
