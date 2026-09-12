@@ -132,6 +132,10 @@ cloud agent/runtime
 ```
 
 当前桌面 gateway 实现 `shell.exec` / `bash` 和 `local.read` / `local.write`；
+v2 shell 操作使用 scope v2，必须声明与命令相符的 `shell_read`、
+`workspace_write`、`git_push`、`pull_request`、`production_deploy` 或
+`destructive_command`，
+桌面在调用 Pi 前再次校验。无法证明只读的命令按 `destructive_command` 处理。
 desktop IPC 和本地 MCP 会复用同一个 operation envelope 继续加。agent loop 还没有
 把模型 tool call 自动拆成 server/client/gateway 三类并接 provider-native session
 resume，这一层先把 source 判定、持久化暂停、领取、执行和 `tool_result` 回灌立住。

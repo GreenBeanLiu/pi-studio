@@ -283,6 +283,27 @@ describe('remote-control command protocol', () => {
     await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'scope', code: 'SCOPE_MISMATCH' }))
   })
 
+  it('requires an exact v2 shell permission before invoking Pi', async () => {
+    mocks.getWorkspacePath.mockReturnValue('/workspace')
+    mocks.bash.mockResolvedValue({ stdout: 'ok', exitCode: 0 })
+    const ws = await connect()
+    const base = {
+      type: 'executeToolOperation', operationId: 'shell-v2', toolName: 'shell.exec',
+      protocolVersion: 2, deadlineAt: '2099-01-01T00:00:00Z',
+      arguments: { workspace: '/workspace', command: 'git push origin main' },
+      scope: { workspace: '/workspace', permissions: ['shell.exec'], permission: 'shell_read' },
+    }
+
+    ws.receive({ ...base, id: 'wrong-shell-scope' })
+    await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({
+      id: 'wrong-shell-scope', code: 'SCOPE_MISMATCH', error: 'shell command requires git_push permission',
+    }))
+    expect(mocks.bash).not.toHaveBeenCalled()
+
+    ws.receive({ ...base, id: 'approved-shell-scope', scope: { ...base.scope, permission: 'git_push' } })
+    await vi.waitFor(() => expect(mocks.bash).toHaveBeenCalledWith('git push origin main'))
+  })
+
   it('round trips files and propagates file errors through the remote protocol', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'pi-remote-files-'))
     mocks.getWorkspacePath.mockReturnValue(workspace)
@@ -521,8 +542,8 @@ describe('remote-control command protocol', () => {
             manifestVersion: 1,
             operationProtocols: [1, 2],
             tools: [
-              { name: 'shell.exec', scopeVersion: 1, requiresWorkspace: true },
-              { name: 'bash', scopeVersion: 1, requiresWorkspace: true },
+              { name: 'shell.exec', scopeVersion: 2, requiresWorkspace: true },
+              { name: 'bash', scopeVersion: 2, requiresWorkspace: true },
               { name: 'local.read', scopeVersion: 1, requiresWorkspace: true, maxBytes: 65536 },
               { name: 'local.write', scopeVersion: 1, requiresWorkspace: true, maxBytes: 65536 },
             ],

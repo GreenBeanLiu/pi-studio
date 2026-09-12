@@ -21,6 +21,7 @@ import type { RoutineSchedule, RoutineStepProgress } from './routines'
 import type { Workspace } from '../shared/contracts'
 import { cloudFetch } from './cloud-fetch'
 import type { WorkspaceInventoryItem } from './workspace-inventory'
+import { isLocalShellPermission, requiredLocalShellPermission } from './local-shell-scope'
 
 type ProjectionProvider = {
   snapshot: () => SessionProjectionSnapshot
@@ -87,8 +88,8 @@ const TOOL_GATEWAY_MANIFEST = {
   manifestVersion: 1,
   operationProtocols: [1, 2],
   tools: [
-    { name: 'shell.exec', scopeVersion: 1, requiresWorkspace: true },
-    { name: 'bash', scopeVersion: 1, requiresWorkspace: true },
+    { name: 'shell.exec', scopeVersion: 2, requiresWorkspace: true },
+    { name: 'bash', scopeVersion: 2, requiresWorkspace: true },
     { name: 'local.read', scopeVersion: 1, requiresWorkspace: true, maxBytes: LOCAL_FILE_MAX_BYTES },
     { name: 'local.write', scopeVersion: 1, requiresWorkspace: true, maxBytes: LOCAL_FILE_MAX_BYTES },
   ],
@@ -120,6 +121,21 @@ async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<
     const permissions = scope.permissions
     if (!Array.isArray(permissions) || !permissions.includes(toolName)) {
       return { error: 'tool scope permissions must include toolName', code: 'SCOPE_MISMATCH' }
+    }
+    if (toolName === 'shell.exec' || toolName === 'bash') {
+      const permission = scope.permission
+      if (!isLocalShellPermission(permission)) {
+        return { error: 'v2 shell scope requires a supported permission', code: 'SCOPE_MISMATCH' }
+      }
+      let required: string
+      try {
+        required = requiredLocalShellPermission(args.command)
+      } catch (error) {
+        return { error: errMsg(error), code: 'INVALID_TOOL_ARGUMENTS' }
+      }
+      if (permission !== required) {
+        return { error: `shell command requires ${required} permission`, code: 'SCOPE_MISMATCH' }
+      }
     }
   }
   const handler = LOCAL_TOOL_HANDLERS[toolName as keyof typeof LOCAL_TOOL_HANDLERS]
