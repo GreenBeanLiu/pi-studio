@@ -90,6 +90,27 @@ async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<
   if (!operationId || !toolName) {
     return { error: 'operationId and toolName are required', code: 'INVALID_TOOL_OPERATION' }
   }
+  const protocolVersion = Number(msg.protocolVersion ?? msg.protocol_version ?? 1)
+  if (protocolVersion >= 2) {
+    const deadlineRaw = msg.deadlineAt ?? msg.deadline_at
+    const deadline = typeof deadlineRaw === 'string' ? Date.parse(deadlineRaw) : NaN
+    if (!Number.isFinite(deadline)) return { error: 'v2 deadlineAt is required', code: 'INVALID_DEADLINE' }
+    if (deadline <= Date.now()) return { error: 'tool operation deadline expired', code: 'DEADLINE_EXPIRED' }
+    const scope = isRecord(msg.scope) ? msg.scope : {}
+    const scopeWorkspace = typeof scope.workspace === 'string' ? scope.workspace : ''
+    const argumentWorkspace = typeof args.workspace === 'string' ? args.workspace : ''
+    if (!scopeWorkspace || scopeWorkspace !== argumentWorkspace) {
+      return { error: 'tool scope workspace must match arguments.workspace', code: 'SCOPE_MISMATCH' }
+    }
+    const activeWorkspace = piClientManager.getWorkspacePath()
+    if (scopeWorkspace !== activeWorkspace) {
+      return { error: 'tool scope workspace is not the active workspace', code: 'SCOPE_MISMATCH' }
+    }
+    const permissions = scope.permissions
+    if (!Array.isArray(permissions) || !permissions.includes(toolName)) {
+      return { error: 'tool scope permissions must include toolName', code: 'SCOPE_MISMATCH' }
+    }
+  }
   const handler = LOCAL_TOOL_HANDLERS[toolName as keyof typeof LOCAL_TOOL_HANDLERS]
   if (!handler) {
     return { error: `unsupported local tool: ${toolName}`, code: 'UNSUPPORTED_TOOL' }

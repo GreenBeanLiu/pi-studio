@@ -262,6 +262,27 @@ describe('remote-control command protocol', () => {
     )
   })
 
+  it('rejects expired or out-of-scope v2 tool operations before execution', async () => {
+    mocks.getWorkspacePath.mockReturnValue('/workspace')
+    const ws = await connect()
+    const base = {
+      type: 'executeToolOperation', operationId: 'toolop-v2', toolName: 'local.read',
+      protocolVersion: 2, arguments: { workspace: '/workspace', path: 'note.txt' },
+      scope: { workspace: '/workspace', permissions: ['local.read'] },
+    }
+
+    ws.receive({ ...base, id: 'expired', deadlineAt: '2020-01-01T00:00:00Z' })
+    await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({
+      id: 'expired', code: 'DEADLINE_EXPIRED', error: 'tool operation deadline expired',
+    }))
+
+    ws.receive({
+      ...base, id: 'scope', deadlineAt: '2099-01-01T00:00:00Z',
+      scope: { workspace: '/other', permissions: ['local.read'] },
+    })
+    await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'scope', code: 'SCOPE_MISMATCH' }))
+  })
+
   it('round trips files and propagates file errors through the remote protocol', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'pi-remote-files-'))
     mocks.getWorkspacePath.mockReturnValue(workspace)
