@@ -155,6 +155,17 @@ resume，这一层先把 source 判定、持久化暂停、领取、执行和 `t
 `PI_STUDIO_SMOKE_FILES=1` 可让发布 smoke 追加真实写入、拒绝重复创建、读回和持久化恢复队列检查。
 它使用独立临时数据库并留下唯一命名的测试文件，不会创建正式业务任务。
 
+### Workspace inventory
+
+Runtime 可通过已认证的 controller 房间发送 `workspaceInventory`。桌面遍历当前及最近
+工作区，在本机执行只读 Git 查询，返回 `path`、`kind`、`repository` 和 `defaultRef`。
+GitHub 的 SSH / HTTPS remote 都归一化成 `owner/repo`；其他 Git 主机保留 host，URL 中的
+用户名和密码不会返回，本地路径形式的 remote 也不会进入协议。
+
+这个命令只报告事实，不在桌面保存 control-plane id。`personal-agent-runtime` 负责把同一
+repository 在不同电脑上的路径合并为一个稳定 `workspace_id` 和多条 executor binding。
+Relay 仍然只做不透明转发，不拥有 Workspace Registry。
+
 ---
 
 ## 3. 手机遥控链路（本次新增的部分）

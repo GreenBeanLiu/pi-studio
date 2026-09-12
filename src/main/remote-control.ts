@@ -20,6 +20,7 @@ import type {
 import type { RoutineSchedule, RoutineStepProgress } from './routines'
 import type { Workspace } from '../shared/contracts'
 import { cloudFetch } from './cloud-fetch'
+import type { WorkspaceInventoryItem } from './workspace-inventory'
 
 type ProjectionProvider = {
   snapshot: () => SessionProjectionSnapshot
@@ -154,6 +155,7 @@ export const SUPPORTED_COMMANDS = [
   'setModel',
   'getWorkspace',
   'listWorkspaces',
+  'workspaceInventory',
   'openWorkspace',
   'listRoutines',
   'runRoutine',
@@ -187,6 +189,7 @@ export const HOST_EVENT_CHANNELS = [
 export type RemoteWorkspaceHost = {
   list: () => { current: string | null; recent: Workspace[] }
   open: (path: string) => Promise<{ ok: true; recentWorkspaces: Workspace[] } | { error: string }>
+  inventory?: () => Promise<WorkspaceInventoryItem[]>
 }
 
 /**
@@ -669,6 +672,12 @@ class RemoteControlManager {
         case 'listWorkspaces':
           this.reply(msg.id, this.requireWorkspaceHost().list())
           break
+        case 'workspaceInventory': {
+          const inventory = this.requireWorkspaceHost().inventory
+          if (!inventory) throw new Error('workspace inventory is unavailable')
+          this.reply(msg.id, await inventory())
+          break
+        }
         case 'klingVideoHealth':
           this.reply(msg.id, await this.requireVideoHost().health())
           break

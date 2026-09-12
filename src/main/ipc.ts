@@ -43,6 +43,7 @@ import {
 } from './workspace-memory'
 import { registerImageGenHandlers } from './image-gen'
 import { getCloudConnection, getDraftCloudConnection } from './cloud-connection'
+import { workspaceInventory } from './workspace-inventory'
 import { fetchLlmCatalog, listEnabledLlmRoutes } from './llm-gateway'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { parseLlmProfileSavePayload } from './ipc-contracts'
@@ -606,6 +607,10 @@ export function registerIpcHandlers(): void {
       current: piClientManager.getWorkspacePath(),
       recent: loadSettings().recentWorkspaces,
     }),
+    inventory: () => workspaceInventory(
+      piClientManager.getWorkspacePath(),
+      loadSettings().recentWorkspaces,
+    ),
     open: (path) => openWorkspace(path, BrowserWindow.getAllWindows()[0] ?? null),
   })
 

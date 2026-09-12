@@ -386,6 +386,37 @@ describe('remote-control command protocol', () => {
     })
   })
 
+  it('reports repository-aware workspace inventory to the runtime', async () => {
+    const inventory = vi.fn().mockResolvedValue([{
+      path: '/Users/me/Works/pi-studio',
+      name: 'pi-studio',
+      kind: 'git',
+      repository: 'GreenBeanLiu/pi-studio',
+      defaultRef: 'master',
+    }])
+    remoteControl.setWorkspaceHost({
+      list: () => ({ current: null, recent: [] }),
+      open: vi.fn(),
+      inventory,
+    })
+    const ws = await connect()
+
+    ws.receive({ id: 44, type: 'workspaceInventory' })
+
+    await vi.waitFor(() => expect(inventory).toHaveBeenCalledOnce())
+    expect(ws.lastSent()).toEqual({
+      type: 'result',
+      id: 44,
+      data: [{
+        path: '/Users/me/Works/pi-studio',
+        name: 'pi-studio',
+        kind: 'git',
+        repository: 'GreenBeanLiu/pi-studio',
+        defaultRef: 'master',
+      }],
+    })
+  })
+
   it('reports a rejected workspace path and a failed open separately', async () => {
     const open = vi.fn().mockResolvedValue({ error: '启动工作区失败' })
     remoteControl.setWorkspaceHost({ list: () => ({ current: null, recent: [] }), open })
