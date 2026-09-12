@@ -29,7 +29,7 @@
 - Mobile 当前本地 `918d1fd` 已包含 `waiting_for_async_tool`，未用远端旧 UI 覆盖本地修复。
 - Cloudflare Provider 保留本地多上游/provider health 契约；远端单路由重写未直接合并，待消费者契约核对后单独迁移。
 
-本轮验证：Runtime **415 passed**；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。以上均为本地测试，不等价于真实设备 E2E。
+本轮验证：Runtime **415 passed**（含 v2 file/native smoke 回归）；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。以上均为本地测试，不等价于真实设备 E2E。
 
 ## 2. 仓库与部署基线
 
@@ -254,7 +254,7 @@ Runtime 本轮已提交并保留的文件包括：
 | C：独立过期回收 | Runtime `store.py`、`worker.py` | 已验证离线目标按 deadline 结束等待 |
 | D：手机整合 | mobile `harness.ts`、`harness-ui.tsx`、`HarnessTaskScreen.tsx` | 本地等待态已生效；待真实 API 轮询/cursor 验收 |
 | E：版本与发布门禁 | desktop `remote-control.ts`、Runtime gateway、部署脚本 | 代码层逐项协商已完成；还需部署 manifest、设备构建号和 E2E 证据 |
-| F：真实验收 | 现有 smoke 脚本扩展，发布记录 | 记录 v2 操作、绑定、一次审批、回读哈希及跨端构建号 |
+| F：真实验收 | 现有 smoke 脚本扩展，发布记录 | smoke 已固定发 v2；仍需记录真实 v2 操作、绑定、一次审批、回读哈希及跨端构建号 |
 
 A/B/C/D/E 的代码层工作已完成本地验证；下一步只做 F 真实验收和发布 manifest。分工前固定契约和验收，不能让多个 LLM 同时修改同一工作区的同一文件再依赖“最后一次保存”。
 
