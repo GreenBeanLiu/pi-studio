@@ -83,6 +83,12 @@ const LOCAL_TOOL_HANDLERS = {
   'local.write': async (args) => writeLocalFile(piClientManager.getWorkspacePath(), args),
 } satisfies Record<string, LocalToolHandler>
 
+export const LOCAL_TOOL_PROTOCOL = {
+  version: 2,
+  supportedVersions: [1, 2],
+  tools: Object.fromEntries(Object.keys(LOCAL_TOOL_HANDLERS).map((name) => [name, { schemaVersion: 1 }])),
+} as const
+
 async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<LocalToolOperationReply> {
   const operationId = String(msg.operationId ?? msg.operation_id ?? '').trim()
   const toolName = String(msg.toolName ?? msg.tool_name ?? msg.name ?? '').trim()
@@ -90,8 +96,12 @@ async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<
   if (!operationId || !toolName) {
     return { error: 'operationId and toolName are required', code: 'INVALID_TOOL_OPERATION' }
   }
-  const protocolVersion = Number(msg.protocolVersion ?? msg.protocol_version ?? 1)
-  if (protocolVersion >= 2) {
+  const protocolValue = msg.protocolVersion ?? msg.protocol_version ?? 1
+  const protocolVersion = typeof protocolValue === 'number' ? protocolValue : Number(protocolValue)
+  if (!Number.isSafeInteger(protocolVersion) || !LOCAL_TOOL_PROTOCOL.supportedVersions.includes(protocolVersion as 1 | 2)) {
+    return { error: `unsupported local tool protocol version: ${String(protocolValue)}`, code: 'UNSUPPORTED_TOOL_PROTOCOL' }
+  }
+  if (protocolVersion === 2) {
     const deadlineRaw = msg.deadlineAt ?? msg.deadline_at
     const deadline = typeof deadlineRaw === 'string' ? Date.parse(deadlineRaw) : NaN
     if (!Number.isFinite(deadline)) return { error: 'v2 deadlineAt is required', code: 'INVALID_DEADLINE' }
@@ -594,6 +604,7 @@ class RemoteControlManager {
             hostEvents: [...HOST_EVENT_CHANNELS],
             localTools: Object.keys(LOCAL_TOOL_HANDLERS),
             localFileMaxBytes: LOCAL_FILE_MAX_BYTES,
+            toolProtocol: LOCAL_TOOL_PROTOCOL,
           })
           break
         case 'prompt':

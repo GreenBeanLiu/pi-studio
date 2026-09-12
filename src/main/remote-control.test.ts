@@ -54,7 +54,7 @@ vi.mock('./model-catalog', () => ({
   },
 }))
 
-import { HOST_EVENT_CHANNELS, SUPPORTED_COMMANDS, remoteControl } from './remote-control'
+import { HOST_EVENT_CHANNELS, LOCAL_TOOL_PROTOCOL, SUPPORTED_COMMANDS, remoteControl } from './remote-control'
 
 type Listener = (event: { data?: string; code?: number; reason?: string }) => void
 
@@ -307,6 +307,16 @@ describe('remote-control command protocol', () => {
   it('rejects malformed or unsupported local tool operations before touching Pi', async () => {
     const ws = await connect()
 
+    ws.receive({ id: 'tool-command-version', type: 'executeToolOperation', operationId: 'toolop-version', toolName: 'local.read', protocolVersion: 3 })
+    await vi.waitFor(() =>
+      expect(ws.lastSent()).toEqual({
+        type: 'result',
+        id: 'tool-command-version',
+        error: 'unsupported local tool protocol version: 3',
+        code: 'UNSUPPORTED_TOOL_PROTOCOL',
+      }),
+    )
+
     ws.receive({ id: 'tool-command-2', type: 'executeToolOperation', operationId: 'toolop-2', toolName: 'local.unknown' })
     await vi.waitFor(() =>
       expect(ws.lastSent()).toEqual({
@@ -517,6 +527,7 @@ describe('remote-control command protocol', () => {
         data: {
           commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS],
           localTools: ['shell.exec', 'bash', 'local.read', 'local.write'], localFileMaxBytes: 65536,
+          toolProtocol: LOCAL_TOOL_PROTOCOL,
         },
       }),
     )
