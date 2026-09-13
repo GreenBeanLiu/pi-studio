@@ -9,6 +9,7 @@
 
 ### 2026-09-14 后续进展
 
+- 合入远端 Runtime `d29713f` 与 Desktop `d4b7c5f` 后，组合版本验证为 Runtime **515 passed**、Desktop **955 passed，5 skipped**，桌面完整 verify 通过。Runtime 新增网关测试已隔离本机模型地址环境，覆盖旧地址透传；以下 **505 passed** 是合入前本轮解析改动的验证结果。
 - Runtime 工作区解析已集中到 `workspace_resolution.resolve_task_workspace`：API 校验身份，路由选定设备后解析本地路径；补齐非 HTTP 入口的 repository 冲突检查。Runtime 全量 **505 passed**。兼容字段和数据库结构不变，真实设备回归与生产部署另行记录。详见 [工作区解析收敛记录](workspace-resolution-2026-09-14.md)。
 
 ### 2026-09-13 后续进展（优先于下文历史快照）

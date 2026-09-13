@@ -44,6 +44,11 @@
 Runtime 全量验证：**505 passed**，保留一个既有 Starlette/httpx 弃用警告。Windows 本地复现需
 使用项目 `.venv/Scripts/python.exe`，设置 `PYTHONUTF8=1`、`PYTHONPATH=src` 后运行 `-m pytest -q`。
 
+合入远端 Runtime `d29713f` 的沙箱网关与流程进度更新后，组合版本全量 **515 passed**。
+其中补正了新引入的网关测试对本机 `DEEPSEEK_BASE_URL` 的依赖，分别覆盖未设置与已设置地址；
+生产逻辑未因此修改。桌面合入 `d4b7c5f` 后完整 `pnpm run verify` 通过：**955 passed，5 skipped**，
+编码检查、类型检查、lint 和构建通过。
+
 真实 Mac / Windows 断线恢复没有在本轮重跑；代码推送也不代表生产 Runtime 已更新。
 下一步在部署并验证本轮 Runtime 后，记录以 `workspace_id` 发起任务的实际设备、解析路径、
 operation ID 和恢复结果，再推进目标解析契约。Mobile 兼容字段的删除应等待跨端契约验证完成。
