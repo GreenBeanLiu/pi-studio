@@ -23,14 +23,14 @@
 
 ### 本轮执行结果（2026-09-12）
 
-- Runtime 已合入 `origin/main@586f806`，并保留本地结构化工具错误码；新增 workspace 绑定持久化和离线 deadline 回收。
+- Runtime 已发布 `297e46e`，并保留本地结构化工具错误码；新增 workspace 绑定持久化、离线 deadline 回收和 bounded `local.list`。
 - Engine 已同步到 `origin/main@45a5ae2`；补上 Windows Code Mode 的本机 IPC 和解释器路径处理。
 - Backend 已同步到 `origin/main@d6a0d24`；移动端和 Hatchet worker 均完成验证。
 - Mobile 当前本地 `97f4fff` 已包含 `waiting_for_async_tool` 和 run event cursor 增量读取，未用远端旧 UI 覆盖本地修复。
 - Cloudflare Provider 保留本地多上游/provider health 契约；远端单路由重写未直接合并，待消费者契约核对后单独迁移。
 
-本轮验证：Runtime **415 passed**（含 v2 file/native smoke 回归）；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **937 passed**，类型检查通过。另有一次真实生产 smoke 通过，见第 2.2 节。
-- 已完成一次生产发布：Runtime `946c82f`、Engine `0cdd839`，桌面安装了当前本地构建；生产模式为 `native-tools`。
+本轮验证：Runtime **441 passed**（含 `local.list` schema、路由和参数边界回归）；Engine **65 passed**；Backend Python **112 passed**；Backend worker **36 passed**；Mobile **154 passed**；桌面 **953 passed，5 skipped**，类型检查、lint 和构建通过。另有一次真实生产 smoke 通过，见第 2.2 节。
+- 已完成一次生产发布：Runtime `297e46e`、Engine `0cdd839`；桌面 `be68c3b` 已推送但 Mac 尚待更新安装；生产模式为 `native-tools`。
 - 真实 smoke `task_f7b9373388fc4eddaed3649149b2d020` 通过：一次审批、4 轮模型、3 次网关操作、服务器工具与桌面文件读写均执行，精确回读成功。
 - 生产 run event 接口实测返回 `run_id=run_fd837a5d5fca41068ee88642e50d08d9`、`next_cursor=5`、`has_more=true`；手机端已按该契约增量合并并按旧 Runtime 回退。
 
@@ -40,8 +40,8 @@
 
 | 仓库 | 本地 HEAD | 本次抓取的远端 HEAD | 核查结论 |
 | --- | --- | --- | --- |
-| `pi-studio` | `270e494` | `origin/master@aa718a2` | 已构建并安装；包含工作区库存、v2 能力声明和 Windows scope 路径规范化 |
-| `personal-agent-runtime` | `946c82f` | `origin/main@586f806` | 已部署；修复 workspace 绑定、离线过期、v2 能力握手，生产 smoke 也发 v2 |
+| `pi-studio` | `be68c3b` | `origin/master@be68c3b` | 已推送；包含 bounded `local.list`、工作区库存、v2 能力声明和 Windows scope 路径规范化；Mac 尚待更新安装 |
+| `personal-agent-runtime` | `297e46e` | `origin/main@297e46e` | 已部署；修复 workspace 绑定、离线过期、v2 能力握手并发布 `local.list` |
 | `personal-agent-engine` | `0cdd839` | `origin/main@45a5ae2` | 已同步远端；Code Mode 已兼容 Windows |
 | `pi-studio-backend` | `d6a0d24` | `origin/main@d6a0d24` | 已同步远端并通过 Python/worker 验证 |
 | `pi-studio-mobile` | `97f4fff` | `origin/master@bd014f9` | 已分叉；本地保留异步工具等待态，并接入 Runtime run event cursor 增量读取 |
@@ -64,17 +64,17 @@ Runtime 本轮已提交并保留的文件包括：
 
 | 项目 | 实测结果 |
 | --- | --- |
-| Runtime 发布目录 | `/home/ubuntu/personal-harness/releases/946c82f` |
+| Runtime 发布目录 | `/home/ubuntu/personal-harness/releases/297e46e` |
 | Engine 发布目录 | `/home/ubuntu/deepseek-harness/releases/0cdd839` |
 | Runtime 实际安装包 | 已由原子激活脚本安装，`personal_harness.executors.native_tools` 和 Engine bridge import 均验证 |
 | API / Worker | 两个服务均 active，健康检查返回生产数据库；激活前数据库无 running/waiting/queued/tool pending |
 | 默认与审批 | `native-tools`、`write_requires_approval`、独立 Worker |
-| 版本环境变量 | Runtime `personal-agent-runtime@946c82f` / Engine `personal-agent-engine@0cdd839`，与发布目录一致 |
+| 版本环境变量 | Runtime `personal-agent-runtime@297e46e` / Engine `personal-agent-engine@0cdd839`，与发布目录一致 |
 | 数据库迁移 | 已有 Workspace 表、Run event 信封字段和 ToolOperation v2 字段 |
 | 生产 smoke | `task_f7b9373388fc4eddaed3649149b2d020`；一次审批、4 turns、3 gateway operations、精确文件复制 |
 | 生产执行进程 | Worker PID `1918017` 与任务 checkpoint 身份匹配 |
 
-结论：新版 Runtime/Engine 已上线，桌面候选包已安装并完成 Windows v2 真实闭环。该结论不覆盖手机等待态、Mac、离线 deadline、重连翻页和旧客户端兼容矩阵。
+结论：新版 Runtime 已上线，桌面 `be68c3b` 已推送且本地构建通过；当前生产只完成既有 Windows v2 smoke，Mac 必须更新客户端后才能验收 `local.list`，因此不把本轮代码上线误记为 Mac 真实闭环。
 
 先前的 v1 生产验收仍有价值，但不能替代新 `workspace_id`、双目标和 v2 入口的验收。旧部署记录见 `personal-agent-runtime/docs/production-native-rollout-2026-09-12.md`，阅读时注意其中的历史版本与当前实测不同。
 
@@ -98,11 +98,11 @@ Runtime 本轮已提交并保留的文件包括：
 
 ### 4.1 已运行的验证
 
-- Runtime 当前组合：**415 passed**，有 1 条现存 Starlette/httpx 弃用警告。
+- Runtime 当前组合：**441 passed**，有 1 条现存 Starlette/httpx 弃用警告。
 - Engine 当前组合：**65 passed**；Windows Code Mode 通过本机 IPC 回归。
 - Backend Python：**112 passed**，有 1 条现存 Starlette/httpx 弃用警告；Hatchet worker：**36 passed**，typecheck 通过。
 - Mobile：**154 passed**，typecheck 通过。
-- 桌面当前组合：**937 passed，5 skipped**；scope 规范化回归和 typecheck 通过；Windows 安装包已构建并启动。
+- 桌面当前组合：**953 passed，5 skipped**；scope 规范化、`local.list` 回归、typecheck、lint 和 production build 均通过；Mac 新包尚未安装。
 - 生产 smoke 已连接真实桌面和真实 API/Worker，创建并完成任务 `task_f7b9373388fc4eddaed3649149b2d020`；成本 `$0.001241232`，未发生第二次审批。
 - Engine/Backend/Mobile/CF Provider 仍以本地测试结果为准；CF Provider 未完成分叉合并。
 
