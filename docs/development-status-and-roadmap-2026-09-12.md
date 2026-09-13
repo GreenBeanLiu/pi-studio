@@ -9,6 +9,8 @@
 
 ### 2026-09-13 后续进展（优先于下文历史快照）
 
+- 最新 Runtime `22be76e` 已部署：修复循环停止后的缺失 tool result、旧记录重试兼容及同步工具后的误计数，新增 12 项隔离恢复回归，全量 **490 passed**。Windows 真实只读 smoke `task_2960495214ce4f50ab464a629e55c7bd` 通过；Mac 仍离线，真实故障矩阵待现场验收。详见 [恢复验收补充](native-tool-recovery-acceptance-2026-09-13.md)。后文 `54528e6` 属于上一版记录；实际失败阈值是两次相同失败后阻止第三次调用提议。
+
 - Runtime follow-up `54528e6` 已部署，新增持久化 native Agent 重复调用保护：相同成功调用第 4 次前停止，相同失败达到阈值停止，显式重试清理 guard；Runtime 全量 **478 passed**。恢复矩阵见 [Runtime recovery matrix](../../personal-agent-runtime/docs/native-tool-recovery-matrix-2026-09-13.md)。
 - 发布后 Mac smoke 正确在能力握手前失败，因为当前 Mac 设备离线，未创建 tool operation；在线 Windows 用旧能力面完成真实 `local.read` smoke，一次 v2 operation、一次续跑、任务完成、无 `native.loop_detected`。Windows 未声明 `local.list` schema v1，Runtime 正确排除而没有猜测或下发。
 
