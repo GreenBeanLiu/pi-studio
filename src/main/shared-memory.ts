@@ -483,6 +483,20 @@ let connection: SharedMemoryConnection | null = null
 let activeStore: SharedMemoryStore | null = null
 let startPromise: Promise<SharedMemoryConnection> | null = null
 
+/**
+ * 主进程给 agent 子进程开的本地服务不只是记忆库:凡是"agent 需要、但凭据不该进 agent 进程"
+ * 的东西,都从这里过 —— 同一个 127.0.0.1 端口、同一把每次启动随机生成的 token。
+ * 第一个租户是 web_search(2026-09-13):之前 Tavily 的 key 原样注进 pi 子进程,现在 key 留在
+ * 主进程,子进程只拿这把本地 token。
+ */
+export type LocalRouteHandler = (input: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
+const localRoutes = new Map<string, LocalRouteHandler>()
+
+/** 注册一条 `POST <pathname>` 的本地路由;body 是 JSON 对象,返回值原样作为 JSON 200 回去。 */
+export function registerLocalRoute(pathname: string, handler: LocalRouteHandler): void {
+  localRoutes.set(pathname, handler)
+}
+
 function json(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
   res.end(JSON.stringify(value))
@@ -518,6 +532,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
   if (!authorized(req)) {
     json(res, 401, { error: 'Unauthorized' })
+    return
+  }
+  const route = req.method === 'POST' ? localRoutes.get(url.pathname) : undefined
+  if (route) {
+    const controller = new AbortController()
+    req.once('close', () => controller.abort())
+    try {
+      json(res, 200, await route(await body(req), controller.signal))
+    } catch (error) {
+      json(res, 502, { error: error instanceof Error ? error.message : String(error) })
+    }
     return
   }
   const store = activeStore

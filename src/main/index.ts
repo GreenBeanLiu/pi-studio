@@ -20,6 +20,7 @@ import {
 import { cleanupStaleRunChangeTempDirs } from './run-change-set'
 import { syncBundledExtensions, syncBundledSkills } from './bundled-agent-resources'
 import { startSharedMemoryService, stopSharedMemoryService } from './shared-memory'
+import { registerWebSearchRelay } from './web-search-extension'
 import { sharedMemoryPath } from './workspace-memory'
 import { applyPendingDataRestore, createStartupDataBackup } from './local-data-backup'
 import { createQuitGuard, DEFAULT_QUIT_CLEANUP_TIMEOUT_MS } from './quit-cleanup'
@@ -276,6 +277,8 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
+  // web_search 的 Tavily 调用在主进程做,agent 子进程只拿本地 token —— 路由要在服务起来前就挂好
+  registerWebSearchRelay()
   void startSharedMemoryService(sharedMemoryPath(), (message, error) => {
     appendAppLog('warn', 'memory.snapshot', message, normalizeError(error))
   }).catch((error) => {

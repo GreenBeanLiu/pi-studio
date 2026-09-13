@@ -4,6 +4,7 @@ import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   SharedMemoryStore,
+  registerLocalRoute,
   sharedMemoryPaths,
   startSharedMemoryService,
   stopSharedMemoryService,
@@ -190,6 +191,32 @@ describe('shared memory service', () => {
       body: JSON.stringify({ query: 'x' }),
     })
     expect(unauthorized.status).toBe(401)
+  })
+
+  it('serves registered local routes behind the same token — the relay path for secrets that stay in main', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-studio-memory-'))
+    const paths = sharedMemoryPaths(join(dir, 'shared-memory.sqlite3'))
+    registerLocalRoute('/v1/echo-test', async (input) => ({ echoed: input.query }))
+    registerLocalRoute('/v1/boom-test', async () => {
+      throw new Error('upstream said no')
+    })
+    const connection = await startSharedMemoryService(paths.database)
+    const headers = { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }
+
+    const ok = await fetch(`${connection.url}/v1/echo-test`, { method: 'POST', headers, body: JSON.stringify({ query: 'hi' }) })
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ echoed: 'hi' })
+
+    const failed = await fetch(`${connection.url}/v1/boom-test`, { method: 'POST', headers, body: '{}' })
+    expect(failed.status).toBe(502)
+    expect(await failed.json()).toEqual({ error: 'upstream said no' })
+
+    // 没 token 连路由存在与否都不告诉你
+    const anonymous = await fetch(`${connection.url}/v1/echo-test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    expect(anonymous.status).toBe(401)
+    // GET 不进本地路由
+    const wrongMethod = await fetch(`${connection.url}/v1/echo-test`, { headers })
+    expect(wrongMethod.status).toBe(404)
   })
 
   it('removes the connection file when it stops', async () => {

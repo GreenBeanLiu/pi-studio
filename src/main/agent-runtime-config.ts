@@ -67,7 +67,7 @@ export async function prepareAgentRuntime(cwd?: string): Promise<AgentRuntimeCon
       // 降级读的是只读快照,不是 SQLite 库本体 —— 库只有 main 一个写者
       PI_STUDIO_MEMORY_FILE: sharedMemorySnapshotPath(),
       ...(cwd ? { PI_STUDIO_MEMORY_WORKSPACE_PATH: cwd } : {}),
-      ...(settings.tavilyApiKey ? { TAVILY_API_KEY: settings.tavilyApiKey } : {}),
+      // TAVILY_API_KEY 不再注入:web_search 经主进程的本地中继(shared-memory 的 registerLocalRoute)
       ...cloudEnv,
     },
     gatewayProfiles,

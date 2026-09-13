@@ -1,15 +1,55 @@
 import { dirname, join } from 'path'
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
-import { agentConfigDir } from './settings'
+import { agentConfigDir, loadSettings } from './settings'
+import { registerLocalRoute } from './shared-memory'
 
 /**
  * A pi extension registering a Tavily-backed `web_search` tool, written into
  * the app-private agent config dir before each workspace start. pi loads
  * extensions from <agentDir>/extensions/ via jiti (TS is fine), and the
  * `typebox` / pi package imports resolve through pi's own alias map.
- * The Tavily key reaches the subprocess via the TAVILY_API_KEY env var —
- * never written to disk.
+ *
+ * The Tavily key never reaches the subprocess. Until 2026-09-13 it was
+ * injected as TAVILY_API_KEY; now the extension posts the query to the
+ * main process's loopback service (PI_STUDIO_MEMORY_URL, authenticated by the
+ * per-launch PI_STUDIO_MEMORY_TOKEN) and the main process calls Tavily with
+ * the key it keeps in settings. Same principle as the image token: the agent
+ * process is the data plane and holds capabilities, not upstream secrets.
  */
+export const WEB_SEARCH_ROUTE = '/v1/web-search'
+
+type TavilyResult = { title: string; url: string; content: string }
+
+export async function searchTavily(
+  query: string,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+  apiKey = loadSettings().tavilyApiKey,
+): Promise<{ results: TavilyResult[] }> {
+  const q = query.trim()
+  if (!q) throw new Error('query is required')
+  if (!apiKey) throw new Error('Tavily key is not configured in pi-studio settings')
+  const response = await fetchImpl('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey, query: q, max_results: 5 }),
+    signal,
+  })
+  if (!response.ok) throw new Error(`Tavily error ${response.status}: ${(await response.text()).slice(0, 300)}`)
+  const json = (await response.json()) as { results?: Partial<TavilyResult>[] }
+  const results = (json.results ?? [])
+    .filter((r): r is TavilyResult => typeof r?.url === 'string')
+    .map((r) => ({ title: r.title ?? '', url: r.url, content: (r.content ?? '').slice(0, 400) }))
+  return { results }
+}
+
+/** 主进程启动时挂到本地服务上;key 只在这里被读。 */
+export function registerWebSearchRelay(): void {
+  registerLocalRoute(WEB_SEARCH_ROUTE, (input, signal) =>
+    searchTavily(typeof input.query === 'string' ? input.query : '', signal),
+  )
+}
+
 const EXTENSION_SOURCE = `import { Type } from 'typebox'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 
@@ -24,15 +64,17 @@ export default function webSearch(pi: ExtensionAPI) {
       query: Type.String({ description: 'Search query keywords' }),
     }),
     async execute(_toolCallId, params, signal) {
-      const apiKey = process.env.TAVILY_API_KEY
-      if (!apiKey) throw new Error('TAVILY_API_KEY not set - configure the Tavily key in pi-studio settings')
-      const response = await fetch('https://api.tavily.com/search', {
+      // 搜索经主进程中继:key 在主进程,这里只有每次启动随机的本地 token
+      const relay = process.env.PI_STUDIO_MEMORY_URL
+      const token = process.env.PI_STUDIO_MEMORY_TOKEN
+      if (!relay || !token) throw new Error('pi-studio local relay not available - web search needs the desktop app')
+      const response = await fetch(relay + '/v1/web-search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: apiKey, query: params.query, max_results: 5 }),
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ query: params.query }),
         signal,
       })
-      if (!response.ok) throw new Error('Tavily error ' + response.status + ': ' + (await response.text()))
+      if (!response.ok) throw new Error('web search failed ' + response.status + ': ' + (await response.text()).slice(0, 300))
       const json = (await response.json()) as { results?: { title: string; url: string; content: string }[] }
       const results = json.results ?? []
       const text =
