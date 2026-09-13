@@ -7,7 +7,7 @@ import { ensureCredential, routineSyncOrigin } from './routine-cloud-sync'
 import { appendAppLog, normalizeError } from './app-log'
 import { ModelCatalogCoordinator } from './model-catalog'
 import { NO_WORKSPACE_ERROR } from './pi-client'
-import { LocalFileToolError, LOCAL_FILE_MAX_BYTES, readLocalFile, writeLocalFile } from './local-file-tools'
+import { LocalFileToolError, LOCAL_FILE_MAX_BYTES, LOCAL_LIST_MAX_ENTRIES, listLocalDirectory, readLocalFile, writeLocalFile } from './local-file-tools'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import type {
   ImageGenHistoryItem,
@@ -90,6 +90,7 @@ async function executeShellTool(args: Record<string, unknown>): Promise<unknown>
 const LOCAL_TOOL_HANDLERS = {
   'shell.exec': executeShellTool,
   bash: executeShellTool,
+  'local.list': async (args) => listLocalDirectory(piClientManager.getWorkspacePath(), args),
   'local.read': async (args) => readLocalFile(piClientManager.getWorkspacePath(), args),
   'local.write': async (args) => writeLocalFile(piClientManager.getWorkspacePath(), args),
 } satisfies Record<string, LocalToolHandler>
@@ -106,6 +107,7 @@ const TOOL_GATEWAY_MANIFEST = {
   tools: [
     { name: 'shell.exec', scopeVersion: 2, requiresWorkspace: true },
     { name: 'bash', scopeVersion: 2, requiresWorkspace: true },
+    { name: 'local.list', scopeVersion: 1, requiresWorkspace: true, maxEntries: LOCAL_LIST_MAX_ENTRIES },
     { name: 'local.read', scopeVersion: 1, requiresWorkspace: true, maxBytes: LOCAL_FILE_MAX_BYTES },
     { name: 'local.write', scopeVersion: 1, requiresWorkspace: true, maxBytes: LOCAL_FILE_MAX_BYTES },
   ],
@@ -167,7 +169,7 @@ async function executeLocalToolOperation(msg: Record<string, unknown>): Promise<
     result = await handler(args)
   } catch (error) {
     if (error instanceof LocalFileToolError) return { error: error.message, code: error.code }
-    if (toolName === 'local.read' || toolName === 'local.write') {
+    if (toolName === 'local.list' || toolName === 'local.read' || toolName === 'local.write') {
       const code = (error as NodeJS.ErrnoException).code
       return { error: errMsg(error), code: code || 'LOCAL_FILE_ERROR' }
     }

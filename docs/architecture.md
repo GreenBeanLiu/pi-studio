@@ -131,7 +131,7 @@ cloud agent/runtime
   -> task 回到 pending 并重新入队，下一次 ExecutionRequest.metadata 带 resumed_tool_results
 ```
 
-当前桌面 gateway 实现 `shell.exec` / `bash` 和 `local.read` / `local.write`；
+当前桌面 gateway 实现 `shell.exec` / `bash`、`local.list`、`local.read` 和 `local.write`；
 v2 shell 操作使用 scope v2，必须声明与命令相符的 `shell_read`、
 `workspace_write`、`git_push`、`pull_request`、`production_deploy` 或
 `destructive_command`，
@@ -149,7 +149,8 @@ resume，这一层先把 source 判定、持久化暂停、领取、执行和 `t
 {"type":"executeToolOperation","operationId":"toolop-1","toolName":"local.write","arguments":{"workspace":"D:\\Works\\example","path":"note.txt","content":"hello"}}
 ```
 
-- 两个工具都要求 `arguments.workspace` 为桌面当前工作区的绝对路径，`path` 为工作区内相对文件路径。
+- 文件工具都要求 `arguments.workspace` 为桌面当前工作区的绝对路径；`path` 为工作区内相对路径。
+- `local.list` 只枚举一层目录，默认返回 100 项，最多 200 项，结果按名称稳定排序并标记 `file`、`directory`、`symlink` 或 `other`；不会跟随符号链接继续遍历。
 - `local.read` 返回 `{path, content, bytes, encoding: "utf-8"}`。
 - `local.write` 接收 `content`，返回 `{path, bytes, encoding: "utf-8"}`。默认独占创建；显式 `overwrite: true` 时先写临时文件再替换。父目录必须存在。
 - 仅处理不超过 64 KiB 的 UTF-8 文本；拒绝二进制、目录、符号链接、Windows junction、路径穿越和设备路径。大文件仍应走 artifact 通道。

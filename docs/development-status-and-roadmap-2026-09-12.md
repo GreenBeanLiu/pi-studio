@@ -11,7 +11,7 @@
 
 其他开发已经完成 Workspace Registry、Agent/Tool 双目标、Run 增量事件，以及 ToolOperation v2 核心契约。不能再把这些整体列为待开发，也不应重写一套平行实现。
 
-**下一阶段优先顺序：补齐真实设备矩阵 -> 手机等待态验收 -> 发布清单与回滚门禁 -> 再评估受控 Shell。**
+**下一阶段优先顺序：完成 `local.list` 的 Mac 真实闭环 -> 补齐真实设备矩阵和手机等待态验收 -> 发布清单与回滚门禁 -> 再评估受控 Shell。**
 
 本轮确认了三个直接影响现有流程的问题：
 
@@ -82,7 +82,7 @@ Runtime 本轮已提交并保留的文件包括：
 
 | 能力 | 当前落点与证据 | 不应过度解读为 |
 | --- | --- | --- |
-| 云端模型、本地文件工具 | Runtime `NativeToolExecutor` + Engine `dsh.tool_turn` + 桌面 `local.read/write`；保留 transcript 和原始 tool call ID | 任意桌面工具均可在 native 模式下使用 |
+| 云端模型、本地文件工具 | Runtime `NativeToolExecutor` + Engine `dsh.tool_turn` + 桌面 `local.list/read/write`；保留 transcript 和原始 tool call ID | 任意桌面工具均可在 native 模式下使用 |
 | Workspace Registry | Runtime `a572929`；桌面 `4306d51` 上报库存；手机 `b160798` 选择已注册工作区 | 云端 clone/worktree 已创建，或同仓库不同工作副本已经隔离 |
 | Agent / Tool 双目标 | Runtime `cb417cc`、手机 `3c98a4e`；兼容旧 `execution_target` | 旧字段已可删除，或跨端每条提交路径都经过真实验收 |
 | Run 增量事件 | Runtime `9c6d7b5`、手机 `3dcad8d`；稳定 task run_id、连续 seq、snapshot + cursor、旧事件回填 | Chat 与 Runtime 已共用完整会话历史；当前 task 重试仍复用 run_id |
@@ -105,6 +105,16 @@ Runtime 本轮已提交并保留的文件包括：
 - 桌面当前组合：**937 passed，5 skipped**；scope 规范化回归和 typecheck 通过；Windows 安装包已构建并启动。
 - 生产 smoke 已连接真实桌面和真实 API/Worker，创建并完成任务 `task_f7b9373388fc4eddaed3649149b2d020`；成本 `$0.001241232`，未发生第二次审批。
 - Engine/Backend/Mobile/CF Provider 仍以本地测试结果为准；CF Provider 未完成分叉合并。
+
+### 4.1.1 本轮新增：bounded `local.list`
+
+Runtime、桌面端和 ToolTransport v2 已增加只读目录枚举工具：
+
+- 只允许当前已绑定工作区及其相对目录，不递归，不跟随符号链接。
+- 默认最多返回 100 项，硬上限 200 项；结果稳定排序并返回条目类型和 `truncated`。
+- Runtime 对工具 schema、参数类型和范围做校验；非法 `limit` 不会创建网关操作。
+- 桌面能力清单报告 `local.list`、`scopeVersion` 和 `maxEntries`；Windows 本地回归已覆盖根目录、嵌套目录和符号链接拒绝。
+- 生产 Mac 真实 E2E 尚未执行：需要先让在线 Mac 安装包含该能力清单的桌面版本，再验证云端模型实际调用 `local.list` 并继续后续工具轮次。
 
 ### 4.2 P0：Registry 绑定与审批快照不一致
 

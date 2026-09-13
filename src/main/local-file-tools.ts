@@ -1,9 +1,10 @@
 /** 本地文本工具绑定调用时指定的工作区，避免桌面切换目录后把云端调用落到错误位置。 */
 import { randomUUID } from 'crypto'
-import { closeSync, fstatSync, linkSync, lstatSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { closeSync, fstatSync, linkSync, lstatSync, openSync, readSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 
 export const LOCAL_FILE_MAX_BYTES = 64 * 1024
+export const LOCAL_LIST_MAX_ENTRIES = 200
 
 export class LocalFileToolError extends Error {
   constructor(message: string, readonly code: string) {
@@ -15,7 +16,7 @@ function fail(message: string, code = 'INVALID_TOOL_ARGUMENTS'): never {
   throw new LocalFileToolError(message, code)
 }
 
-function fileTarget(workspace: string | null, args: Record<string, unknown>): string {
+function workspaceRoot(workspace: string | null, args: Record<string, unknown>): string {
   if (!workspace) fail('No workspace is open', 'NO_WORKSPACE')
   if (typeof args.workspace !== 'string' || !isAbsolute(args.workspace)) {
     fail('arguments.workspace must be an absolute workspace path')
@@ -24,16 +25,26 @@ function fileTarget(workspace: string | null, args: Record<string, unknown>): st
   if (relative(root, realpathSync(args.workspace)) !== '') {
     fail('The requested workspace is not the active workspace', 'WORKSPACE_MISMATCH')
   }
-  if (typeof args.path !== 'string' || !args.path || isAbsolute(args.path)) {
-    fail('arguments.path must be a nonempty relative file path')
-  }
-  const segments = args.path.split(/[\\/]/)
+  return root
+}
+
+function safeSegments(path: string): string[] {
+  const segments = path.split(/[\\/]/)
   // 同一份路径在 Windows / Mac 上含义一致；不接受设备名、ADS 或目录穿越。
   if (segments.some((part) => !part || part === '.' || part === '..' ||
     /[<>:"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part) ||
     /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) {
     fail('arguments.path contains an unsupported path component', 'INVALID_PATH')
   }
+  return segments
+}
+
+function fileTarget(workspace: string | null, args: Record<string, unknown>): string {
+  const root = workspaceRoot(workspace, args)
+  if (typeof args.path !== 'string' || !args.path || isAbsolute(args.path)) {
+    fail('arguments.path must be a nonempty relative file path')
+  }
+  const segments = safeSegments(args.path)
   const target = resolve(root, ...segments)
   if (relative(root, target).startsWith(`..${sep}`) || isAbsolute(relative(root, target))) {
     fail('File path must stay within the workspace', 'INVALID_PATH')
@@ -53,6 +64,33 @@ function fileTarget(workspace: string | null, args: Record<string, unknown>): st
     if (index === segments.length - 1 && !info.isFile()) fail('Path is not a regular file', 'INVALID_PATH')
   }
   return target
+}
+
+export function listLocalDirectory(workspace: string | null, args: Record<string, unknown>): unknown {
+  const root = workspaceRoot(workspace, args)
+  const path = args.path === undefined ? '.' : args.path
+  if (typeof path !== 'string' || !path || isAbsolute(path)) {
+    fail('arguments.path must be a relative directory path')
+  }
+  const limit = args.limit === undefined ? 100 : args.limit
+  if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > LOCAL_LIST_MAX_ENTRIES) {
+    fail(`arguments.limit must be an integer from 1 to ${LOCAL_LIST_MAX_ENTRIES}`)
+  }
+  const segments = path === '.' ? [] : safeSegments(path)
+  let target = root
+  for (const segment of segments) {
+    target = join(target, segment)
+    const info = lstatSync(target)
+    if (info.isSymbolicLink()) fail('Symbolic links are not supported by local file tools', 'INVALID_PATH')
+    if (!info.isDirectory()) fail('Path is not a directory', 'INVALID_PATH')
+  }
+  const allEntries = readdirSync(target, { withFileTypes: true })
+    .map((entry) => ({
+      name: entry.name,
+      type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : entry.isSymbolicLink() ? 'symlink' : 'other',
+    }))
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
+  return { path, entries: allEntries.slice(0, limit as number), truncated: allEntries.length > (limit as number) }
 }
 
 export function readLocalFile(workspace: string | null, args: Record<string, unknown>): unknown {

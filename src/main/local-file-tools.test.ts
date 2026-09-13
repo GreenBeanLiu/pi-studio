@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { LOCAL_FILE_MAX_BYTES, readLocalFile, writeLocalFile } from './local-file-tools'
+import { LOCAL_FILE_MAX_BYTES, listLocalDirectory, readLocalFile, writeLocalFile } from './local-file-tools'
 
 let workspace: string
 beforeEach(() => { workspace = mkdtempSync(join(tmpdir(), 'pi-local-files-')) })
@@ -10,6 +10,30 @@ afterEach(() => { rmSync(workspace, { recursive: true, force: true }) })
 const args = (path = 'note.txt') => ({ workspace, path })
 
 describe('workspace text tools', () => {
+  it('lists a bounded directory without reading entries or following directory links', () => {
+    writeFileSync(join(workspace, 'b.txt'), 'secret-b')
+    writeFileSync(join(workspace, 'a.txt'), 'secret-a')
+    mkdirSync(join(workspace, 'folder'))
+    symlinkSync(join(workspace, 'folder'), join(workspace, 'linked-folder'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    expect(listLocalDirectory(workspace, { ...args('.'), limit: 2 })).toEqual({
+      path: '.',
+      entries: [
+        { name: 'a.txt', type: 'file' },
+        { name: 'b.txt', type: 'file' },
+      ],
+      truncated: true,
+    })
+    expect(listLocalDirectory(workspace, { ...args('folder'), limit: 10 })).toEqual({
+      path: 'folder', entries: [], truncated: false,
+    })
+    expect(() => listLocalDirectory(workspace, { ...args('linked-folder'), limit: 10 })).toThrow('Symbolic links')
+  })
+
+  it.each([0, 201, 1.5, '10'])('rejects an invalid directory listing limit: %s', (limit) => {
+    expect(() => listLocalDirectory(workspace, { ...args('.'), limit })).toThrow('arguments.limit')
+  })
+
   it('round trips Unicode text and empty files, with byte counts', () => {
     const content = 'hello \u4e16\u754c\n'
     expect(writeLocalFile(workspace, { ...args(), content })).toMatchObject({ bytes: Buffer.byteLength(content) })

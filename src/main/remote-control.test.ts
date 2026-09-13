@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -336,6 +336,8 @@ describe('remote-control command protocol', () => {
     const base = { type: 'executeToolOperation', operationId: 'file-op' }
     const args = { workspace, path: 'test.txt' }
     try {
+      mkdirSync(join(workspace, 'folder'))
+      writeFileSync(join(workspace, 'alpha.txt'), 'not returned as content')
       ws.receive({ ...base, id: 'write', toolName: 'local.write', arguments: { ...args, content: 'hello' } })
       await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'write', data: { ok: true, result: { bytes: 5 } } }))
       ws.receive({ ...base, id: 'duplicate', toolName: 'local.write', arguments: { ...args, content: 'replaced' } })
@@ -344,6 +346,12 @@ describe('remote-control command protocol', () => {
       await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'read', data: { ok: true, result: { content: 'hello' } } }))
       ws.receive({ ...base, id: 'missing', toolName: 'local.read', arguments: { ...args, path: 'missing.txt' } })
       await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'missing', code: 'ENOENT' }))
+      ws.receive({ ...base, id: 'list', toolName: 'local.list', arguments: { workspace, path: '.', limit: 2 } })
+      await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({
+        id: 'list', data: { ok: true, result: {
+          path: '.', entries: [{ name: 'alpha.txt', type: 'file' }, { name: 'folder', type: 'directory' }], truncated: true,
+        } },
+      }))
     } finally {
       mocks.getWorkspacePath.mockReset()
       rmSync(workspace, { recursive: true, force: true })
@@ -572,7 +580,7 @@ describe('remote-control command protocol', () => {
         id: 50,
         data: {
           commands: [...SUPPORTED_COMMANDS], hostEvents: [...HOST_EVENT_CHANNELS],
-          localTools: ['shell.exec', 'bash', 'local.read', 'local.write'], localFileMaxBytes: 65536,
+          localTools: ['shell.exec', 'bash', 'local.list', 'local.read', 'local.write'], localFileMaxBytes: 65536,
           toolProtocol: LOCAL_TOOL_PROTOCOL,
           toolGateway: {
             manifestVersion: 1,
@@ -580,6 +588,7 @@ describe('remote-control command protocol', () => {
             tools: [
               { name: 'shell.exec', scopeVersion: 2, requiresWorkspace: true },
               { name: 'bash', scopeVersion: 2, requiresWorkspace: true },
+              { name: 'local.list', scopeVersion: 1, requiresWorkspace: true, maxEntries: 200 },
               { name: 'local.read', scopeVersion: 1, requiresWorkspace: true, maxBytes: 65536 },
               { name: 'local.write', scopeVersion: 1, requiresWorkspace: true, maxBytes: 65536 },
             ],
