@@ -148,6 +148,18 @@ export function createLlmSessionToken(
   return gatewayJson(relay, appKey, '/llm/session-token', { method: 'POST' })
 }
 
+/**
+ * 给 agent 子进程换一张只能出图的票。子进程不该拿 appKey 本身 —— 那把 key 在后端
+ * 是管理员(能改 provider 的 base_url、签 chat token、读日志),而 image_gen 扩展
+ * 只需要 POST /imagegen 和 /imagegen/reference。票一天作废,每次 spawn 都换新。
+ */
+export function createImageAgentToken(
+  relay: string,
+  appKey: string,
+): Promise<{ token: string; expires_at: number; scope: 'imagegen:agent' }> {
+  return gatewayJson(relay, appKey, '/imagegen/agent-token', { method: 'POST' })
+}
+
 export function listLlmProfiles(relay: string, appKey: string): Promise<LlmProviderProfile[]> {
   return gatewayJson(relay, appKey, '/llm/profiles')
 }

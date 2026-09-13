@@ -10,8 +10,10 @@ import type { AgentToolResult, ExtensionAPI, ExtensionContext } from '@earendil-
  * pi-studio 内置扩展:把桌面端的云端生图接到 agent 上,让「描述一下,给我做张表情包」
  * 在对话里一句话就能完成,不必去 Workflow 里串节点。
  *
- * 凭据来自 spawn 时注入的 PI_CLOUD_IMAGE_RELAY / PI_CLOUD_IMAGE_KEY
- * (见 src/main/agent-runtime-config.ts)。盘上那份 key 是 safeStorage 加密的,
+ * 凭据来自 spawn 时注入的 PI_CLOUD_IMAGE_RELAY / PI_STUDIO_IMAGE_TOKEN
+ * (见 src/main/agent-runtime-config.ts)。那是一张后端签的、只能出图和传参考图、
+ * 一天作废的票 —— 不是主密钥。2026-09-13 之前这里拿的是 PI_CLOUD_IMAGE_KEY,即后端的
+ * 管理员主密钥,能改 LLM 线路的 base_url;agent 进程不该有那把钥匙。
  * 这里只从进程环境读,不写任何明文文件。
  *
  * 工具结果里返回 ImageContent —— 模型能看见自己画出来的东西(可以据此自评再改),
@@ -110,19 +112,19 @@ const parameters = Type.Object({
 
 type Params = Static<typeof parameters>
 
-type CloudEnv = { relay: string; key: string }
+type CloudEnv = { relay: string; token: string }
 
 type ImageGenDetails = {
   urls: string[]
   referenceCount: number
 }
 
-/** 生图凭据只从进程环境读;主进程没注入就说明云端没配置。 */
+/** 生图凭据只从进程环境读;主进程没注入就说明云端没配置(或这次没换到票)。 */
 function readCloudEnv(): CloudEnv | null {
   const relay = (process.env.PI_CLOUD_IMAGE_RELAY ?? '').trim().replace(/\/+$/, '')
-  const key = (process.env.PI_CLOUD_IMAGE_KEY ?? '').trim()
-  if (!relay || !key) return null
-  return { relay, key }
+  const token = (process.env.PI_STUDIO_IMAGE_TOKEN ?? '').trim()
+  if (!relay || !token) return null
+  return { relay, token }
 }
 
 function cloudFetch(
@@ -133,7 +135,8 @@ function cloudFetch(
   signal: AbortSignal | undefined,
 ): Promise<Response> {
   const headers = new Headers(init.headers)
-  headers.set('X-API-Key', env.key)
+  // 票走 Authorization;X-API-Key 是主密钥的位置,后端不会在那里认票
+  headers.set('Authorization', `Bearer ${env.token}`)
   return fetch(`${env.relay}${path}`, {
     ...init,
     headers,

@@ -13,12 +13,17 @@ const packageJson = JSON.parse(
 // 扩展本身的行为由 tests/imagegen-extension.test.ts 真跑一遍;这里只钉住
 // 三处"跑不到但一坏就整个失效"的宿主接线。
 describe('image_gen host wiring', () => {
-  it('hands the cloud credentials to the agent process as env', () => {
+  it('hands the agent process a scoped image token as env, never the admin key', () => {
     // 盘上那份 key 是 safeStorage 加密的,不能为了让扩展能用就写明文出来
     expect(runtimeConfig).toContain('PI_CLOUD_IMAGE_RELAY: cloud.relay')
-    expect(runtimeConfig).toContain('PI_CLOUD_IMAGE_KEY: cloud.key')
-    // 云端没配置时不注入:空 key 打过去只换来 401,不如让扩展报"未配置"
-    expect(runtimeConfig).toContain('cloud.available')
+    expect(runtimeConfig).toContain('PI_STUDIO_IMAGE_TOKEN: catalog.imageToken')
+    // 2026-09-13 之前这里注入的是 cloud.key —— 后端的管理员主密钥(能改 LLM 线路的
+    // base_url、签 chat token、读日志)。agent 是数据面,只能拿一张出图票。
+    const code = runtimeConfig.replace(/^\s*\/\/.*$/gm, '')
+    expect(code).not.toContain('PI_CLOUD_IMAGE_KEY')
+    expect(code).not.toMatch(/cloud\.key/)
+    // 云端没配置、或这次没换到票时不注入:空票打过去只换来 401,不如让扩展报"未配置"
+    expect(runtimeConfig).toContain('cloud.available && catalog.imageToken')
   })
 
   it('syncs the bundled extension into the agent config dir on startup', () => {

@@ -79,13 +79,14 @@ function sseBody(text: string): ReadableStream<Uint8Array> {
   })
 }
 
-type Recorded = { url: string; apiKey: string | null; body?: Record<string, unknown> }
+type Recorded = { url: string; authorization: string | null; apiKey: string | null; body?: Record<string, unknown> }
 
 function stubCloud(sse: string): Recorded[] {
   const calls: Recorded[] = []
   globalThis.fetch = (async (url: string | URL | Request, init: RequestInit = {}) => {
     const href = String(url)
-    const call: Recorded = { url: href, apiKey: new Headers(init.headers).get('X-API-Key') }
+    const headers = new Headers(init.headers)
+    const call: Recorded = { url: href, authorization: headers.get('Authorization'), apiKey: headers.get('X-API-Key') }
     calls.push(call)
 
     if (href.endsWith('/imagegen/reference')) {
@@ -115,15 +116,15 @@ const originalFetch = globalThis.fetch
 
 describe('bundled image_gen extension', () => {
   beforeEach(() => {
-    // 相当于主进程 spawn 时注入的那两个变量;末尾斜杠是故意的
+    // 相当于主进程 spawn 时注入的那两个变量(票,不是主密钥);末尾斜杠是故意的
     process.env.PI_CLOUD_IMAGE_RELAY = 'https://relay.example/'
-    process.env.PI_CLOUD_IMAGE_KEY = 'test-key'
+    process.env.PI_STUDIO_IMAGE_TOKEN = 'test-token'
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
     delete process.env.PI_CLOUD_IMAGE_RELAY
-    delete process.env.PI_CLOUD_IMAGE_KEY
+    delete process.env.PI_STUDIO_IMAGE_TOKEN
   })
 
   it('loads through pi and registers image_gen with prompt required', async () => {
@@ -233,12 +234,14 @@ describe('bundled image_gen extension', () => {
     ])
   })
 
-  it('authenticates with the injected key and defaults to a square', async () => {
+  it('authenticates with the injected scoped token as a bearer, never as X-API-Key', async () => {
     const calls = stubCloud(RESULT_SSE)
     const tool = await loadImageGenTool()
     await tool.execute('call-1', { prompt: '猫' }, undefined, undefined, { cwd: PROJECT_ROOT })
 
-    expect(calls[0].apiKey).toBe('test-key')
+    // X-API-Key 是主密钥的位置;票放那儿后端不认,主密钥也不该出现在 agent 进程里
+    expect(calls[0].authorization).toBe('Bearer test-token')
+    expect(calls[0].apiKey).toBeNull()
     expect(calls[0].body).toMatchObject({ prompt: '猫', size: '1024x1024' })
     expect(calls[0].body?.batchId).toEqual(expect.any(String))
     // 参考图为空时不能把 referenceUrls 塞进去
@@ -255,7 +258,7 @@ describe('bundled image_gen extension', () => {
   })
 
   it('refuses to call the relay when the desktop never injected credentials', async () => {
-    delete process.env.PI_CLOUD_IMAGE_KEY
+    delete process.env.PI_STUDIO_IMAGE_TOKEN
     const calls = stubCloud(RESULT_SSE)
     const tool = await loadImageGenTool()
 
@@ -285,14 +288,14 @@ describe('pasted image bridge', () => {
   beforeEach(() => {
     rmSync(PASTED_DIR, { recursive: true, force: true })
     process.env.PI_CLOUD_IMAGE_RELAY = 'https://relay.example/'
-    process.env.PI_CLOUD_IMAGE_KEY = 'test-key'
+    process.env.PI_STUDIO_IMAGE_TOKEN = 'test-token'
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
     rmSync(PASTED_DIR, { recursive: true, force: true })
     delete process.env.PI_CLOUD_IMAGE_RELAY
-    delete process.env.PI_CLOUD_IMAGE_KEY
+    delete process.env.PI_STUDIO_IMAGE_TOKEN
   })
 
   it('stays out of the way when the turn has no images', async () => {

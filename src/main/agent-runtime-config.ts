@@ -48,10 +48,13 @@ export async function prepareAgentRuntime(cwd?: string): Promise<AgentRuntimeCon
     (await startSharedMemoryService(sharedMemoryPath(), (message, error) => {
       appendAppLog('warn', 'memory.snapshot', message, normalizeError(error))
     }))
+  // 子进程只拿一张出图票,不拿 cloud.key —— 那是后端的管理员主密钥(能改 LLM 线路的
+  // base_url),留在主进程。票换不到就不注入 relay:空票打过去只换来 401,不如让扩展报未配置。
   const cloud = getCloudConnection()
-  const cloudEnv: Record<string, string> = cloud.available
-    ? { PI_CLOUD_IMAGE_RELAY: cloud.relay, PI_CLOUD_IMAGE_KEY: cloud.key }
-    : {}
+  const cloudEnv: Record<string, string> =
+    cloud.available && catalog.imageToken
+      ? { PI_CLOUD_IMAGE_RELAY: cloud.relay, PI_STUDIO_IMAGE_TOKEN: catalog.imageToken }
+      : {}
 
   return {
     provider: selectedRoute.provider,

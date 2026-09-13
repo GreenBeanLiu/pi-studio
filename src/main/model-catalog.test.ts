@@ -72,6 +72,11 @@ function dependencies(
       expires_at: 4_000_000_000,
       scope: 'llm:chat' as const,
     })),
+    createImageAgentToken: vi.fn(async () => ({
+      token: 'image-token',
+      expires_at: 4_000_000_000,
+      scope: 'imagegen:agent' as const,
+    })),
     listProfiles: vi.fn(async () => [profile]),
     createProfile: vi.fn(async (_relay, _key, value: LlmProfileWrite) => ({
       ...profile,
@@ -144,6 +149,7 @@ describe('model catalog coordination', () => {
 
     expect(runtime.profiles).toEqual([profile])
     expect(runtime.chatToken).toBe('chat-token')
+    expect(runtime.imageToken).toBe('image-token')
     expect(deps.projectModels).toHaveBeenCalledOnce()
   })
 
@@ -229,6 +235,7 @@ describe('model catalog coordination', () => {
     await expect(catalog.prepareRuntime()).resolves.toEqual({
       profiles: [],
       chatToken: '',
+      imageToken: 'image-token',
       warning: 'token unavailable',
     })
     expect(deps.projectModels).toHaveBeenLastCalledWith(
@@ -248,7 +255,24 @@ describe('model catalog coordination', () => {
     await expect(catalog.prepareRuntime()).resolves.toEqual({
       profiles: [profile],
       chatToken: 'chat-token',
+      imageToken: 'image-token',
       warning: 'catalog offline',
+    })
+  })
+
+  it('keeps chat working when only the image token cannot be minted, and says so', async () => {
+    const deps = dependencies({
+      createImageAgentToken: vi.fn(async () => {
+        throw new Error('imagegen down')
+      }),
+    })
+    const catalog = new ModelCatalogCoordinator(deps)
+
+    await expect(catalog.prepareRuntime()).resolves.toEqual({
+      profiles: [profile],
+      chatToken: 'chat-token',
+      imageToken: '',
+      warning: 'image agent token: imagegen down',
     })
     expect(deps.projectModels).toHaveBeenCalledWith(
       expect.objectContaining({ gatewayProfiles: [profile] }),

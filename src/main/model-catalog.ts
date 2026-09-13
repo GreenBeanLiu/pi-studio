@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import {
   createLlmProfile,
+  createImageAgentToken,
   createLlmSessionToken,
   deleteLlmProfile,
   fetchLlmCatalog,
@@ -32,6 +33,7 @@ export type ModelCatalogDependencies = {
   getConnection: () => CloudConnection
   fetchCatalog: (relay: string, appKey: string) => Promise<LlmCatalog>
   createSessionToken: typeof createLlmSessionToken
+  createImageAgentToken: typeof createImageAgentToken
   listProfiles: typeof listLlmProfiles
   createProfile: typeof createLlmProfile
   updateProfile: typeof updateLlmProfile
@@ -52,6 +54,8 @@ export type ModelCatalogSync = {
 
 export type ModelCatalogRuntime = ModelCatalogSync & {
   chatToken: string
+  /** 出图票(scope imagegen:agent);换不到就是空串,image_gen 扩展会报未配置。 */
+  imageToken: string
 }
 
 function errorMessage(error: unknown): string {
@@ -137,6 +141,7 @@ export function defaultModelCatalogDependencies(): ModelCatalogDependencies {
     getConnection: getCloudConnection,
     fetchCatalog: fetchLlmCatalog,
     createSessionToken: createLlmSessionToken,
+    createImageAgentToken,
     listProfiles: listLlmProfiles,
     createProfile: createLlmProfile,
     updateProfile: updateLlmProfile,
@@ -231,11 +236,12 @@ export class ModelCatalogCoordinator {
     const connection = this.dependencies.getConnection()
     if (!connection.available) {
       this.project(connection, [])
-      return { profiles: [], chatToken: '' }
+      return { profiles: [], chatToken: '', imageToken: '' }
     }
-    const [catalogResult, sessionResult] = await Promise.allSettled([
+    const [catalogResult, sessionResult, imageResult] = await Promise.allSettled([
       this.loadAndProject(connection),
       this.dependencies.createSessionToken(connection.relay, connection.key),
+      this.dependencies.createImageAgentToken(connection.relay, connection.key),
     ])
     const warnings: string[] = []
     const profiles =
@@ -245,9 +251,13 @@ export class ModelCatalogCoordinator {
     if (catalogResult.status === 'rejected') warnings.push(errorMessage(catalogResult.reason))
     if (sessionResult.status === 'rejected') warnings.push(errorMessage(sessionResult.reason))
     if (sessionResult.status === 'rejected') this.project(connection, [])
+    // 出图票换不到不拦聊天:image_gen 那一个工具报未配置,其余照常。但要留下痕迹,
+    // 不然"生图突然不能用了"查不到源头。
+    if (imageResult.status === 'rejected') warnings.push(`image agent token: ${errorMessage(imageResult.reason)}`)
     return {
       profiles: sessionResult.status === 'fulfilled' ? profiles : [],
       chatToken: sessionResult.status === 'fulfilled' ? sessionResult.value.token : '',
+      imageToken: imageResult.status === 'fulfilled' ? imageResult.value.token : '',
       ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
     }
   }
