@@ -111,7 +111,7 @@ flowchart LR
 | `personal-agent-engine` | `cloud-agent-runtime` | `cloud` | 云端 agent loop / provider / 云端工具 |
 | `pi-studio:<device>` | `local-tool-runtime` | `gateway` | 通过 remote relay 进入用户设备，访问本地文件、shell、桌面 IPC、本地 MCP |
 
-当前阶段 `pi-studio` 桌面仍然跑完整 Pi agent loop；这个 contract 先把它投影成“本地 tool runtime/gateway”。下一阶段如果把 provider 和 agent loop 搬到云端，`pi-studio:<device>` 这条目标可以收窄为纯本地 tool executor，控制面协议不用换。
+当前 `native-tools` 模式下，云端 `personal-agent-runtime` 已经运行 Agent loop 和 Provider 调用；`pi-studio:<device>` 负责本地 tool gateway。桌面仍保留独立的 `desktop-agent` 模式，用于本地 Pi agent session，这两条执行链路不能混为一谈。
 
 `personal-agent-runtime` 的 dispatch 已经开始消费这个 contract：带 workspace、
 `local_files_required=true` 或 `local-files` label 的任务会要求
@@ -136,9 +136,10 @@ v2 shell 操作使用 scope v2，必须声明与命令相符的 `shell_read`、
 `workspace_write`、`git_push`、`pull_request`、`production_deploy` 或
 `destructive_command`，
 桌面在调用 Pi 前再次校验。无法证明只读的命令按 `destructive_command` 处理。
-desktop IPC 和本地 MCP 会复用同一个 operation envelope 继续加。agent loop 还没有
-把模型 tool call 自动拆成 server/client/gateway 三类并接 provider-native session
-resume，这一层先把 source 判定、持久化暂停、领取、执行和 `tool_result` 回灌立住。
+desktop IPC 和本地 MCP 会复用同一个 operation envelope 继续加。模型 tool call 的
+server/client/gateway 分流、持久化暂停、领取、执行和 `tool_result` 回灌已经由
+Runtime 的 NativeToolExecutor、ToolTransport 和 Worker 组成闭环；后续重点是把
+Runtime、Desktop、Mobile 的 envelope 收敛为单一版本化契约。
 
 ### 本地文件工具 v1
 
@@ -290,4 +291,4 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - 中转广播给**所有** controller，多设备同时连会各自收到全量事件流
 - 会话状态仍然只存在 agent 子进程和本地 jsonl 里。中转的 backlog 只兜住重连那一小段，
   不是会话存储 —— 桌面不在线时手机依然什么都做不了
-- control plane 已能声明并消费 runtime 角色/能力，并有 durable async tool operation 队列；当前接了桌面 shell 和文本文件读写 gateway，还没有把模型 tool call 自动拆成 `server/client/gateway` 三类并接 provider-native session resume，桌面 Pi 进程仍是完整 agent loop。
+- control plane 已能声明并消费 runtime 角色/能力，并有 durable async tool operation 队列；`native-tools` 已接入云端 Agent loop、Provider transcript/resume 和桌面 shell、文本文件读写 gateway。桌面 Pi 进程仍作为独立的 `desktop-agent` 模式保留。当前主要缺口是跨仓库 ToolOperation 契约重复、目标解析重复，以及远程控制模块内部职责过宽。

@@ -1,0 +1,214 @@
+# 架构解耦审查与后续切片
+
+> 审查时间：2026-09-13
+>
+> 范围：`pi-studio`、`pi-studio-mobile`、`pi-studio-backend`、`personal-agent-runtime`、`personal-agent-engine`、`pi-cf-agent-provider`。
+
+## 1. 结论
+
+当前架构方向是成立的，问题不在于仓库太多，而在于同一份业务语义在多个仓库各自实现了一部分：
+
+- Runtime、桌面端、手机端都理解 `ToolOperation`，但没有唯一的契约来源。
+- 手机端生成一套目标字段，Runtime 又重新解析和校验一套目标字段。
+- Backend 既是设备身份/中转边界，又是 Runtime 的外部入口，导致 Runtime 依赖 Backend 的 token 和 WebSocket 细节。
+- 桌面端的 `remote-control.ts` 和 Runtime 的 `TaskStore` 都承担了过多不同职责。
+
+因此下一阶段应优先做**契约和职责收敛**，而不是继续拆成更多服务。目标是让每个变化只需要修改一个权威模块，再由适配器承担跨端差异。
+
+## 2. 当前职责归属
+
+| 模块 | 应该拥有的事实和行为 | 不应该拥有的职责 |
+| --- | --- | --- |
+| `pi-studio-mobile` | 用户意图、目标选择 UI、任务和事件投影 | 最终目标解析、工具状态机、设备执行细节 |
+| `pi-studio-backend` | 安装认证、配对、设备在线状态、Relay、媒体/工作流入口 | Harness 任务状态、Agent loop、工具参数解释 |
+| `personal-agent-runtime` | 任务状态、审批、workspace identity、目标解析、ToolOperation、Agent loop、运行事件 | 本机文件和 Shell 执行、Provider HTTP 细节 |
+| `personal-agent-engine` | 无状态的模型调用桥接、provider transcript/tool result 透传 | Durable task、设备路由、本地工具执行 |
+| `pi-cf-agent-provider` | Provider 请求/响应适配、模型别名和上游路由 | Agent loop、权限、设备和工作区 |
+| `pi-studio` 桌面端 | 本地 Agent session、本地工具执行、桌面 IPC、设备能力声明 | 云端任务状态和模型决策 |
+
+这份归属应作为后续设计的判断标准。特别是：Backend 是边界和中转，不应成为第二个 Agent control plane；Engine 是 Provider adapter，不应吸收 ToolTransport。
+
+## 3. 真实调用链
+
+### 3.1 Native tools
+
+```text
+Mobile
+  -> Backend /harness edge
+  -> personal-agent-runtime
+  -> NativeToolExecutor
+  -> personal-agent-engine / Provider
+  -> ToolTransport / ToolOperationWorker
+  -> PiStudioRemoteExecutor
+  -> Backend internal device token + Relay WebSocket
+  -> pi-studio remote-control / local tool gateway
+  -> tool_result
+  -> Runtime resume agent loop
+```
+
+现在云端已经运行 Agent loop 和 Provider 调用；桌面端负责的是本地执行，不再是“未来才会迁移的完整云端 loop”。桌面仍保留 `desktop-agent` 模式，这是另一条明确的本地 Agent session 链路，不应与 `native-tools` 混为一谈。
+
+### 3.2 Relay 和任务状态
+
+Backend 的 Relay 可以转发设备命令和事件，但不应复制 Runtime 的任务状态。Harness 任务、审批、工具操作和运行事件的权威来源是 Runtime；设备连接、配对和 controller 房间的权威来源是 Backend。
+
+## 4. 主要耦合点
+
+### P0：ToolOperation 契约重复
+
+同一概念目前分布在：
+
+- Runtime：`personal_harness/tool_transport.py`、`executors/pi_studio.py`、`NativeToolExecutor`
+- Desktop：`src/main/remote-control.ts` 的本地工具 schema、执行和结果转换
+- Mobile：`src/harness.ts` 的 `HarnessToolOperation`、状态和 payload 转换
+
+这已经造成了真实的漂移风险：能力声明、错误码、scope、`source`、恢复结果和状态值只要有一端漏改，就会出现“任务创建成功但设备不能执行”或“执行完成但 Runtime 无法恢复”。
+
+**解耦方向：**建立一个版本化的 `Tool Gateway Contract v1`，至少覆盖：
+
+- `ToolCapabilities`
+- `ToolOperationRequest`
+- `ToolOperationResult`
+- `ToolScope` 和权限错误码
+- `source`、`deadline`、幂等键和 resume envelope
+
+第一步只建立 JSON Schema、跨仓库 fixture 和兼容性测试，不立刻重写三端实现。Runtime、Desktop、Mobile 都保留适配器，但不能再各自发明字段。
+
+### P0：目标解析重复
+
+Mobile 的 `harness-target.ts` 生成 `executionTarget`、`agentTarget`、`toolTarget`、`executionMode`；Runtime 的 `routing.py`、`runtime_targets.py` 和 Provider API 又重新解析这些字段。现在的兼容镜像可以保留一段时间，但权威性必须收回 Runtime。
+
+**解耦方向：**手机只提交用户意图：目标偏好、`workspace_id`、工具要求和风险确认。Runtime 负责 canonical resolution，并把解析后的 target 和 capabilities 写入 checkpoint/event。手机只展示结果，不再根据本地字段推断最终状态。
+
+### P1：桌面 `remote-control.ts` 过宽
+
+当前模块同时承担连接重试、心跳、命令分发、工具执行、routine/image/video host 和事件广播。它已经有注入式 host 类型，这是好的依赖反转基础，但内部职责仍然过密。
+
+**解耦方向：**保留 `RemoteControlManager` 作为外部 facade，内部拆成四个模块：
+
+1. `remote-transport`：WebSocket、认证、重连、心跳。
+2. `remote-command-dispatch`：命令路由和响应 envelope。
+3. `tool-gateway`：能力声明、scope 校验、本地工具执行。
+4. `host-projections`：routine、media、review 等桌面宿主能力。
+
+这应是同一进程内的模块拆分，不是新增网络服务。
+
+### P1：Runtime `TaskStore` 过宽
+
+`store.py` 同时覆盖 task、execution、tool operation、native session、workspace、approval、notification 和 queue。集中事务本身没有问题，但调用者已经被迫依赖一个大接口，导致任何表结构变化都可能波及多个领域。
+
+**解耦方向：**先不拆数据库，增加面向领域的 repository facade：
+
+- `ToolOperationRepository`
+- `NativeSessionRepository`
+- `WorkspaceRepository`
+- `TaskRepository`
+
+它们共享同一个 connection/transaction context。优先迁移 ToolOperation 和 NativeSession，因为它们正处于当前闭环的高频变化区。
+
+### P1：Workspace identity 和本机路径混用
+
+Runtime 的 `workspace_id` 是跨设备稳定身份，桌面上报的是本机绝对路径，Backend 的 workflow 又有自己的 `workspace_path`。这些值不能继续使用相似命名。
+
+**解耦方向：**明确区分：
+
+- `workspace_ref` / `workspace_id`：Runtime 管理的稳定身份。
+- `executor_binding`：某台设备上的绑定。
+- `local_path`：只在 Desktop tool gateway 内部使用的本机路径。
+- `workflow_workspace_path`：媒体/工作流域的路径字段，如仍需要则保持独立命名。
+
+### P2：双云平面的部署耦合
+
+Runtime 通过 Backend 获取 controller token 并连接 Relay，说明两者之间已有稳定依赖，但目前依赖的是 Backend 的内部 URL、token 和 WebSocket 细节，而不是一个独立的 Device Gateway Contract。
+
+**解耦方向：**Backend 继续负责身份和 Relay，Runtime 继续负责任务和调度；双方之间增加版本化的内部 Device Gateway Contract 与能力握手。不要把任务表或 Agent loop 复制到 Backend。
+
+## 5. 状态和事件的权威性
+
+后续代码和 UI 需要遵守以下规则：
+
+| 状态 | 权威来源 | 其他端的角色 |
+| --- | --- | --- |
+| Harness task / approval / tool operation | Runtime | Mobile 展示，Desktop 执行 |
+| Agent run / checkpoint / tool result | Runtime | Mobile 增量投影 |
+| 设备在线、配对、controller 房间 | Backend | Runtime 和 Mobile 查询/订阅 |
+| 本地 Pi session 和本地进程生命周期 | Desktop | Mobile 通过 relay 观察 |
+| 例程、图片、视频工作流 | Backend/对应宿主 | Harness 不吸收其状态机 |
+
+Mobile 不应从多个事件拼出第二套状态机；Desktop 也不应把本地 session 状态写回成 Harness task 状态。
+
+## 6. 建议的目标形态
+
+```text
+Mobile: intent + projection
+        |
+        v
+Edge/API: auth + route + relay
+        |
+        +--> Runtime control plane
+        |      task / approval / workspace / events
+        |      agent loop / provider adapter
+        |      tool operation scheduler
+        |              |
+        |              v
+        |        Device Gateway Contract
+        |              |
+        |              v
+        +--------> Backend Relay --------> Desktop Tool Gateway
+                                           local files / shell / IPC / MCP
+```
+
+工作流和媒体继续作为独立域存在，通过明确 API 被调用，不并入 ToolTransport。
+
+## 7. 落地顺序
+
+### Slice A：契约固化，低风险
+
+- 在 `pi-studio/docs` 记录 `Tool Gateway Contract v1` 的字段和状态表。
+- 从当前 Runtime/Desktop/Mobile payload 提取 fixture。
+- 增加三端兼容性测试，先保证现有生产 payload 不变。
+- 增加版本和未知字段策略：读取端允许向后兼容，写入端只发送声明过的字段。
+
+验收：同一组 request/result fixture 能被 Python、TypeScript Desktop、TypeScript Mobile 解析；现有真实 smoke 不改变。
+
+### Slice B：桌面工具执行模块化
+
+- 从 `remote-control.ts` 提取 `tool-gateway`。
+- 保持 `RemoteControlManager` 的公开命令和事件不变。
+- 将 scope 校验和本地文件/Shell handler 的测试迁移到新模块。
+
+验收：桌面全量 verify、真实 `local.read` smoke、拒绝越界路径和重复创建回归均通过。
+
+### Slice C：Runtime repository facade
+
+- 先抽 `ToolOperationRepository`，再抽 `NativeSessionRepository`。
+- 保持单库和现有事务语义不变。
+- Worker 和 NativeToolExecutor 不再直接依赖整块 `TaskStore`。
+
+验收：Runtime 全量测试、断线恢复、取消、过期和显式 retry 矩阵不变。
+
+### Slice D：Runtime 成为唯一目标解析者
+
+- Mobile 保留显示和兼容字段，但新增 canonical intent 字段。
+- Runtime 返回解析后的 target、capabilities 和拒绝原因。
+- 经过一个兼容周期后删除 Mobile 的兼容镜像生成逻辑。
+
+验收：同一个意图在 Web、Mobile、脚本入口得到相同 target resolution。
+
+### Slice E：工作区命名清理
+
+- 明确 `workspace_id`、`executor_binding`、`local_path` 的边界。
+- 增加跨设备同仓库不同路径的契约测试。
+- 禁止 Mobile 或 Backend 将本机绝对路径当作跨设备 workspace identity。
+
+## 8. 明确不做的事情
+
+- 不新增一个“总 Agent 服务”来包住现有 Runtime。
+- 不把 Agent loop、ToolTransport 或任务表搬进 Backend。
+- 不把本地工具执行搬进 Engine 或 Provider adapter。
+- 不把 routine/media 状态机并入 ToolOperation。
+- 不在没有 repository seam 和回归矩阵前拆数据库或改成事件溯源。
+
+## 9. 本次审查后的下一步
+
+Slice A 已开始：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录。Slice B 的桌面内部提取已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。下一步是在 Runtime、Desktop、Mobile 各自加入 fixture 解析/兼容测试，再进入 Runtime repository facade。

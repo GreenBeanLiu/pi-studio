@@ -1,0 +1,24 @@
+{
+  "contract_version": 1,
+  "protocol_version": 2,
+  "operation_id": "toolop-example-001",
+  "task_id": "task-example-001",
+  "subtask_id": "subtask-example-001",
+  "call_id": "call-example-001",
+  "source": "gateway",
+  "target_id": "pi-studio:mac-001",
+  "tool_name": "local.read",
+  "arguments": {
+    "workspace": "/Users/example/Works/demo",
+    "path": "README.md"
+  },
+  "idempotency_key": "idem-example-001",
+  "scope": {
+    "workspace": "/Users/example/Works/demo",
+    "permissions": ["local.read"]
+  },
+  "deadline_at": "2026-09-13T01:00:00+00:00",
+  "audit": {
+    "approved_capabilities": []
+  }
+}
