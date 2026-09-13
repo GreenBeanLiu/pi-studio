@@ -172,6 +172,13 @@ GitHub 的 SSH / HTTPS remote 都归一化成 `owner/repo`；其他 Git 主机�
 repository 在不同电脑上的路径合并为一个稳定 `workspace_id` 和多条 executor binding。
 Relay 仍然只做不透明转发，不拥有 Workspace Registry。
 
+Runtime 的 `workspace_resolution.resolve_task_workspace` 统一任务入口和执行前的工作区解析：
+入口按 `workspace_id` 校验注册记录与 repository；路由选定 executor 后，才从对应 binding
+读取 `local_path`，填入兼容字段 `task.workspace` 和 `metadata.tool_transport.workspace`。
+服务器不按自身操作系统规范化设备路径。已绑定任务遇到注册路径变化时拒绝执行，避免等待或审批后
+静默切换目录；无 `workspace_id` 的旧路径型任务保留兼容行为。详见
+[工作区解析收敛记录](workspace-resolution-2026-09-14.md)。
+
 ---
 
 ## 3. 手机遥控链路（本次新增的部分）

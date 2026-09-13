@@ -7,6 +7,10 @@
 
 ## 1. 结论
 
+### 2026-09-14 后续进展
+
+- Runtime 工作区解析已集中到 `workspace_resolution.resolve_task_workspace`：API 校验身份，路由选定设备后解析本地路径；补齐非 HTTP 入口的 repository 冲突检查。Runtime 全量 **505 passed**。兼容字段和数据库结构不变，真实设备回归与生产部署另行记录。详见 [工作区解析收敛记录](workspace-resolution-2026-09-14.md)。
+
 ### 2026-09-13 后续进展（优先于下文历史快照）
 
 - 架构解耦审查已完成：当前主问题不是继续拆服务，而是收敛 ToolOperation 契约、目标解析、workspace identity 和状态权威性。下一切片从跨仓库 Tool Gateway Contract fixture/兼容测试开始，再提取桌面 `tool-gateway` 内部模块。详见 [架构解耦审查](architecture-decoupling-review-2026-09-13.md)。
