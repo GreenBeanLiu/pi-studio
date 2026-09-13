@@ -11,6 +11,7 @@
 
 - 架构解耦审查已完成：当前主问题不是继续拆服务，而是收敛 ToolOperation 契约、目标解析、workspace identity 和状态权威性。下一切片从跨仓库 Tool Gateway Contract fixture/兼容测试开始，再提取桌面 `tool-gateway` 内部模块。详见 [架构解耦审查](architecture-decoupling-review-2026-09-13.md)。
 - 解耦 Slice A 已形成 Tool Gateway Contract v1 草案和 v2 request/result fixture；Slice B 已将桌面本地工具执行从 `remote-control.ts` 提取到 `src/main/tool-gateway.ts`，保持公开 Relay 命令不变。桌面回归 **953 passed，5 skipped**，类型检查、lint 和 build 通过。
+- 跨端契约兼容测试已补齐：Runtime 校验 v2 operation 的 scope/deadline/idempotency/resume 字段，Desktop 消费 canonical snake_case fixture，Mobile 保留完整 operation 元数据。当前回归为 Desktop **954 passed，5 skipped**、Mobile **214 passed**、Runtime **490 passed**。下一刀进入 Runtime 的 `ToolOperationRepository` facade。
 
 - 最新 Runtime `22be76e` 已部署：修复循环停止后的缺失 tool result、旧记录重试兼容及同步工具后的误计数，新增 12 项隔离恢复回归，全量 **490 passed**。Windows 真实只读 smoke `task_2960495214ce4f50ab464a629e55c7bd` 通过；Mac 仍离线，真实故障矩阵待现场验收。详见 [恢复验收补充](native-tool-recovery-acceptance-2026-09-13.md)。后文 `54528e6` 属于上一版记录；实际失败阈值是两次相同失败后阻止第三次调用提议。
 

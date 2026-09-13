@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -55,6 +55,7 @@ vi.mock('./model-catalog', () => ({
 }))
 
 import { HOST_EVENT_CHANNELS, LOCAL_TOOL_PROTOCOL, SUPPORTED_COMMANDS, remoteControl } from './remote-control'
+import { executeLocalToolOperation } from './tool-gateway'
 
 type Listener = (event: { data?: string; code?: number; reason?: string }) => void
 
@@ -281,6 +282,29 @@ describe('remote-control command protocol', () => {
       scope: { workspace: '/other', permissions: ['local.read'] },
     })
     await vi.waitFor(() => expect(ws.lastSent()).toMatchObject({ id: 'scope', code: 'SCOPE_MISMATCH' }))
+  })
+
+  it('accepts the canonical snake_case v2 request fixture at the tool gateway boundary', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'pi-contract-fixture-'))
+    mocks.getWorkspacePath.mockReturnValue(workspace)
+    writeFileSync(join(workspace, 'README.md'), '# Demo\n')
+    const fixture = JSON.parse(readFileSync(join(process.cwd(), 'docs/contracts/fixtures/tool-operation-v2-request.json'), 'utf8')) as Record<string, unknown>
+    const args = fixture.arguments as Record<string, unknown>
+    const scope = fixture.scope as Record<string, unknown>
+    args.workspace = workspace
+    scope.workspace = workspace
+    fixture.deadline_at = '2099-01-01T00:00:00Z'
+
+    try {
+      await expect(executeLocalToolOperation(fixture)).resolves.toMatchObject({
+        operationId: 'toolop-example-001',
+        ok: true,
+        result: { content: '# Demo\n', encoding: 'utf-8' },
+      })
+    } finally {
+      mocks.getWorkspacePath.mockReset()
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 
   it('accepts equivalent Windows workspace spellings in v2 scope', async () => {
