@@ -211,4 +211,4 @@ Edge/API: auth + route + relay
 
 ## 9. 本次审查后的下一步
 
-Slice A 已完成第一轮：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录；Runtime、Desktop、Mobile 已分别加入 v2 字段兼容测试。Slice B 的桌面内部提取也已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。Runtime 的 `ToolOperationRepository` facade 也已接入 API、ToolTransport 和 Worker；下一步抽取 NativeSession，同时保留 task、session、operation 写入所需的原子事务。
+Slice A 已完成第一轮：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录；Runtime、Desktop、Mobile 已分别加入 v2 字段兼容测试。Slice B 的桌面内部提取也已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。Runtime 的 `ToolOperationRepository` 和 `NativeSessionRepository` 已接入 API、ToolTransport、Worker、NativeToolExecutor 和 Orchestrator；下一步应观察真实断线恢复证据，再决定是否继续拆 SQL 或进入 workspace identity 清理。
