@@ -93,7 +93,7 @@ describe('LLM gateway model registration', () => {
         name: 'DeepSeek V4 Flash',
         reasoning: true,
         input: ['text'],
-        cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+        cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
         contextWindow: 1_000_000,
         maxTokens: 384_000,
         thinkingLevelMap: {

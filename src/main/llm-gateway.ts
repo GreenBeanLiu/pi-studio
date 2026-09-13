@@ -59,10 +59,13 @@ function buildGatewayModel(profile: LlmProviderProfile, id: string): PiCustomMod
       name: isPro ? 'DeepSeek V4 Pro' : 'DeepSeek V4 Flash',
       reasoning: true,
       input: ['text'],
+      // 官网 2026-09-13(CNY / 1M tokens,峰时):flash 未命中 ¥2 / 输出 ¥8 / 命中 ¥0.04,
+      // pro ¥9 / ¥27 / ¥0.30;按 ≈6.8 折 USD。谷时半价,这里按峰时标。之前的 0.14 / 0.28 那组不知出处,
+      // 比官网低两到四倍,后端网关按它算预算兜底时兜不住 —— 云端 profile 的 metadata 已改成这组。
       cost: {
-        input: isPro ? 0.435 : 0.14,
-        output: isPro ? 0.87 : 0.28,
-        cacheRead: isPro ? 0.003625 : 0.0028,
+        input: isPro ? 1.32 : 0.3,
+        output: isPro ? 3.96 : 1.2,
+        cacheRead: isPro ? 0.044 : 0.006,
         cacheWrite: 0,
       },
       contextWindow: 1_000_000,
