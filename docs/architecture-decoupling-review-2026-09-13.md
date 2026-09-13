@@ -211,6 +211,10 @@ Edge/API: auth + route + relay
 
 ## 9. 本次审查后的下一步
 
+2026-09-14 发布验收：Runtime `94d0ddd` 已上线，workspace_id 到 Mac 路径解析及 checkpoint 后执行
+进程退出接续均取得真实证据，见 [发布与恢复实测](workspace-runtime-rollout-2026-09-14.md)。
+下一开发切片可进入 Runtime 目标解析契约；物理断网、桌面崩溃和取消/过期场景继续保留现场验收。
+
 2026-09-14：Slice E 的 Runtime 解析收敛已落地。`workspace_resolution.resolve_task_workspace`
 统一 API 身份校验与路由器设备路径绑定，并补齐非 HTTP 入口的 repository 冲突检查。
 跨端字段和持久化结构保持兼容，详见 [工作区解析收敛记录](workspace-resolution-2026-09-14.md)。

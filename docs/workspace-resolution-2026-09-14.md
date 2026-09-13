@@ -2,6 +2,10 @@
 
 日期：2026-09-14。范围：`personal-agent-runtime` 的任务入口与路由器。
 
+发布更新：Runtime `94d0ddd` 已于当日 07:18（Asia/Shanghai）部署，Mac 的 workspace_id 完整链路
+与 checkpoint 后执行进程退出接续均实测通过，见 [发布与恢复实测](workspace-runtime-rollout-2026-09-14.md)。
+下文“本轮未部署/未重跑”描述代码实现阶段的验证边界。
+
 ## 问题与职责
 
 此前 HTTP 入口检查工作区是否注册、repository 是否一致，路由器另外查询注册记录并解析设备路径。

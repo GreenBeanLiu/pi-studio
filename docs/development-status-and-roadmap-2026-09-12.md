@@ -9,6 +9,7 @@
 
 ### 2026-09-14 后续进展
 
+- Runtime `94d0ddd` 已部署，Engine 保持 `f253331`。Mac 的 workspace_id 只读任务及 checkpoint 后独立执行进程退出、正式 Worker 接续均通过，各一次 v2 local.list、两轮模型、无重复工具操作。API/Worker 健康，手机与 Mac 未重装。详见 [发布与恢复实测](workspace-runtime-rollout-2026-09-14.md)。物理断网与桌面崩溃尚未覆盖。
 - 合入远端 Runtime `d29713f` 与 Desktop `d4b7c5f` 后，组合版本验证为 Runtime **515 passed**、Desktop **955 passed，5 skipped**，桌面完整 verify 通过。Runtime 新增网关测试已隔离本机模型地址环境，覆盖旧地址透传；以下 **505 passed** 是合入前本轮解析改动的验证结果。
 - Runtime 工作区解析已集中到 `workspace_resolution.resolve_task_workspace`：API 校验身份，路由选定设备后解析本地路径；补齐非 HTTP 入口的 repository 冲突检查。Runtime 全量 **505 passed**。兼容字段和数据库结构不变，真实设备回归与生产部署另行记录。详见 [工作区解析收敛记录](workspace-resolution-2026-09-14.md)。
 

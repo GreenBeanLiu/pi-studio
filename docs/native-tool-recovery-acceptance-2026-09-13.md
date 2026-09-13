@@ -1,5 +1,10 @@
 # Native Tool 恢复验收补充
 
+2026-09-14 更新：Runtime `94d0ddd` 已部署，Mac 在线且 workspace_id 只读链路通过；
+checkpoint 提交后执行进程退出、正式 Worker 接续的真实实验也通过，两条任务各只有一次工具操作。
+见 [发布与 Mac 恢复实测](workspace-runtime-rollout-2026-09-14.md)。下文离线状态和版本为历史记录；
+物理断网、桌面崩溃与等待期间取消/过期仍待现场验收。
+
 ## 发布与验证
 
 - Runtime `22be76e` 已推送 main，并于 2026-09-13 11:51 UTC 激活；Engine 保持 `f253331`，API 和独立 worker 健康。
