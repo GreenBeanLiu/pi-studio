@@ -7,11 +7,22 @@
 
 ## 1. 结论
 
+### 2026-09-13 后续进展（优先于下文历史快照）
+
+- 用户已反馈 Mac E2E 验收通过；本次未附逐项 task ID，证据等级为用户实测确认。操作手册见 [Mac E2E](mac-cloud-agent-e2e.md)。
+- Runtime 远端已推进到 `5a3d6b8` 并部署，新增控制面 Skill 库、`repo-survey` / `code-review`、加载事件和效果聚合；这些能力不再列为整体待建设。
+- 本轮继续实现模型调用前的设备工具筛选，保留上述 Skill 工作。任务工具、设备支持和权限共同决定模型可用工具；能力快照进入 checkpoint 和 `tool.surface` 事件，下发仍实时检查。
+- 组合版本 Runtime `d2c6146` 已部署，保留线上 Engine `f253331`；Runtime 全量 **475 passed**。新增 Mac 只读 smoke `task_011675a5752b44fa9037eaa1d8826e38` 已完成：一个子任务、两轮模型、一次 v2 `local.list`、返回两项且 `truncated=true`。此 smoke 使用绝对路径绑定，未覆盖 workspace_id 入口。
+- 显式重试或改派设备会重新握手。首轮握手失败提前报错，无工具操作产生；已经创建的操作保留离线等待与到期机制。手机默认入口尚未提供逐工具“必需”选择，Runtime 支持 `required_tools` 声明。
+- 下一步补重复调用检测、断线/取消/恢复矩阵和可复现评测；不启动新的框架迁移。发布证据见 [Runtime 发布记录](../../personal-agent-runtime/docs/tool-projection-rollout-2026-09-13.md)。
+
+下文中的“Mac 待更新/待验收”和旧部署 SHA 属于当时记录，请以上述新进展及后续发布记录为准。
+
 架构方向已成立，当前不是从零实现云端 Agent，而是进入跨端整合和可靠性收尾阶段。
 
 其他开发已经完成 Workspace Registry、Agent/Tool 双目标、Run 增量事件，以及 ToolOperation v2 核心契约。不能再把这些整体列为待开发，也不应重写一套平行实现。
 
-**下一阶段优先顺序：完成 `local.list` 的 Mac 真实闭环 -> 补齐真实设备矩阵和手机等待态验收 -> 发布清单与回滚门禁 -> 再评估受控 Shell。**
+**下一阶段优先顺序：设备能力筛选与 Skill 组合版本验收 -> 重复调用及恢复矩阵 -> 发布清单与回滚门禁 -> 再评估受控 Shell。**
 
 本轮确认了三个直接影响现有流程的问题：
 
