@@ -537,7 +537,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const route = req.method === 'POST' ? localRoutes.get(url.pathname) : undefined
   if (route) {
     const controller = new AbortController()
-    req.once('close', () => controller.abort())
+    // 客户端半路走了才中止上游调用。不能挂在 req 的 close 上:Node 里请求体读完就会发 close,
+    // 上游还没回就被 abort 了(2026-09-13 装机验证时撞到,回的是 502 "This operation was aborted")。
+    res.once('close', () => {
+      if (!res.writableFinished) controller.abort()
+    })
     try {
       json(res, 200, await route(await body(req), controller.signal))
     } catch (error) {

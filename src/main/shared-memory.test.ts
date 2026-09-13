@@ -196,7 +196,12 @@ describe('shared memory service', () => {
   it('serves registered local routes behind the same token — the relay path for secrets that stay in main', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pi-studio-memory-'))
     const paths = sharedMemoryPaths(join(dir, 'shared-memory.sqlite3'))
-    registerLocalRoute('/v1/echo-test', async (input) => ({ echoed: input.query }))
+    registerLocalRoute('/v1/echo-test', async (input, signal) => {
+      // 上游要等一会儿才回:请求体读完不能算客户端走了(Node 的 req close 会在这时触发)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      if (signal.aborted) throw new Error('aborted too early')
+      return { echoed: input.query }
+    })
     registerLocalRoute('/v1/boom-test', async () => {
       throw new Error('upstream said no')
     })
