@@ -179,6 +179,10 @@ Runtime 的 `workspace_resolution.resolve_task_workspace` 统一任务入口和�
 静默切换目录；无 `workspace_id` 的旧路径型任务保留兼容行为。详见
 [工作区解析收敛记录](workspace-resolution-2026-09-14.md)。
 
+Runtime 的 `POST /execution-targets/resolve` 复用正式 ProviderCommand 归一化与路由规则，供客户端
+只读预检目标、路径与拒绝原因，不创建任务或调用模型。结果不预留设备，也不代替执行时的权限与工具
+能力验证。契约见 [Target Resolution v1](contracts/target-resolution-v1.md)；Mobile 仍保留原提交协议。
+
 ---
 
 ## 3. 手机遥控链路（本次新增的部分）

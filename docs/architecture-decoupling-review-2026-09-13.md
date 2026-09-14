@@ -211,6 +211,10 @@ Edge/API: auth + route + relay
 
 ## 9. 本次审查后的下一步
 
+2026-09-14 Slice D 首步：新增 Runtime 目标解析预检，复用 ProviderCommand 和正式路由器，
+返回目标、设备路径、环境能力需求及结构化拒绝原因。见 [Target Resolution v1](contracts/target-resolution-v1.md)。
+下一步接入 Mobile 可选预检与跨版本回退，暂不删除 compatibility mirror；预检并非设备预留或授权。
+
 2026-09-14 发布验收：Runtime `94d0ddd` 已上线，workspace_id 到 Mac 路径解析及 checkpoint 后执行
 进程退出接续均取得真实证据，见 [发布与恢复实测](workspace-runtime-rollout-2026-09-14.md)。
 下一开发切片可进入 Runtime 目标解析契约；物理断网、桌面崩溃和取消/过期场景继续保留现场验收。
