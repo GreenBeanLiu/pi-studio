@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GreenBeanLiu/pi-studio/docs/contracts/schemas/tool-operation-result.schema.json",
+  "title": "ToolOperationResult",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "contract_version",
+    "protocol_version",
+    "operation_id",
+    "task_id",
+    "subtask_id",
+    "call_id",
+    "source",
+    "target_id",
+    "tool_name",
+    "ok",
+    "result",
+    "error"
+  ],
+  "properties": {
+    "contract_version": { "type": "integer", "const": 1 },
+    "protocol_version": { "type": "integer", "enum": [1, 2] },
+    "operation_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "subtask_id": { "type": "string", "minLength": 1 },
+    "call_id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "target_id": { "type": "string", "minLength": 1 },
+    "tool_name": { "type": "string", "minLength": 1 },
+    "ok": { "type": "boolean" },
+    "result": { "type": "object" },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "INVALID_TOOL_OPERATION",
+                "INVALID_TOOL_ARGUMENTS",
+                "UNSUPPORTED_TOOL",
+                "UNSUPPORTED_TOOL_PROTOCOL",
+                "INVALID_DEADLINE",
+                "DEADLINE_EXPIRED",
+                "SCOPE_MISMATCH",
+                "WORKSPACE_MISMATCH",
+                "EEXIST",
+                "ENOENT",
+                "LOCAL_FILE_ERROR"
+              ]
+            },
+            "message": { "type": "string" }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": true } }, "required": ["ok"] },
+      "then": { "properties": { "error": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "ok": { "const": false } }, "required": ["ok"] },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"]
+          }
+        }
+      }
+    }
+  ]
+}

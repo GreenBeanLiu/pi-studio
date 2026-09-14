@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GreenBeanLiu/pi-studio/docs/contracts/schemas/tool-capabilities.schema.json",
+  "title": "ToolCapabilities",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["manifest_version", "operation_protocols", "tools"],
+  "properties": {
+    "manifest_version": { "type": "integer", "const": 1 },
+    "operation_protocols": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer", "enum": [1, 2] },
+      "uniqueItems": true
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "scope_version", "requires_workspace"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "scope_version": { "type": "integer", "minimum": 1 },
+          "requires_workspace": { "type": "boolean" },
+          "max_bytes": { "type": "integer", "minimum": 1 },
+          "max_entries": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

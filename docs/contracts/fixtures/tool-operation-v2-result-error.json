@@ -1,0 +1,17 @@
+{
+  "contract_version": 1,
+  "protocol_version": 2,
+  "operation_id": "toolop-example-002",
+  "task_id": "task-example-001",
+  "subtask_id": "subtask-example-001",
+  "call_id": "call-example-002",
+  "source": "gateway",
+  "target_id": "pi-studio:mac-001",
+  "tool_name": "local.read",
+  "ok": false,
+  "result": {},
+  "error": {
+    "code": "ENOENT",
+    "message": "file does not exist"
+  }
+}
