@@ -1,0 +1,17 @@
+{
+  "manifest_version": 1,
+  "operation_protocols": [1, 2],
+  "tools": [
+    {
+      "name": "local.read",
+      "scope_version": 1,
+      "requires_workspace": true,
+      "max_bytes": 65536
+    },
+    {
+      "name": "shell.exec",
+      "scope_version": 2,
+      "requires_workspace": true
+    }
+  ]
+}

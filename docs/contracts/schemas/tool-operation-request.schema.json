@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/GreenBeanLiu/pi-studio/docs/contracts/schemas/tool-operation-request.schema.json",
+  "title": "ToolOperationRequest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "contract_version",
+    "protocol_version",
+    "operation_id",
+    "task_id",
+    "subtask_id",
+    "call_id",
+    "source",
+    "target_id",
+    "tool_name",
+    "arguments"
+  ],
+  "properties": {
+    "contract_version": { "type": "integer", "const": 1 },
+    "protocol_version": { "type": "integer", "enum": [1, 2] },
+    "operation_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "subtask_id": { "type": "string", "minLength": 1 },
+    "call_id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "target_id": { "type": "string", "minLength": 1 },
+    "tool_name": { "type": "string", "minLength": 1 },
+    "arguments": { "type": "object" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "deadline_at": { "type": "string", "minLength": 1 },
+    "scope": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "workspace": { "type": "string", "minLength": 1 },
+        "permissions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "permission": { "type": "string", "minLength": 1 }
+      }
+    },
+    "audit": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "protocol_version": { "const": 2 } },
+        "required": ["protocol_version"]
+      },
+      "then": {
+        "required": ["idempotency_key", "deadline_at", "scope"],
+        "properties": {
+          "scope": {
+            "type": "object",
+            "required": ["workspace", "permissions"]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "operation_id": "toolop-example-001",
+  "call_id": "call-example-001",
+  "tool_name": "local.read",
+  "ok": true,
+  "result": {
+    "path": "README.md",
+    "content": "# Demo\n",
+    "bytes": 7,
+    "encoding": "utf-8"
+  },
+  "error": null
+}
