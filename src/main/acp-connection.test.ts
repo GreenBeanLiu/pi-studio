@@ -572,8 +572,9 @@ describe('spawnAndOpen handshake timeout', () => {
   // 或 agent 卡在登录。没有超时的话 spawnAndOpen 会永远挂着,上层 setModel 跟着挂,
   // 模型选择器的防重入标志再也不复位,之后点任何模型都被静默吞掉(用户实测的现象)。
   const spec = {
+    agentId: 'stuck-agent',
+    source: 'manual' as const,
     distribution: 'manual' as const,
-    platformKey: 'darwin-aarch64' as const,
     command: process.execPath,
     args: ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'],
     env: {},
