@@ -1,8 +1,27 @@
 # Tool Gateway Contract v1
 
-> 状态：草案，基于 2026-09-13 生产闭环字段整理。
+> 状态：**权威 v1**（2026-09-14）。基于生产闭环字段固化；未知可选字段可忽略，改变必需字段 / 错误语义 / 幂等语义时必须升级版本。
 >
-> 目标：固定 Runtime、Desktop、Mobile 之间的工具调用边界，不改变当前线上行为。
+> 目标：固定 Runtime、Desktop、Mobile 之间的工具调用边界。本目录下的 JSON Schema + fixtures 是跨仓库唯一机器可读来源。
+
+## 0. 机器可读来源（SoT）
+
+| 产物 | 路径 |
+| --- | --- |
+| 能力清单 Schema | [`schemas/tool-capabilities.schema.json`](schemas/tool-capabilities.schema.json) |
+| Request Schema | [`schemas/tool-operation-request.schema.json`](schemas/tool-operation-request.schema.json) |
+| Result Schema | [`schemas/tool-operation-result.schema.json`](schemas/tool-operation-result.schema.json) |
+| Resume envelope Schema | [`schemas/resume-envelope.schema.json`](schemas/resume-envelope.schema.json) |
+| Fixtures | [`fixtures/`](fixtures/) |
+
+Desktop CI（`pnpm test` → `src/main/tool-gateway-contract.test.ts`）会校验：正例 fixture 通过 Schema；负例 fixture 在网关边界按错误码 fail closed。
+
+### Consumer sync（Runtime / Mobile）
+
+1. **不要各自发明字段。** 新增或改字段先改本仓库 Schema + fixture + 本文，再给姊妹仓开对齐 PR。
+2. Runtime（Python）与 Mobile（TS）应 **镜像** `docs/contracts/schemas/` 与 `docs/contracts/fixtures/`（复制或子模块均可），并在各自 CI 用同一组 fixture 跑解析测试。
+3. Desktop Relay 可继续使用 camelCase 传输 envelope；进入本地 handler 前映射到本契约的 snake_case canonical object。
+4. Backend **不解释** `tool_name`，不改写 operation payload。
 
 ## 1. 版本关系
 
@@ -152,3 +171,4 @@ Backend 不应根据 `tool_name` 执行路由或修改结果；它只负责把�
 - fixture 的字段变更必须同时更新本文件、兼容测试和版本说明。
 - 添加可选字段不升级 contract version；改变必需字段、错误语义或幂等语义时升级版本。
 - 新 Desktop 先支持 v1 contract + protocol v2，再删除旧字段兼容。
+- 负例 fixture（如 scope mismatch）用于验证 fail-closed，不应被当成可执行成功样例。
