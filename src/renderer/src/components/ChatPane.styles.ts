@@ -981,6 +981,15 @@ export const useStyles = createStyles(({ token, css }) => ({
     user-select: none;
   `,
 
+  spin: css`
+    animation: acp-spin 0.8s linear infinite;
+    @keyframes acp-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  `,
+
   modelRowTag: css`
     margin-left: auto;
     padding: 0 6px;

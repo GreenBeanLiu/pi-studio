@@ -566,3 +566,31 @@ describe('describeAuthMethods', () => {
     expect(error.message).toContain('Authentication required')
   })
 })
+
+describe('spawnAndOpen handshake timeout', () => {
+  // 一个起得来、但永远不说 ndjson、也不退出的子进程 —— 模拟首次 npx 下包卡住、
+  // 或 agent 卡在登录。没有超时的话 spawnAndOpen 会永远挂着,上层 setModel 跟着挂,
+  // 模型选择器的防重入标志再也不复位,之后点任何模型都被静默吞掉(用户实测的现象)。
+  const spec = {
+    distribution: 'manual' as const,
+    platformKey: 'darwin-aarch64' as const,
+    command: process.execPath,
+    args: ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'],
+    env: {},
+  }
+
+  it('rejects with a typed timeout instead of hanging, and kills the child', async () => {
+    const prev = process.env.PI_ACP_HANDSHAKE_TIMEOUT_MS
+    process.env.PI_ACP_HANDSHAKE_TIMEOUT_MS = '300'
+    try {
+      const started = Date.now()
+      await expect(
+        AcpConnection.spawnAndOpen(spec, process.cwd(), { agentId: 'stuck-agent' }),
+      ).rejects.toThrow(/超时/)
+      expect(Date.now() - started).toBeLessThan(5000)
+    } finally {
+      if (prev === undefined) delete process.env.PI_ACP_HANDSHAKE_TIMEOUT_MS
+      else process.env.PI_ACP_HANDSHAKE_TIMEOUT_MS = prev
+    }
+  })
+})

@@ -11,6 +11,7 @@ import {
   ChevronRight,
   SlidersHorizontal,
   Check,
+  Loader2,
   SlashSquare,
   Puzzle,
   FileText,
@@ -351,6 +352,8 @@ export default function ChatPane({
   const [paramsMoreOpen, setParamsMoreOpen] = useState(false)
   /** 正在切模型。选外部 agent 会起进程,不能让连点变成开一堆。 */
   const switchingModelRef = useRef(false)
+  /** 正在切到哪个 key —— 驱动那一行显示「切换中…」。外部 agent 首次要下包,可能十几秒。 */
+  const [switchingModelKey, setSwitchingModelKey] = useState<string | null>(null)
   const currentModelRef = useRef(currentModel)
   currentModelRef.current = currentModel
   const thinkingRef = useRef(thinking)
@@ -1201,9 +1204,11 @@ export default function ChatPane({
 
   async function pickModel(key: string) {
     // 防重入。选外部 agent 会真的起一个进程,连点几下就攒下几个 ——
-    // 日志里见过一次点击起三个 agent 的。
+    // 日志里见过一次点击起三个 agent 的。用状态而不是只用 ref,好让那一行显示
+    // 「切换中…」:外部 agent 首次要下包、握手,可能十几秒,不给反馈会像"点了没反应"。
     if (switchingModelRef.current) return
     switchingModelRef.current = true
+    setSwitchingModelKey(key)
     const sep = key.indexOf('::')
     try {
       await api.pi.setModel(key.slice(0, sep), key.slice(sep + 2))
@@ -1213,9 +1218,12 @@ export default function ChatPane({
       // 选完就收起。弹层赖着不走的话,得点旁边空白处才关,像是"没选上"。
       setParamsOpen(false)
     } catch (err) {
+      // setModel 会失败(外部 agent 启动/握手超时、ENOENT、被上游拒),必须把错抛到界面上,
+      // 不能吞掉 —— 否则面板停在旧模型、没有任何提示,正是"选不中"的样子。
       setError((err as Error).message ?? '切换模型失败')
     } finally {
       switchingModelRef.current = false
+      setSwitchingModelKey(null)
     }
   }
 
@@ -1264,16 +1272,21 @@ export default function ChatPane({
               const active = !!(
                 currentModel && `${currentModel.provider}::${currentModel.id}` === m.key
               )
+              const switching = switchingModelKey === m.key
               return (
                 <button
                   key={m.key}
                   className={cx(styles.modelRow, active && styles.modelRowActive)}
                   onClick={() => pickModel(m.key)}
                   title={modelSpecText(m.info)}
+                  aria-busy={switching}
                 >
-                  <span className={styles.modelCheckSlot}>{active && <Check size={13} />}</span>
+                  <span className={styles.modelCheckSlot}>
+                    {switching ? <Loader2 size={13} className={styles.spin} /> : active && <Check size={13} />}
+                  </span>
                   <span className={styles.modelRowLabel}>{m.label}</span>
-                  {m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
+                  {switching && <span className={styles.modelRowTag}>切换中…</span>}
+                  {!switching && m.info.reasoning && <span className={styles.modelRowTag}>推理</span>}
                   {m.meta && <span className={styles.modelRowMeta}>{m.meta}</span>}
                 </button>
               )

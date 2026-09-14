@@ -216,6 +216,12 @@ export function acpCapabilities(
   })
 }
 
+// 握手上限:首次要 npx 下包,给足;但绝不无限等。每次调用时读,便于测试和临时调整。
+function acpHandshakeTimeoutMs(): number {
+  const raw = Number(process.env.PI_ACP_HANDSHAKE_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 120_000
+}
+
 export class AcpConnection implements AgentBackend {
   private turn: AcpTurnProjector | null = null
   private child: ChildProcessWithoutNullStreams | null = null
@@ -326,8 +332,25 @@ export class AcpConnection implements AgentBackend {
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     )
+    // 握手超时。没有它,子进程既不死也不完成握手时(首次 npx 下包、代理抽风、
+    // 或 agent 卡在登录)spawnAndOpen 会永远挂着 —— 上层的 setModel 跟着挂,
+    // 模型选择器的防重入标志再也不复位,之后点任何模型都被静默吞掉。
+    // 见过的现象:选 Claude Agent 后面板不动、不报错,再点变成双击选中文字。
+    const timeoutMs = acpHandshakeTimeoutMs()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `${spec.command} 启动/握手超时(${Math.round(timeoutMs / 1000)}s)—— ` +
+              '首次启动要下载 agent 包,可能是网络或代理慢;稍后重试,或先在终端跑一次 ' +
+              `\`${spec.command} ${spec.args.join(' ')}\` 预热。`,
+          ),
+        )
+      }, timeoutMs)
+    })
     try {
-      const connection = await Promise.race([AcpConnection.open(stream, cwd, options), failed])
+      const connection = await Promise.race([AcpConnection.open(stream, cwd, options), failed, timedOut])
       onDied = null
       connection.attachChild(child)
       return connection
@@ -335,6 +358,8 @@ export class AcpConnection implements AgentBackend {
       onDied = null
       child.kill('SIGTERM')
       throw error
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 
