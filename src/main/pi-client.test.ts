@@ -223,6 +223,20 @@ describe('an ACP session must not break the read paths', () => {
     expect(projection.slice(guard, guard + 400)).toContain('entry.client.conversation()')
   })
 
+  // 从 ACP 会话切回普通模型:不能像 pi 独有能力那样直接报错,要起一个新的 pi 会话接管
+  // (和选进 ACP 对称)。2026-09-14 之前它走 requirePi 直接抛「不支持切换模型」,把用户困死。
+  it('switches back to a normal model by starting a fresh pi session, not by throwing', () => {
+    const source = client()
+    const setModel = source.slice(source.indexOf('async setModel('), source.indexOf('async setModel(') + 600)
+    expect(setModel).toContain('if (isAcpModelRoute(provider)) return this.startAcpSession(modelId)')
+    expect(setModel).toContain('if (this.active && !this.active.pi) return this.startPiSession(provider, modelId)')
+    const startPi = source.slice(source.indexOf('private async startPiSession(')).slice(0, 500)
+    expect(startPi).toContain('this.pool.spawn(null)')
+    expect(startPi).toContain('this.activate(entry)')
+    expect(startPi).toContain("this.piOf(entry, '切换模型').setModel(provider, modelId)")
+    expect(startPi).toContain('saveSelectedModelRoute(provider, modelId)')
+  })
+
   // 这两个反过来:pi 独有的能力就该明确报错,不能静默无效。
   it('still refuses pi-only capabilities outright', () => {
     const source = client()

@@ -554,10 +554,25 @@ class PiClientManager implements AgentPoolHost, EventProjectionHost {
     return mergeModelEntries(this.lastPiModels, acp)
   }
 
-  /** 选中 ACP agent 不是「换个模型」,是用那个 agent 起一个新会话。 */
+  /**
+   * 选中 ACP agent 不是「换个模型」,是用那个 agent 起一个新会话;反过来,从 ACP 会话
+   * 选回普通模型也一样 —— 外部 agent 的对话在它自己那边,pi 接不过来,只能新起一个 pi 会话。
+   * 两个方向对称:换后端 = 起一个新会话,而不是在当前会话上改模型。
+   */
   async setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
     if (isAcpModelRoute(provider)) return this.startAcpSession(modelId)
+    if (this.active && !this.active.pi) return this.startPiSession(provider, modelId)
     const selected = await this.requirePi('切换模型').setModel(provider, modelId)
+    saveSelectedModelRoute(provider, modelId)
+    return selected
+  }
+
+  /** 从外部 agent 会话切回普通模型:起一个新的 pi 会话来接管,并把它切到目标模型。 */
+  private async startPiSession(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
+    if (!this.pool.launchContext()) throw new Error(NO_WORKSPACE_ERROR)
+    const entry = await this.pool.spawn(null)
+    this.activate(entry)
+    const selected = await this.piOf(entry, '切换模型').setModel(provider, modelId)
     saveSelectedModelRoute(provider, modelId)
     return selected
   }
