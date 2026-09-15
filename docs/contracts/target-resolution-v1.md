@@ -32,7 +32,7 @@
 - `workspace_id` 表达稳定身份，设备选定后解析其路径；`workspace` 保留旧路径兼容。
 - `requires` 表达环境能力；请求的 `required_capabilities` 表达权限，二者不同。
 - 兼容 `agentTarget`、`toolTarget`、`executionTarget`；字段优先级与正式提交完全共用。
-- `execution_target` 是历史兼容字段。云端 Agent + Mac 工具时，它可能仍镜像 Mac，不能覆盖明确的 `agent_target`。
+- `execution_target` 是历史兼容入参（旧客户端）。云端 Agent + Mac 工具时旧客户端可能仍镜像 Mac，不能覆盖明确的 `agent_target`。**新 Mobile（2026-09-15 起）不再发送该字段。**
 - `run` 不触发执行，预检即使收到 `run=true` 也不创建任务。
 - 不执行数据库写入、模型推理、设备工具、审批或任务事件；可能读取设备库存和执行器健康状态。
 
@@ -94,8 +94,10 @@
 
 先上线 Runtime，再为 Mobile 增加可选预检调用和 v1 响应读取。旧服务返回 404/503 时可保留原有
 提交流程；业务拒绝应显示具体原因。预检不是新增的提交前强制依赖，不可在网络超时后自动重复创建任务。
-经过跨版本验证后，再评估删除兼容镜像。当前 Mobile 无需重装即可继续提交原有任务。
+跨版本验证与产品确认已完成（2026-09-15）。Mobile 已删除 `executionTarget` / `execution_target`
+兼容镜像（PR [`#5`](https://github.com/GreenBeanLiu/pi-studio-mobile/pull/5)）；wire 只发规范轴。
+Runtime 仍可接受历史 `execution_target` 入参（字段优先级不变），但新客户端不再发送。
 
-跨版本验收证据与镜像删除解锁条件见
+跨版本验收证据与解锁结论见
 [Slice D 跨版本验收证据包](../slice-d-cross-version-validation-2026-09-15.md)
-（自动化门禁 + 实机清单；**在解锁条件满足前保留 `executionTarget` 镜像**）。
+（**镜像删除已解锁并落地**）。
