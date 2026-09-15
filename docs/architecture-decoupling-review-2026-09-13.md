@@ -185,7 +185,7 @@ Edge/API: auth + route + relay
 - 保持单库和现有事务语义不变。
 - Worker 和 NativeToolExecutor 不再直接依赖整块 `TaskStore`。
 
-验收：Runtime 全量测试、断线恢复、取消、过期和显式 retry 矩阵不变。
+验收：Runtime 全量测试、断线恢复、取消、过期和显式 retry 矩阵不变。自动化边界现由 [Reliability Matrix v1](contracts/reliability-matrix-v1.md) 锁定（现场物理场景仍见恢复验收补充）。
 
 ### Slice D：Runtime 成为唯一目标解析者
 
@@ -243,4 +243,10 @@ Mobile 可选预检与跨版本回退已接入；**compatibility mirror 已于 2
 2026-09-15：Slice E **首切**落地 —— [Workspace Identity v1](contracts/workspace-identity-v1.md)
 契约 + Runtime fixture/测试锁定词汇与跨设备同仓不同路径行为；剩余为可选 UI 展示消歧。
 
-Slice A 已完成第一轮：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录；Runtime、Desktop、Mobile 已分别加入 v2 字段兼容测试。Slice B 的桌面内部提取也已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。Runtime 的 `ToolOperationRepository` 和 `NativeSessionRepository` 已接入 API、ToolTransport、Worker、NativeToolExecutor 和 Orchestrator；下一步应观察真实断线恢复证据，再决定是否继续拆 SQL 或进入 workspace identity 清理。
+2026-09-15：Reliability Matrix Contract v1 **首切**落地 —— [Reliability Matrix v1](contracts/reliability-matrix-v1.md)。
+将既有 Runtime 恢复回归（12 个 `scenario_id`）提升为跨仓契约；矩阵自动化 SoT 已锁定。
+物理断网、桌面崩溃、write-then-lost-ack 现场验收仍开放（见
+[Native Tool 恢复验收补充](native-tool-recovery-acceptance-2026-09-13.md)）。
+Slice C 要求的断线恢复 / 取消 / 过期 / 显式 retry 自动化矩阵验收边界不变，仅提升为契约。
+
+Slice A 已完成第一轮：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录；Runtime、Desktop、Mobile 已分别加入 v2 字段兼容测试。Slice B 的桌面内部提取也已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。Runtime 的 `ToolOperationRepository` 和 `NativeSessionRepository` 已接入 API、ToolTransport、Worker、NativeToolExecutor 和 Orchestrator；Workspace Identity v1 与 Reliability Matrix v1 契约首切已落地。下一步仍应收集真实物理断网 / 桌面崩溃 / write-then-lost-ack 现场证据，再决定是否继续拆 SQL。

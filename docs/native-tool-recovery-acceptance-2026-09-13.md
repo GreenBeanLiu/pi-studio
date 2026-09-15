@@ -27,7 +27,14 @@ checkpoint 提交后执行进程退出、正式 Worker 接续的真实实验也�
 
 ## 自动化覆盖
 
-Runtime 新增 `tests/test_native_tool_recovery_regression.py`，12 项测试使用真实会话、SQLite 和两类 worker，模型与网关使用测试替身，时间推进可控。
+**2026-09-15：矩阵自动化 SoT 已落地。** 跨仓契约见
+[Reliability Matrix Contract v1](contracts/reliability-matrix-v1.md)
+（Runtime 权威 fixture `tests/fixtures/reliability-matrix-v1.json`，**12** 个稳定
+`scenario_id`；映射测试 `tests/test_reliability_matrix_contract.py`）。
+以下表格仍为行为说明；物理断网 / 桌面崩溃 / write-then-lost-ack **现场验收仍开放**，
+不因契约落地而宣称完成。
+
+Runtime `tests/test_native_tool_recovery_regression.py` 共 12 项测试使用真实会话、SQLite 和两类 worker，模型与网关使用测试替身，时间推进可控；现由 Reliability Matrix v1 以 `scenario_id` 锁定。
 
 | 场景 | 验收结果 |
 | --- | --- |
