@@ -3,15 +3,17 @@
 日期：2026-09-15。范围：Mobile `applyCanonicalResolution`（master `02db8c65`）与 Runtime
 `POST /execution-targets/resolve` 的跨版本安全边界。
 
-**目的：**在删除 Mobile `executionTarget` 兼容镜像之前，用自动化契约测试 + 人工清单证明
-预检→写回→提交路径不会发明设备、不会在预检时写库、并在旧 Runtime 上可回退。
+**目的：**用自动化契约测试 + 人工清单证明预检→写回→提交路径不会发明设备、不会在预检时写库、
+并在旧 Runtime 上可回退；**随后（2026-09-15 product confirmation）解锁并删除** Mobile
+`executionTarget` 兼容镜像（见 Mobile PR `#5`）。
 
 **权威契约：**[Target Resolution v1](contracts/target-resolution-v1.md)。
 **架构切片：**[架构解耦审查 · Slice D](architecture-decoupling-review-2026-09-13.md)。
 **相关记录：**[目标解析发布](target-resolution-rollout-2026-09-14.md)、
 [工作区解析收敛](workspace-resolution-2026-09-14.md)。
 
-> 本轮**不删除** `executionTarget` 兼容镜像。镜像删除须等下方「解锁条件」全部满足。
+> **镜像删除已解锁并落地。** Product confirmation ✅ 2026-09-15（Eng chat 用户确认）；
+> Mobile PR [`#5`](https://github.com/GreenBeanLiu/pi-studio-mobile/pull/5) 删除 `executionTarget` / `execution_target` 兼容镜像。
 
 ---
 
@@ -19,8 +21,8 @@
 
 | # | 场景 | 期望 | 自动化门禁 | 实机/生产清单 |
 | --- | --- | --- | --- | --- |
-| 1 | Cloud agent，无本地工具 | resolve：`agent_target=personal-agent-engine`，`tool_target=null`；apply 不钉电脑、清除 `toolTarget`，`executionTarget` 镜像 Agent | Mobile unit + Runtime `test_cloud_only_intent_has_no_local_gateway` | ☑ 2026-09-15 22:20 CST 生产 HTTP 200（见 §1.1） |
-| 2 | native-tools + `workspace_id` | resolve 返回绑定路径与 repository；apply 写回 `agentTarget`/`toolTarget`/`executionMode`/`workspaceId`，`executionTarget` 仍镜像工具电脑 | Mobile unit + Runtime `test_preview_and_execution_share_binding_without_preview_side_effects` | ☑ 同次；路径回写，repository 该工作区未注册（见 §1.1） |
+| 1 | Cloud agent，无本地工具 | resolve：`agent_target=personal-agent-engine`，`tool_target=null`；apply 不钉电脑、清除 `toolTarget`，**不写** `executionTarget`（镜像已删） | Mobile unit + Runtime `test_cloud_only_intent_has_no_local_gateway` | ☑ 2026-09-15 22:20 CST 生产 HTTP 200（见 §1.1） |
+| 2 | native-tools + `workspace_id` | resolve 返回绑定路径与 repository；apply 写回 `agentTarget`/`toolTarget`/`executionMode`/`workspaceId`，**不写** `executionTarget` | Mobile unit + Runtime `test_preview_and_execution_share_binding_without_preview_side_effects` | ☑ 同次；路径回写，repository 该工作区未注册（见 §1.1） |
 | 3 | `selection_complete=false`（类路由） | apply **不得**发明钉死的 `pi-studio:<id>`；保留裸 `pi-studio` + `requires`；仅可同步 `executionMode` | Mobile unit（含「即便 resolution 带了 tool_target 也不钉」）+ Runtime `test_legacy_generic_device_remains_an_explicitly_unresolved_selector` | ☑ 同次打了裸 `pi-studio` + `requires=["workspace.local"]`。**现网两台都在线时 Runtime 会选完**（`selection_complete=true`，钉 Windows）。未完成选择仍由 unit 覆盖。 |
 | 4 | 结构化拒绝 422/409 | 客户端解析 `detail.code`（`invalid_intent` / `unroutable` / `target_unavailable` 等），阻断提交 | Mobile `harness.test.ts` + Runtime `test_rejected_intents_*` / `test_submit_uses_the_same_structured_rejections_as_resolve` | ☑ 同次：未注册 workspace 422 `invalid_intent`；workspace/repo 冲突 422 `invalid_intent` |
 | 5 | 404 / 503 resolve 不可用 | `resolveExecutionTargets` → `{status:'unavailable'}`；提交走本地意图原样路径（不 apply） | Mobile unit（404 + `resolution_unavailable`） | ☒ 本生产已部署 resolve，无法在此主机打出 404/503。覆盖面 = Mobile unit。 |
@@ -67,18 +69,19 @@ Runtime health：`ok=true`，`executor=dsh`，进程自 2026-09-14T22:40Z 起。
 | 行为 | 位置 | 说明 |
 | --- | --- | --- |
 | 预检成功后写回规范轴 | `applyCanonicalResolution` | 写 `agentTarget` / `toolTarget` / `executionMode` / `workspaceId` |
-| 兼容镜像 | 同函数 | `executionTarget` 在 native-tools 时镜像 `toolTarget`，否则镜像 `agentTarget`；**保留，不删** |
+| 兼容镜像 | 同函数 → Mobile PR `#5` | **已删除**（2026-09-15 product confirmation + live S6）。wire 不再发 `execution_target`；`commandFieldsFor.executionTarget` 仅作内部 class-routing → `agentTarget` |
 | 类选择未完成 | `selection_complete === false` | 提前返回；不钉设备；不改 `requires` |
 | 404/503 回退 | `HarnessClient.resolveExecutionTargets` | 返回 `unavailable`；`HarnessHomeScreen.submit` 仅在 `resolved` 时 apply |
 | 业务拒绝 | `HarnessError` + `formatHarnessError` | 422/409 带 code 时阻断提交并展示中文标签 |
 
-配套测试强化（Mobile PR `#4` → `15015fd`）：
+配套测试强化（Mobile PR `#4` → `15015fd`；镜像删除 Mobile PR `#5`）：
 
-- Cloud-only apply 清除 `toolTarget`、不以电脑为镜像。
-- native-tools + workspace 字段对齐 resolve。
+- Cloud-only apply 清除 `toolTarget`、**不包含** `executionTarget`。
+- native-tools + workspace 字段对齐 resolve、**不包含** `executionTarget`。
 - `selection_complete=false` 即使 resolution 误带 `tool_target` 也不钉。
 - apply 输出与 resolve 轴字段一一相等（场景 6 的客户端侧）。
-- resolve 的 422 `invalid_intent` / 409 `target_unavailable` 结构化解析。
+- serialize / resolve 请求体 **不发** `execution_target`。
+- resolve 的 422 `invalid_intent` / 409 `target_unavailable` 结构化解析；404 fallthrough 保留。
 
 ---
 
@@ -112,8 +115,8 @@ Runtime health：`ok=true`，`executor=dsh`，进程自 2026-09-14T22:40Z 起。
 **Mobile（自动化，本包加强）：**
 
 1. 用 fixture resolution 调用 `applyCanonicalResolution`。
-2. 断言输出的 `agentTarget` / `toolTarget` / `executionMode` / `workspaceId` /
-   `executionTarget` 镜像规则与 resolution 字段一致。
+2. 断言输出的 `agentTarget` / `toolTarget` / `executionMode` / `workspaceId`
+   与 resolution 字段一致，且 **不含** `executionTarget`。
 
 **实机（人工，已做一次）：** 见 §1.2。
 
@@ -131,19 +134,20 @@ Runtime health：`ok=true`，`executor=dsh`，进程自 2026-09-14T22:40Z 起。
 | Mobile 场景 1–6 的 unit/fixture 绿 | ✅ Mobile PR `#4` → `15015fd` |
 | Runtime 预检零副作用 + 拒绝码测试仍绿 | ✅ 已在 Runtime main |
 | 旧 Runtime 404/503 回退有自动化 | ✅ Mobile `resolveExecutionTargets` tests |
-| 生产/实机矩阵至少覆盖场景 1、2、3、5 各一次 | ⚠ 1、2、3、6、7 已在生产勾选；**5 无法在已部署 resolve 的主机上复现**（unit 覆盖） |
-| 产品确认所有仍在线的客户端已升级到含 apply 的版本，或可接受去掉镜像 | ❌ 需人工产品判断 |
+| 生产/实机矩阵至少覆盖场景 1、2、3、5 各一次 | ⚠ 1、2、3、6、7 已在生产勾选；**5 无法在已部署 resolve 的主机上复现**（unit 覆盖，可接受） |
+| 产品确认所有仍在线的客户端已升级到含 apply 的版本，或可接受去掉镜像 | ✅ **2026-09-15 Eng chat 用户 product confirmation** |
 
-**结论：镜像删除尚未解锁（no）。**
+**结论：镜像删除已解锁（yes），并已在 Mobile PR [`#5`](https://github.com/GreenBeanLiu/pi-studio-mobile/pull/5) 落地 / 合入中。**
 
-原因：生产预检 1/2/3/4/6/7 已有证据，但（a）404/503 只能靠 unit、（b）仍缺「全客户端已升级」产品确认。
-契约原文要求跨版本验证后再评估删除。**保留 `executionTarget` 镜像。**
+依据：live S6 `task_c84db0cbaec1423f8cd7e1ac62517788` + resolve 已在 `trail-api.glanger.xyz` + 产品确认可删镜像。
+本证据包原先的 hold **作废**。
 
 ---
 
-## 6. 明确不做
+## 6. 明确不做（证据包当时） / 后续已做
 
-- 不删除 `executionTarget` 字段或生成逻辑。
-- 不改动 `autoPlan` / `workspaceReach` 等并行能力。
-- 不把预检当作批准或设备预留。
-- 本轮只创建了 §1.2 那一条 read_only 验收任务，无写入。
+证据包起草时：
+- ~~不删除 `executionTarget` 字段或生成逻辑。~~ → **已解锁并删除**（Mobile PR `#5`，2026-09-15）。
+- 不改动 `autoPlan` / `workspaceReach` 等并行能力。（仍成立）
+- 不把预检当作批准或设备预留。（仍成立）
+- 本轮只创建了 §1.2 那一条 read_only 验收任务，无写入。（仍成立）
