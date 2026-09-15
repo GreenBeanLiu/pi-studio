@@ -205,6 +205,13 @@ Edge/API: auth + route + relay
 - 增加跨设备同仓库不同路径的契约测试。
 - 禁止 Mobile 或 Backend 将本机绝对路径当作跨设备 workspace identity。
 
+**首切已落地（2026-09-15）：** 契约 + Runtime fixture/测试，见
+[Workspace Identity v1](contracts/workspace-identity-v1.md)
+（Runtime 权威实现与 `tests/fixtures/workspace-identity-v1.json`）。
+未改 wire 字段名、未删除 path-only 旧路径、未做生产注册表 rename/merge。
+
+**剩余（可选 UI 切）：** 同名工作区展示消歧（例如两个 local「Works」）、客户端文案提示；不阻塞契约生效。
+
 ## 8. 明确不做的事情
 
 - 不新增一个“总 Agent 服务”来包住现有 Runtime。
@@ -232,5 +239,8 @@ Mobile 可选预检与跨版本回退已接入；**compatibility mirror 已于 2
 同日 product confirmation 后，Mobile PR `#5` **删除** `executionTarget` 兼容镜像。
 证据与解锁结论见
 [Slice D 跨版本验收证据包](slice-d-cross-version-validation-2026-09-15.md)。
+
+2026-09-15：Slice E **首切**落地 —— [Workspace Identity v1](contracts/workspace-identity-v1.md)
+契约 + Runtime fixture/测试锁定词汇与跨设备同仓不同路径行为；剩余为可选 UI 展示消歧。
 
 Slice A 已完成第一轮：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录；Runtime、Desktop、Mobile 已分别加入 v2 字段兼容测试。Slice B 的桌面内部提取也已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。Runtime 的 `ToolOperationRepository` 和 `NativeSessionRepository` 已接入 API、ToolTransport、Worker、NativeToolExecutor 和 Orchestrator；下一步应观察真实断线恢复证据，再决定是否继续拆 SQL 或进入 workspace identity 清理。

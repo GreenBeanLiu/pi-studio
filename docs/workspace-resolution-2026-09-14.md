@@ -56,3 +56,9 @@ Runtime 全量验证：**505 passed**，保留一个既有 Starlette/httpx 弃�
 真实 Mac / Windows 断线恢复没有在本轮重跑；代码推送也不代表生产 Runtime 已更新。
 下一步在部署并验证本轮 Runtime 后，记录以 `workspace_id` 发起任务的实际设备、解析路径、
 operation ID 和恢复结果，再推进目标解析契约。Mobile 兼容字段的删除应等待跨端契约验证完成。
+
+## 契约锁定（Slice E 首切）
+
+2026-09-15：词汇与跨设备同仓不同路径行为已写入
+[Workspace Identity v1](contracts/workspace-identity-v1.md)，并由 Runtime fixture/测试钉死。
+展示消歧仍为可选后续 UI 工作。
