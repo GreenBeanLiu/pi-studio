@@ -195,6 +195,10 @@ Edge/API: auth + route + relay
 
 验收：同一个意图在 Web、Mobile、脚本入口得到相同 target resolution。
 
+跨版本验收证据包（自动化门禁 + 实机清单、镜像删除解锁条件）见
+[Slice D 跨版本验收证据包](slice-d-cross-version-validation-2026-09-15.md)。
+**在解锁条件满足前不得删除 `executionTarget` 兼容镜像。**
+
 ### Slice E：工作区命名清理
 
 - 明确 `workspace_id`、`executor_binding`、`local_path` 的边界。
@@ -223,5 +227,9 @@ Edge/API: auth + route + relay
 统一 API 身份校验与路由器设备路径绑定，并补齐非 HTTP 入口的 repository 冲突检查。
 跨端字段和持久化结构保持兼容，详见 [工作区解析收敛记录](workspace-resolution-2026-09-14.md)。
 后续优先部署后收集真实设备的 workspace_id 与断线恢复证据，再继续目标解析契约；下段为上一轮记录。
+
+2026-09-15：Mobile master `02db8c65` 已接入预检后 `applyCanonicalResolution`（保留 executionTarget 镜像）。
+跨版本验收证据与镜像删除解锁条件见
+[Slice D 跨版本验收证据包](slice-d-cross-version-validation-2026-09-15.md)。
 
 Slice A 已完成第一轮：契约草案和 v2 request/result fixture 位于 [Tool Gateway Contract v1](contracts/tool-gateway-v1.md) 及其 `fixtures/` 目录；Runtime、Desktop、Mobile 已分别加入 v2 字段兼容测试。Slice B 的桌面内部提取也已完成，`src/main/tool-gateway.ts` 现在承载本地工具能力、scope 校验和执行；`RemoteControlManager` 的公开命令与 Relay envelope 保持不变。Runtime 的 `ToolOperationRepository` 和 `NativeSessionRepository` 已接入 API、ToolTransport、Worker、NativeToolExecutor 和 Orchestrator；下一步应观察真实断线恢复证据，再决定是否继续拆 SQL 或进入 workspace identity 清理。
