@@ -19,18 +19,35 @@
 
 | # | 场景 | 期望 | 自动化门禁 | 实机/生产清单 |
 | --- | --- | --- | --- | --- |
-| 1 | Cloud agent，无本地工具 | resolve：`agent_target=personal-agent-engine`，`tool_target=null`；apply 不钉电脑、清除 `toolTarget`，`executionTarget` 镜像 Agent | Mobile unit + Runtime `test_cloud_only_intent_has_no_local_gateway` | ☐ 未跑（无生产 token） |
-| 2 | native-tools + `workspace_id` | resolve 返回绑定路径与 repository；apply 写回 `agentTarget`/`toolTarget`/`executionMode`/`workspaceId`，`executionTarget` 仍镜像工具电脑 | Mobile unit + Runtime `test_preview_and_execution_share_binding_without_preview_side_effects` | ☐ 未跑 |
-| 3 | `selection_complete=false`（类路由） | apply **不得**发明钉死的 `pi-studio:<id>`；保留裸 `pi-studio` + `requires`；仅可同步 `executionMode` | Mobile unit（含「即便 resolution 带了 tool_target 也不钉」）+ Runtime `test_legacy_generic_device_remains_an_explicitly_unresolved_selector` | ☐ 未跑 |
-| 4 | 结构化拒绝 422/409 | 客户端解析 `detail.code`（`invalid_intent` / `unroutable` / `target_unavailable` 等），阻断提交 | Mobile `harness.test.ts` + Runtime `test_rejected_intents_*` / `test_submit_uses_the_same_structured_rejections_as_resolve` | ☐ 未跑 |
-| 5 | 404 / 503 resolve 不可用 | `resolveExecutionTargets` → `{status:'unavailable'}`；提交走本地意图原样路径（不 apply） | Mobile unit（404 + `resolution_unavailable`） | ☐ 未跑 |
-| 6 | 正式提交决策与预检一致 | Runtime：`routed[0]`（去 task/subtask id）== `resolution.decision`；Mobile：apply 输出轴 == resolve 字段 | Runtime 已断言；Mobile apply 字段对齐 unit | ☐ 未跑 |
-| 7 | 预检不创建 tasks / tool_ops | resolve（含 `run=true`）后 `list_tasks()==[]`，无 executor/route 调用 | Runtime `test_preview_and_execution_share_binding_without_preview_side_effects`、`test_rejected_intents_have_structured_reasons_and_create_no_tasks` | ☐ 生产侧已有 2026-09-14 计数证据（见发布记录）；本轮未复测 |
+| 1 | Cloud agent，无本地工具 | resolve：`agent_target=personal-agent-engine`，`tool_target=null`；apply 不钉电脑、清除 `toolTarget`，`executionTarget` 镜像 Agent | Mobile unit + Runtime `test_cloud_only_intent_has_no_local_gateway` | ☑ 2026-09-15 22:20 CST 生产 HTTP 200（见 §1.1） |
+| 2 | native-tools + `workspace_id` | resolve 返回绑定路径与 repository；apply 写回 `agentTarget`/`toolTarget`/`executionMode`/`workspaceId`，`executionTarget` 仍镜像工具电脑 | Mobile unit + Runtime `test_preview_and_execution_share_binding_without_preview_side_effects` | ☑ 同次；路径回写，repository 该工作区未注册（见 §1.1） |
+| 3 | `selection_complete=false`（类路由） | apply **不得**发明钉死的 `pi-studio:<id>`；保留裸 `pi-studio` + `requires`；仅可同步 `executionMode` | Mobile unit（含「即便 resolution 带了 tool_target 也不钉」）+ Runtime `test_legacy_generic_device_remains_an_explicitly_unresolved_selector` | ☑ 同次打了裸 `pi-studio` + `requires=["workspace.local"]`。**现网两台都在线时 Runtime 会选完**（`selection_complete=true`，钉 Windows）。未完成选择仍由 unit 覆盖。 |
+| 4 | 结构化拒绝 422/409 | 客户端解析 `detail.code`（`invalid_intent` / `unroutable` / `target_unavailable` 等），阻断提交 | Mobile `harness.test.ts` + Runtime `test_rejected_intents_*` / `test_submit_uses_the_same_structured_rejections_as_resolve` | ☑ 同次：未注册 workspace 422 `invalid_intent`；workspace/repo 冲突 422 `invalid_intent` |
+| 5 | 404 / 503 resolve 不可用 | `resolveExecutionTargets` → `{status:'unavailable'}`；提交走本地意图原样路径（不 apply） | Mobile unit（404 + `resolution_unavailable`） | ☒ 本生产已部署 resolve，无法在此主机打出 404/503。覆盖面 = Mobile unit。 |
+| 6 | 正式提交决策与预检一致 | Runtime：`routed[0]`（去 task/subtask id）== `resolution.decision`；Mobile：apply 输出轴 == resolve 字段 | Runtime 已断言；Mobile apply 字段对齐 unit | ☐ 本轮故意未创建任务（只打 resolve） |
+| 7 | 预检不创建 tasks / tool_ops | resolve（含 `run=true`）后 `list_tasks()==[]`，无 executor/route 调用 | Runtime `test_preview_and_execution_share_binding_without_preview_side_effects`、`test_rejected_intents_have_structured_reasons_and_create_no_tasks` | ☑ 同次复测：`GET /tasks?limit=20` 20 条 id 不变；`/runs?since=24h` count=3 不变；`/tool-operations` 0 条不变。2026-09-14 计数证据仍有效。 |
 
 ### 自动化 vs 人工
 
-- **绿门（合并前必须绿）：** Mobile Vitest（本证据包配套 PR）+ Runtime 既有 `tests/test_target_resolution.py`（已在 Runtime main）。
-- **人工清单：**上表 ☐ 行。无 `HARNESS_SHARED_TOKEN` / 生产访问时**不得编造** live 结果；保持未勾选。
+- **绿门（合并前必须绿）：** Mobile Vitest（证据包配套 PR `#4`，已合 `15015fd`）+ Runtime 既有 `tests/test_target_resolution.py`（已在 Runtime main）。
+- **人工清单：**上表生产列。无 token 时不得编造 live 结果。
+
+### 1.1 2026-09-15 生产预检（`https://trail-api.glanger.xyz/harness`）
+
+服务认证，`POST /execution-targets/resolve` 且请求 `run: false`。未调用 `/providers/pi-studio/commands` 或 `/mobile/messages`。
+Runtime health：`ok=true`，`executor=dsh`，进程自 2026-09-14T22:40Z 起。
+
+在线执行器：云端 Engine；Mac `pi-studio:ff1b3f56-6818-453b-8378-7c6e8ea1b320`（GlangerdeMacBook-Air）；Windows `pi-studio:472bfcb2-506f-45f7-9fe3-b7689c1c4efd`（home-win）。
+
+| 场景 | HTTP | 关键字段 |
+| --- | --- | --- |
+| S1 纯云端 | 200 | `execution_mode=desktop-agent`，`agent_target=personal-agent-engine`，`tool_target=null`，`selection_complete=true`，`workspace=null`，`advisory=true` |
+| S2 native-tools + `ws_6d93f9513759492d9d4d819451eaef4f` | 200 | `execution_mode=native-tools`，`tool_target=pi-studio:ff1b3f56-…`，`workspace=/Users/glanger/Works/pi-e2e-local-list.hHcH8i`，`required_runtime_capabilities=["tool.local-files"]`，`gateway_status=online`，`tool_capabilities_verified=false` |
+| S3 裸 `execution_target=pi-studio` + `requires=["workspace.local"]` | 200 | **现网完成选择**：`selection_complete=true`，钉 `pi-studio:472bfcb2-…`（Windows，decision.mode=`capability`，scores Win 7 / Mac 1）。不是 Mobile 发明设备。`selection_complete=false` 路径仍由 unit + Runtime `test_legacy_generic_device_remains_an_explicitly_unresolved_selector` 锁。 |
+| S4 未注册 workspace | 422 | `detail.code=invalid_intent`，`workspace is not registered: ws_does_not_exist_slice_d` |
+| S4b workspace/repo 冲突 | 422 | `detail.code=invalid_intent`，`repository conflicts with registered workspace: ws_216f613bdb394faeb4331f0a4494a8da` |
+
+副作用：预检前后最近 20 个 task id 相同；24h runs count=3；tool_operations 空列表。
 
 ---
 
@@ -44,7 +61,7 @@
 | 404/503 回退 | `HarnessClient.resolveExecutionTargets` | 返回 `unavailable`；`HarnessHomeScreen.submit` 仅在 `resolved` 时 apply |
 | 业务拒绝 | `HarnessError` + `formatHarnessError` | 422/409 带 code 时阻断提交并展示中文标签 |
 
-配套测试强化（Mobile PR）：
+配套测试强化（Mobile PR `#4` → `15015fd`）：
 
 - Cloud-only apply 清除 `toolTarget`、不以电脑为镜像。
 - native-tools + workspace 字段对齐 resolve。
@@ -62,14 +79,13 @@
 
 1. 预检与执行共享 binding，预检零副作用。
 2. Cloud-only 无本地网关。
-3. 裸 `pi-studio` → `selection_complete=false`。
+3. 裸 `pi-studio` → `selection_complete=false`（无在线路由候选 / legacy 选择器）。现网两台在线时会走 capability 打分并钉设备，见 §1.1 S3。
 4. 422/409 结构化 code，且不建任务。
 5. 正式 submit 与 resolve 使用同一套拒绝。
 6. `resolution.decision` 与正式路由事件对齐。
 7. 无路由器 → 503 `resolution_unavailable`。
 
-生产预检计数证据（2026-09-14，见 [目标解析发布](target-resolution-rollout-2026-09-14.md)）：
-四次预检前后 tasks/tool_operations/native_agent_sessions 计数不变。
+生产预检计数证据：2026-09-14（见 [目标解析发布](target-resolution-rollout-2026-09-14.md)）以及 2026-09-15 复测（§1.1）。
 
 ---
 
@@ -88,7 +104,7 @@
 2. 断言输出的 `agentTarget` / `toolTarget` / `executionMode` / `workspaceId` /
    `executionTarget` 镜像规则与 resolution 字段一致。
 
-**实机（人工，可选）：**
+**实机（人工，可选，本轮未做）：**
 
 1. 对同一意图先 resolve，记录响应。
 2. 提交任务，对比任务记录上的 `agent_target` / `tool_target` / workspace。
@@ -101,17 +117,16 @@
 | 条件 | 现状 |
 | --- | --- |
 | Mobile Slice D apply 已合入默认分支 | ✅ `02db8c65` on `pi-studio-mobile` master |
-| Mobile 场景 1–6 的 unit/fixture 绿 | ⏳ 见配套 Mobile PR CI |
+| Mobile 场景 1–6 的 unit/fixture 绿 | ✅ Mobile PR `#4` → `15015fd` |
 | Runtime 预检零副作用 + 拒绝码测试仍绿 | ✅ 已在 Runtime main |
 | 旧 Runtime 404/503 回退有自动化 | ✅ Mobile `resolveExecutionTargets` tests |
-| 生产/实机矩阵（上表 ☐）至少覆盖场景 1、2、3、5 各一次 | ❌ 本轮无 token，未勾选 |
+| 生产/实机矩阵至少覆盖场景 1、2、3、5 各一次 | ⚠ 1、2、3 已在生产勾选；**5 无法在已部署 resolve 的主机上复现**（unit 覆盖）；6 未做正式提交 |
 | 产品确认所有仍在线的客户端已升级到含 apply 的版本，或可接受去掉镜像 | ❌ 需人工产品判断 |
 
 **结论：镜像删除尚未解锁（no）。**
 
-原因：自动化门禁可在 CI 绿后视为客户端契约侧就绪，但跨版本实机矩阵与「全客户端已升级」仍缺；
-且契约原文要求「经过跨版本验证后再评估删除兼容镜像」。在 ☐ 行勾选且产品确认前，
-**保留 `executionTarget` 镜像。**
+原因：生产预检 1/2/3/4/7 已有证据，但（a）404/503 只能靠 unit、（b）正式提交对齐未做 live、（c）仍缺「全客户端已升级」产品确认。
+契约原文要求跨版本验证后再评估删除。**保留 `executionTarget` 镜像。**
 
 ---
 
@@ -119,5 +134,5 @@
 
 - 不删除 `executionTarget` 字段或生成逻辑。
 - 不改动 `autoPlan` / `workspaceReach` 等并行能力。
-- 不调用生产 Runtime 编造 live 结果。
 - 不把预检当作批准或设备预留。
+- 本轮不创建验收任务。
