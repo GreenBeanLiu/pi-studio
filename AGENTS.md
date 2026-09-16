@@ -3,7 +3,7 @@
 ## 项目概览
 
 - **pi-studio** — Pi coding agent 的桌面客户端（Electron 42 + React 19 + TypeScript）
-- 主分支 `master`，remote `GreenBeanLiu/pi-studio`
+- 主分支 `master`，remote `GreenBeanLiu/pi-studio-desktop`
 - 包管理器锁定 `pnpm@10.6.1`（`package.json` 的 `packageManager` 字段）
 - 架构与专题设计见 `docs/`，UI 改造方案见根目录 `优化.md`
 

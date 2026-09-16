@@ -1418,7 +1418,7 @@ export default function SettingsModal({
               </div>
               <div className={styles.aboutRow}>
                 <span>项目</span>
-                <span>GreenBeanLiu/pi-studio</span>
+                <span>GreenBeanLiu/pi-studio-desktop</span>
               </div>
               <div className={styles.aboutRow}>
                 <span>诊断包</span>

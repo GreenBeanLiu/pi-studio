@@ -24,7 +24,7 @@
 
 - 最新 Runtime `22be76e` 已部署：修复循环停止后的缺失 tool result、旧记录重试兼容及同步工具后的误计数，新增 12 项隔离恢复回归，全量 **490 passed**。Windows 真实只读 smoke `task_2960495214ce4f50ab464a629e55c7bd` 通过；Mac 仍离线，真实故障矩阵待现场验收。详见 [恢复验收补充](native-tool-recovery-acceptance-2026-09-13.md)。后文 `54528e6` 属于上一版记录；实际失败阈值是两次相同失败后阻止第三次调用提议。
 
-- Runtime follow-up `54528e6` 已部署，新增持久化 native Agent 重复调用保护：相同成功调用第 4 次前停止，相同失败达到阈值停止，显式重试清理 guard；Runtime 全量 **478 passed**。恢复矩阵见 [Runtime recovery matrix](../../personal-agent-runtime/docs/native-tool-recovery-matrix-2026-09-13.md)。
+- Runtime follow-up `54528e6` 已部署，新增持久化 native Agent 重复调用保护：相同成功调用第 4 次前停止，相同失败达到阈值停止，显式重试清理 guard；Runtime 全量 **478 passed**。恢复矩阵见 [Runtime recovery matrix](../../pi-studio-control-plane/docs/native-tool-recovery-matrix-2026-09-13.md)。
 - 发布后 Mac smoke 正确在能力握手前失败，因为当前 Mac 设备离线，未创建 tool operation；在线 Windows 用旧能力面完成真实 `local.read` smoke，一次 v2 operation、一次续跑、任务完成、无 `native.loop_detected`。Windows 未声明 `local.list` schema v1，Runtime 正确排除而没有猜测或下发。
 
 - 用户已反馈 Mac E2E 验收通过；本次未附逐项 task ID，证据等级为用户实测确认。操作手册见 [Mac E2E](mac-cloud-agent-e2e.md)。
@@ -32,7 +32,7 @@
 - 本轮继续实现模型调用前的设备工具筛选，保留上述 Skill 工作。任务工具、设备支持和权限共同决定模型可用工具；能力快照进入 checkpoint 和 `tool.surface` 事件，下发仍实时检查。
 - 组合版本 Runtime `d2c6146` 已部署，保留线上 Engine `f253331`；Runtime 全量 **475 passed**。新增 Mac 只读 smoke `task_011675a5752b44fa9037eaa1d8826e38` 已完成：一个子任务、两轮模型、一次 v2 `local.list`、返回两项且 `truncated=true`。此 smoke 使用绝对路径绑定，未覆盖 workspace_id 入口。
 - 显式重试或改派设备会重新握手。首轮握手失败提前报错，无工具操作产生；已经创建的操作保留离线等待与到期机制。手机默认入口尚未提供逐工具“必需”选择，Runtime 支持 `required_tools` 声明。
-- 下一步补断线/取消/恢复的真实跨端矩阵和可复现评测；同时等待 Mac 恢复在线后重跑 `local.list` happy path。不启动新的框架迁移。发布证据见 [Runtime 发布记录](../../personal-agent-runtime/docs/tool-projection-rollout-2026-09-13.md)。
+- 下一步补断线/取消/恢复的真实跨端矩阵和可复现评测；同时等待 Mac 恢复在线后重跑 `local.list` happy path。不启动新的框架迁移。发布证据见 [Runtime 发布记录](../../pi-studio-control-plane/docs/tool-projection-rollout-2026-09-13.md)。
 
 下文中的“Mac 待更新/待验收”和旧部署 SHA 属于当时记录，请以上述新进展及后续发布记录为准。
 

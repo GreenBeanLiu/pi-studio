@@ -1,7 +1,7 @@
 {
   "name": "pi-studio",
   "version": "0.13.0",
-  "description": "Desktop client for the Pi coding agent",
+  "description": "Pi Studio · Desktop — Electron operator console: hosts the Pi agent runtime, exposes the tool gateway to the control plane, sandbox provider, routines, shared memory",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -114,7 +114,7 @@
     "publish": {
       "provider": "github",
       "owner": "GreenBeanLiu",
-      "repo": "pi-studio",
+      "repo": "pi-studio-desktop",
       "releaseType": "release"
     },
     "electronDownload": {

@@ -1,6 +1,12 @@
-# pi-studio
+# Pi Studio · Desktop
 
-pi-studio 是基于 Electron、React 和 pi-coding-agent 的桌面 coding agent 客户端。它提供工作区聊天、会话管理、沙箱执行、图像/3D 生成和可选的手机远程控制。
+> 仓库 `pi-studio-desktop`(2026-09-16 前叫 `pi-studio`;应用名、`productName`、安装包名仍是 pi-studio)。
+> **架构位置:Operator Session 的 Harness + pi Agent Runtime + Tool Gateway(给控制面执行本地工具)+ Sandbox Provider。**
+> 词汇表(SoT)在 [pi-studio-control-plane/docs/glossary.md](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/docs/glossary.md);
+> 全家福:desktop / mobile / device-plane / control-plane / engine / llm-provider / ops,前缀统一 `pi-studio-`。
+
+pi-studio 是基于 Electron、React 和 pi-coding-agent 的桌面 coding agent 客户端。它提供工作区聊天、会话管理、沙箱执行、图像/3D 生成和可选的手机远程控制;
+同时作为控制面派发本地工具操作的 Tool Gateway(`local.list/read/write`、scoped `shell.exec`)。
 
 ## 开发
 

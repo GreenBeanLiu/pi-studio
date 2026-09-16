@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/GreenBeanLiu/pi-studio/docs/contracts/schemas/tool-capabilities.schema.json",
+  "$id": "https://github.com/GreenBeanLiu/pi-studio-desktop/docs/contracts/schemas/tool-capabilities.schema.json",
   "title": "ToolCapabilities",
   "type": "object",
   "additionalProperties": true,

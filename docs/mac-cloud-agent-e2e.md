@@ -18,7 +18,7 @@
 Mac 在 pi-studio 仓库中执行；若仓库不在下列位置，先进入实际目录：
 
 ```bash
-cd ~/Works/pi-studio
+cd ~/Works/pi-studio-desktop
 git status --short
 git pull --ff-only origin master
 git rev-parse HEAD

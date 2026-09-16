@@ -3,7 +3,7 @@
 日期：2026-09-15。实现位于 personal-agent-runtime（Native ToolTransport / ToolOperationWorker /
 `tests/test_native_tool_recovery_regression.py`）。
 本文件为 Desktop docs SoT 镜像；权威行为以 Runtime 实现与
-[`tests/fixtures/reliability-matrix-v1.json`](https://github.com/GreenBeanLiu/personal-agent-runtime/blob/main/tests/fixtures/reliability-matrix-v1.json)
+[`tests/fixtures/reliability-matrix-v1.json`](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/tests/fixtures/reliability-matrix-v1.json)
 为准。
 
 ## 目的与范围
@@ -41,7 +41,7 @@ deadline / idempotency wire 语义。
 ## 自动化场景表（锁定）
 
 权威机器可读表：Runtime
-[`tests/fixtures/reliability-matrix-v1.json`](https://github.com/GreenBeanLiu/personal-agent-runtime/blob/main/tests/fixtures/reliability-matrix-v1.json)。
+[`tests/fixtures/reliability-matrix-v1.json`](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/tests/fixtures/reliability-matrix-v1.json)。
 覆盖映射测试：Runtime `tests/test_reliability_matrix_contract.py`（映射到
 `tests/test_native_tool_recovery_regression.py`，不重写行为断言）。
 
@@ -77,8 +77,8 @@ v2 同 key 幂等创建、同 key 内容冲突拒绝。本契约不声称改写�
 ## 与相关文档
 
 - Runtime 权威契约与 fixture：
-  [personal-agent-runtime reliability-matrix-v1](https://github.com/GreenBeanLiu/personal-agent-runtime/blob/main/docs/contracts/reliability-matrix-v1.md)
+  [personal-agent-runtime reliability-matrix-v1](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/docs/contracts/reliability-matrix-v1.md)
 - Runtime 矩阵叙述：
-  [native-tool-recovery-matrix-2026-09-13.md](https://github.com/GreenBeanLiu/personal-agent-runtime/blob/main/docs/native-tool-recovery-matrix-2026-09-13.md)
+  [native-tool-recovery-matrix-2026-09-13.md](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/docs/native-tool-recovery-matrix-2026-09-13.md)
 - 本仓验收补充：[native-tool-recovery-acceptance-2026-09-13.md](../native-tool-recovery-acceptance-2026-09-13.md)
 - 架构切片：[architecture-decoupling-review-2026-09-13.md](../architecture-decoupling-review-2026-09-13.md)

@@ -3,8 +3,8 @@ import { normalizeRepository } from './workspace-inventory'
 
 describe('normalizeRepository', () => {
   it('normalizes GitHub SSH and HTTPS remotes to the same repository identity', () => {
-    expect(normalizeRepository('git@github.com:GreenBeanLiu/pi-studio.git')).toBe('GreenBeanLiu/pi-studio')
-    expect(normalizeRepository('https://github.com/GreenBeanLiu/pi-studio.git')).toBe('GreenBeanLiu/pi-studio')
+    expect(normalizeRepository('git@github.com:GreenBeanLiu/pi-studio-desktop.git')).toBe('GreenBeanLiu/pi-studio-desktop')
+    expect(normalizeRepository('https://github.com/GreenBeanLiu/pi-studio-desktop.git')).toBe('GreenBeanLiu/pi-studio-desktop')
   })
 
   it('removes credentials and keeps the host for non-GitHub remotes', () => {

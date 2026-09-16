@@ -6,7 +6,7 @@ describe('isMissingUpdateChannel', () => {
     // 线上的原话(mac 版每次启动都撞一次):release 里只有 Windows 产物
     const error = new Error(
       'Cannot find latest-mac.yml in the latest release artifacts ' +
-        '(https://github.com/GreenBeanLiu/pi-studio/releases/download/v0.11.3/latest-mac.yml): HttpError: 404',
+        '(https://github.com/GreenBeanLiu/pi-studio-desktop/releases/download/v0.11.3/latest-mac.yml): HttpError: 404',
     )
     expect(isMissingUpdateChannel(error)).toBe(true)
   })

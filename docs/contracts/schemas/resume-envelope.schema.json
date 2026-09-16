@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/GreenBeanLiu/pi-studio/docs/contracts/schemas/resume-envelope.schema.json",
+  "$id": "https://github.com/GreenBeanLiu/pi-studio-desktop/docs/contracts/schemas/resume-envelope.schema.json",
   "title": "ToolOperationResumeEnvelope",
   "description": "Fields Runtime must preserve when replaying a device tool_result into the agent loop. Do not invent a new call_id.",
   "type": "object",

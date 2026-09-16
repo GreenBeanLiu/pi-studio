@@ -5,7 +5,7 @@
 | 仓库 | 角色 | 技术栈 | 部署 |
 |------|------|--------|------|
 | `pi-studio` | 桌面主体（host） | Electron + electron-vite + React + antd | 本地 Windows/macOS 安装包 |
-| `pi-studio-backend` | 云服务（API + 中转 + 网关） | FastAPI + Postgres + Hatchet | VPS，Caddy 反代 `trail-api.glanger.xyz` |
+| `pi-studio-device-plane` | 云服务（API + 中转 + 网关） | FastAPI + Postgres + Hatchet | VPS，Caddy 反代 `trail-api.glanger.xyz` |
 | `pi-studio-mobile` | 手机遥控端（controller） | Expo + React Native + TS | Android APK |
 
 ---
@@ -22,7 +22,7 @@ graph TB
         MRC -.存取.-> MSS
     end
 
-    subgraph cloud["☁️ pi-studio-backend (VPS · FastAPI app.py)"]
+    subgraph cloud["☁️ pi-studio-device-plane (VPS · FastAPI app.py)"]
         CADDY["Caddy<br/>trail-api.glanger.xyz"]
         RELAY["/remote<br/>remote.py<br/>配对 + WS 房间中转"]
         LLM["/llm<br/>llm_gateway.py<br/>上游 key 服务端持有"]
@@ -108,12 +108,12 @@ flowchart LR
 | target | role | execution_locus | 语义 |
 |--------|------|-----------------|------|
 | `auto` | `router` | `control-plane` | 控制面根据任务是否需要本地工具选择目标 |
-| `personal-agent-engine` | `cloud-agent-runtime` | `cloud` | 云端 agent loop / provider / 云端工具 |
+| `pi-studio-engine` | `cloud-agent-runtime` | `cloud` | 云端 agent loop / provider / 云端工具 |
 | `pi-studio:<device>` | `local-tool-runtime` | `gateway` | 通过 remote relay 进入用户设备，访问本地文件、shell、桌面 IPC、本地 MCP |
 
-当前 `native-tools` 模式下，云端 `personal-agent-runtime` 已经运行 Agent loop 和 Provider 调用；`pi-studio:<device>` 负责本地 tool gateway。桌面仍保留独立的 `desktop-agent` 模式，用于本地 Pi agent session，这两条执行链路不能混为一谈。
+当前 `native-tools` 模式下，云端 `pi-studio-control-plane` 已经运行 Agent loop 和 Provider 调用；`pi-studio:<device>` 负责本地 tool gateway。桌面仍保留独立的 `desktop-agent` 模式，用于本地 Pi agent session，这两条执行链路不能混为一谈。
 
-`personal-agent-runtime` 的 dispatch 已经开始消费这个 contract：带 workspace、
+`pi-studio-control-plane` 的 dispatch 已经开始消费这个 contract：带 workspace、
 `local_files_required=true` 或 `local-files` label 的任务会要求
 `tool.local-files`，显式选到不具备该能力的 target 时 fail closed。当前只覆盖本地
 文件这一类，后续再把 shell、desktop IPC 和 dynamic MCP 也映射成 runtime
@@ -168,7 +168,7 @@ Runtime 可通过已认证的 controller 房间发送 `workspaceInventory`。桌
 GitHub 的 SSH / HTTPS remote 都归一化成 `owner/repo`；其他 Git 主机保留 host，URL 中的
 用户名和密码不会返回，本地路径形式的 remote 也不会进入协议。
 
-这个命令只报告事实，不在桌面保存 control-plane id。`personal-agent-runtime` 负责把同一
+这个命令只报告事实，不在桌面保存 control-plane id。`pi-studio-control-plane` 负责把同一
 repository 在不同电脑上的路径合并为一个稳定 `workspace_id` 和多条 executor binding。
 Relay 仍然只做不透明转发，不拥有 Workspace Registry。
 
@@ -280,7 +280,7 @@ renderer，用于排查多上游 failover、401/5xx 和长流式请求断连问�
 - `renderer/src/components/ChatPane.tsx` — `segmentMessages` 折叠连续工具步、`ThinkingBlock`、流式 index
 - `renderer/src/components/ToolCallCard.tsx` — 工具卡 + `SubagentCard`
 
-**云端 `pi-studio-backend/`**
+**云端 `pi-studio-device-plane/`**
 - `app.py` — 挂载 4 个 router
 - `remote.py` — 配对 + WS 房间（`Room{host, controllers, seq, backlog}`）+ 重连补发
 - `llm_gateway.py` — profile 管理 + `/v1` 透传

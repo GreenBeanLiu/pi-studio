@@ -1,6 +1,6 @@
 # Target Resolution v1
 
-日期：2026-09-14。实现位于 personal-agent-runtime。
+日期：2026-09-14。实现位于 pi-studio-control-plane。
 
 ## 目的与范围
 
@@ -10,7 +10,7 @@
 
 此版本范围为 `/providers/pi-studio/commands` 的 prompt / followUp / steer 任务意图。
 暂不覆盖其他任务入口，也不修改手机现有提交逻辑。云端无本地工具的请求可明确使用
-`agent_target=personal-agent-engine`、`execution_mode=desktop-agent`；这里 desktop-agent 是既有
+`agent_target=pi-studio-engine`、`execution_mode=desktop-agent`；这里 desktop-agent 是既有
 “非 native-tools 路径”的历史协议名称，不能由这个名称推断实际 Agent 在桌面运行。
 
 ## 请求
@@ -20,7 +20,7 @@
 ```json
 {
   "text": "列出工作区根目录，最多三项",
-  "agent_target": "personal-agent-engine",
+  "agent_target": "pi-studio-engine",
   "tool_target": "pi-studio:mac",
   "workspace_id": "ws-shared",
   "execution_mode": "native-tools",
@@ -44,7 +44,7 @@
   "advisory": true,
   "execution_mode": "native-tools",
   "resolution": {
-    "agent_target": "personal-agent-engine",
+    "agent_target": "pi-studio-engine",
     "tool_target": "pi-studio:mac",
     "selection_complete": true,
     "workspace_id": "ws-shared",
@@ -55,8 +55,8 @@
     "tool_capabilities_verified": false,
     "decision": {
       "mode": "native-tools",
-      "target": "personal-agent-engine",
-      "agent_target": "personal-agent-engine",
+      "target": "pi-studio-engine",
+      "agent_target": "pi-studio-engine",
       "tool_target": "pi-studio:mac"
     }
   }

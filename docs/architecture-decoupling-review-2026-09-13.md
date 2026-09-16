@@ -2,7 +2,7 @@
 
 > 审查时间：2026-09-13
 >
-> 范围：`pi-studio`、`pi-studio-mobile`、`pi-studio-backend`、`personal-agent-runtime`、`personal-agent-engine`、`pi-cf-agent-provider`。
+> 范围：`pi-studio`、`pi-studio-mobile`、`pi-studio-device-plane`、`pi-studio-control-plane`、`pi-studio-engine`、`pi-studio-llm-provider`。
 
 ## 1. 结论
 
@@ -20,10 +20,10 @@
 | 模块 | 应该拥有的事实和行为 | 不应该拥有的职责 |
 | --- | --- | --- |
 | `pi-studio-mobile` | 用户意图、目标选择 UI、任务和事件投影 | 最终目标解析、工具状态机、设备执行细节 |
-| `pi-studio-backend` | 安装认证、配对、设备在线状态、Relay、媒体/工作流入口 | Harness 任务状态、Agent loop、工具参数解释 |
-| `personal-agent-runtime` | 任务状态、审批、workspace identity、目标解析、ToolOperation、Agent loop、运行事件 | 本机文件和 Shell 执行、Provider HTTP 细节 |
-| `personal-agent-engine` | 无状态的模型调用桥接、provider transcript/tool result 透传 | Durable task、设备路由、本地工具执行 |
-| `pi-cf-agent-provider` | Provider 请求/响应适配、模型别名和上游路由 | Agent loop、权限、设备和工作区 |
+| `pi-studio-device-plane` | 安装认证、配对、设备在线状态、Relay、媒体/工作流入口 | Harness 任务状态、Agent loop、工具参数解释 |
+| `pi-studio-control-plane` | 任务状态、审批、workspace identity、目标解析、ToolOperation、Agent loop、运行事件 | 本机文件和 Shell 执行、Provider HTTP 细节 |
+| `pi-studio-engine` | 无状态的模型调用桥接、provider transcript/tool result 透传 | Durable task、设备路由、本地工具执行 |
+| `pi-studio-llm-provider` | Provider 请求/响应适配、模型别名和上游路由 | Agent loop、权限、设备和工作区 |
 | `pi-studio` 桌面端 | 本地 Agent session、本地工具执行、桌面 IPC、设备能力声明 | 云端任务状态和模型决策 |
 
 这份归属应作为后续设计的判断标准。特别是：Backend 是边界和中转，不应成为第二个 Agent control plane；Engine 是 Provider adapter，不应吸收 ToolTransport。
@@ -35,9 +35,9 @@
 ```text
 Mobile
   -> Backend /harness edge
-  -> personal-agent-runtime
+  -> pi-studio-control-plane
   -> NativeToolExecutor
-  -> personal-agent-engine / Provider
+  -> pi-studio-engine / Provider
   -> ToolTransport / ToolOperationWorker
   -> PiStudioRemoteExecutor
   -> Backend internal device token + Relay WebSocket

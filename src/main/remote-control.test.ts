@@ -500,7 +500,7 @@ describe('remote-control command protocol', () => {
       path: '/Users/me/Works/pi-studio',
       name: 'pi-studio',
       kind: 'git',
-      repository: 'GreenBeanLiu/pi-studio',
+      repository: 'GreenBeanLiu/pi-studio-desktop',
       defaultRef: 'master',
     }])
     remoteControl.setWorkspaceHost({
@@ -520,7 +520,7 @@ describe('remote-control command protocol', () => {
         path: '/Users/me/Works/pi-studio',
         name: 'pi-studio',
         kind: 'git',
-        repository: 'GreenBeanLiu/pi-studio',
+        repository: 'GreenBeanLiu/pi-studio-desktop',
         defaultRef: 'master',
       }],
     })

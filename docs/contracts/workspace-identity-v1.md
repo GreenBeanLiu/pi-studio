@@ -2,7 +2,7 @@
 
 日期：2026-09-15。实现位于 personal-agent-runtime（`workspace_resolution.py`、Workspace Registry）。
 本文件为 Desktop docs SoT 镜像；权威行为以 Runtime 实现与
-[`tests/fixtures/workspace-identity-v1.json`](https://github.com/GreenBeanLiu/personal-agent-runtime/blob/main/tests/fixtures/workspace-identity-v1.json)
+[`tests/fixtures/workspace-identity-v1.json`](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/tests/fixtures/workspace-identity-v1.json)
 为准。
 
 ## 目的与范围

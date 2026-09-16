@@ -4,7 +4,7 @@
 
 ## 研究范围与结论
 
-本文仅使用 DeepSeek 官方仓库中的 README、架构文档、源码目录与提交快照。研究基准固定为 commit [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)（2026-08-13）；pi-studio 对照基准为 commit [`2d22b52db1e52e843888a3d19ccf144d8db0540e`](https://github.com/GreenBeanLiu/pi-studio/tree/2d22b52db1e52e843888a3d19ccf144d8db0540e)。固定 commit 是为了避免开发者预览阶段快速变动导致链接和结论漂移。
+本文仅使用 DeepSeek 官方仓库中的 README、架构文档、源码目录与提交快照。研究基准固定为 commit [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)（2026-08-13）；pi-studio 对照基准为 commit [`2d22b52db1e52e843888a3d19ccf144d8db0540e`](https://github.com/GreenBeanLiu/pi-studio-desktop/tree/2d22b52db1e52e843888a3d19ccf144d8db0540e)。固定 commit 是为了避免开发者预览阶段快速变动导致链接和结论漂移。
 
 最重要的判断是：**DeepSeek Harness 值得 pi-studio 学习的是契约，不是整套替换。** pi-studio 已经有成熟的 Electron 产品外壳、Pi agent 进程和图像/3D/Routine 产品能力；直接迁移到 Cordis 会产生很大的重写成本。更合理的路线是保留 Pi 作为执行引擎，在 Electron main 内逐步引入以下契约：
 
@@ -167,7 +167,7 @@ Python SDK 可对隔离 workspace 发起任务；结果包括 final response、f
 
 ## 8. pi-studio 现状对照
 
-pi-studio 当前已经做对了几件事：每个聊天拥有独立 Pi 进程，避免切换会话时 dispose 正在运行的轮次；main 维护带 revision 的 `AgentRuntimeSnapshot`；沙箱通过 stdio shim 保持 RpcClient API 不变；Routine agent 节点与当前聊天隔离。[PiClientManager](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/pi-client.ts#L116-L177) [runtime snapshot](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/agent-runtime.ts#L4-L35) [sandbox shim](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/sandbox.ts#L10-L17) [Routine](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L48-L54)
+pi-studio 当前已经做对了几件事：每个聊天拥有独立 Pi 进程，避免切换会话时 dispose 正在运行的轮次；main 维护带 revision 的 `AgentRuntimeSnapshot`；沙箱通过 stdio shim 保持 RpcClient API 不变；Routine agent 节点与当前聊天隔离。[PiClientManager](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/pi-client.ts#L116-L177) [runtime snapshot](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/agent-runtime.ts#L4-L35) [sandbox shim](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/sandbox.ts#L10-L17) [Routine](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L48-L54)
 
 主要结构性风险是：
 
@@ -180,7 +180,7 @@ pi-studio 当前已经做对了几件事：每个聊天拥有独立 Pi 进程，
 | subagent 能力通过复制上游 example 源码和写入配置目录安装 | 上游目录或 API 改动易静默失效，缺少 manifest/capability handshake | provider registry + scoped lifecycle + package version contract |
 | 安全策略、审批、沙箱是分散的开关和扩展 | UI 配置可能不等于真正执行路径，难以审计 | tool pipeline + approval seam + per-call sandbox policy |
 
-上述现状可由 pi-studio 源码直接验证：会话扫描的原因写在 [`pi-sessions.ts`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/pi-sessions.ts#L6-L13)；subagent 的 fallback 明确依赖上游 example 的 `index.ts/agents.ts` 快照，[`subagent-workflow.ts`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/subagent-workflow.ts#L145-L188)。
+上述现状可由 pi-studio 源码直接验证：会话扫描的原因写在 [`pi-sessions.ts`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/pi-sessions.ts#L6-L13)；subagent 的 fallback 明确依赖上游 example 的 `index.ts/agents.ts` 快照，[`subagent-workflow.ts`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/subagent-workflow.ts#L145-L188)。
 
 ## 9. pi-studio 优化路线
 
@@ -188,7 +188,7 @@ pi-studio 当前已经做对了几件事：每个聊天拥有独立 Pi 进程，
 
 #### P0.1 让安全 UI 与真实执行路径一致
 
-当前默认设置仍是 `securityGuardEnabled: true`、`sandboxEnabled: false`，[`contracts.ts`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/shared/contracts.ts#L76-L88)；但打开 workspace 时无条件调用 `syncSecurityGuardExtension(false)`，[`ipc.ts`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/ipc.ts#L382-L400)。Routine 也固定卸载 guard，只有用户显式打开 sandbox 才走隔离路径，[`routines.ts`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L374-L395)。
+当前默认设置仍是 `securityGuardEnabled: true`、`sandboxEnabled: false`，[`contracts.ts`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/shared/contracts.ts#L76-L88)；但打开 workspace 时无条件调用 `syncSecurityGuardExtension(false)`，[`ipc.ts`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/ipc.ts#L382-L400)。Routine 也固定卸载 guard，只有用户显式打开 sandbox 才走隔离路径，[`routines.ts`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L374-L395)。
 
 这意味着配置值、产品文案和执行事实可能互相矛盾。建议：
 
@@ -199,7 +199,7 @@ pi-studio 当前已经做对了几件事：每个聊天拥有独立 Pi 进程，
 
 #### P0.2 Routine 等待真正 settled
 
-`pi-client.ts` 已写明：`agent_end` 后可能重试或压缩，`agent_settled` 才是真正结束，[`nextRunActive`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/pi-client.ts#L84-L92)。但 Routine 的 agent step 在第一个 `agent_end` 就 resolve，[`runAgentStep`](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L401-L438)。
+`pi-client.ts` 已写明：`agent_end` 后可能重试或压缩，`agent_settled` 才是真正结束，[`nextRunActive`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/pi-client.ts#L84-L92)。但 Routine 的 agent step 在第一个 `agent_end` 就 resolve，[`runAgentStep`](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L401-L438)。
 
 应改为等待 `agent_settled`，并补三类回归测试：普通完成、`agent_end { willRetry: true }` 后继续、压缩后继续。超时路径要调用 abort/stop 并等待子进程退出后才把 step 标为终态。
 
@@ -290,7 +290,7 @@ interface WorkflowRunHandle {
 }
 ```
 
-每个 run/step 的 start/end、输入引用、输出摘要、artifact、审批和错误都即时写 SQLite，而不是完成后才整体保存。`review` 是 `waiting` 状态，不是悬空 Promise；Electron 重启后可恢复或明确标记 interrupted。现有 `folder-input/imagegen/model3d/...` nested ternary 改为 node registry，新增节点不再修改核心 executor。[现有 dispatch](https://github.com/GreenBeanLiu/pi-studio/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L766-L838)
+每个 run/step 的 start/end、输入引用、输出摘要、artifact、审批和错误都即时写 SQLite，而不是完成后才整体保存。`review` 是 `waiting` 状态，不是悬空 Promise；Electron 重启后可恢复或明确标记 interrupted。现有 `folder-input/imagegen/model3d/...` nested ternary 改为 node registry，新增节点不再修改核心 executor。[现有 dispatch](https://github.com/GreenBeanLiu/pi-studio-desktop/blob/2d22b52db1e52e843888a3d19ccf144d8db0540e/src/main/routines.ts#L766-L838)
 
 ### P1：建立评测与 replay
 
