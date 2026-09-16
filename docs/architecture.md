@@ -103,7 +103,7 @@ flowchart LR
 
 ### 2.1 Control Plane Runtime Targets
 
-`personal-agent-runtime` 已经承担任务控制面的职责：任务入队、审批、lease、worker heartbeat、执行记录和巡检接口。它现在把可选执行目标显式声明成 runtime target contract，而不是让 mobile/backend 从字符串猜语义：
+`pi-studio-control-plane` 已经承担任务控制面的职责：任务入队、审批、lease、worker heartbeat、执行记录和巡检接口。它现在把可选执行目标显式声明成 runtime target contract，而不是让 mobile/backend 从字符串猜语义：
 
 | target | role | execution_locus | 语义 |
 |--------|------|-----------------|------|

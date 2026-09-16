@@ -1,6 +1,6 @@
 # Reliability Matrix Contract v1
 
-日期：2026-09-15。实现位于 personal-agent-runtime（Native ToolTransport / ToolOperationWorker /
+日期：2026-09-15。实现位于 pi-studio-control-plane（Native ToolTransport / ToolOperationWorker /
 `tests/test_native_tool_recovery_regression.py`）。
 本文件为 Desktop docs SoT 镜像；权威行为以 Runtime 实现与
 [`tests/fixtures/reliability-matrix-v1.json`](https://github.com/GreenBeanLiu/pi-studio-control-plane/blob/main/tests/fixtures/reliability-matrix-v1.json)
