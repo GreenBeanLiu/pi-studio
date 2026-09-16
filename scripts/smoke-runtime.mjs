@@ -12,7 +12,11 @@ export function runRuntimeSmoke(env = process.env, run = spawnSync) {
     throw new Error('Set PI_STUDIO_SMOKE_DEVICE_ID and PI_STUDIO_SMOKE_WORKSPACE before running the runtime smoke')
   }
 
-  const runtimePath = resolve(root, env.PI_STUDIO_RUNTIME_PATH || '../personal-agent-runtime')
+  // 控制面仓库 2026-09-16 改名 pi-studio-control-plane;还没改名的 checkout(比如 Windows 上的 D:/Works)回落到旧目录名
+  const runtimePath = env.PI_STUDIO_RUNTIME_PATH
+    ? resolve(root, env.PI_STUDIO_RUNTIME_PATH)
+    : [resolve(root, '../pi-studio-control-plane'), resolve(root, '../personal-agent-runtime')].find((dir) => existsSync(dir))
+      ?? resolve(root, '../pi-studio-control-plane')
   const python = env.PI_STUDIO_RUNTIME_PYTHON || join(
     runtimePath, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
   )

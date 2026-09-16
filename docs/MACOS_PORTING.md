@@ -21,7 +21,7 @@ Electron 42 + electron-vite 2
   用的是 **Electron 自身当 Node**（`ELECTRON_RUN_AS_NODE=1`），**不依赖目标机的系统 Node** →
   这条链路**天生跨平台**，Mac 无需改（见 `src/main/pi-client.ts`）。
 - **云端能力**（生图 / 3D / 换装视频 / LLM）都经 **中继** `https://trail-api.glanger.xyz` 转发到
-  自建后端 `pi-studio-backend`（FastAPI + 自托管 Hatchet worker）。中继地址在**构建期**由
+  自建后端 `pi-studio-device-plane`(2026-09-16 前叫 `pi-studio-backend`)（FastAPI + 自托管 Hatchet worker）。中继地址在**构建期**由
   `electron.vite.config.ts` 的 `__CLOUD_IMAGE_RELAY__` 写入；App Key 存本地**加密配置**，不随构建分发。
   → 后端与中继**同一套，Mac 版直接复用，零改动**。
 - **持久化**：
@@ -275,4 +275,4 @@ pnpm exec electron-builder --mac --publish always
 | Blender | `src/main/blender-setup.ts` |
 | 打包配置 | `package.json` → `build` |
 | IPC 契约/桥 | `src/shared/ipc/contract.ts`、`src/preload/index.ts`、`src/main/ipc.ts` |
-| 换装工作流(参考新功能怎么加) | main `dressup.ts` / renderer `DressupPage.tsx`（见后端 `pi-studio-backend`） |
+| 换装工作流(参考新功能怎么加) | main `dressup.ts` / renderer `DressupPage.tsx`（见 `pi-studio-device-plane`） |

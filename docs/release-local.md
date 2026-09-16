@@ -34,7 +34,7 @@ Before running a real release, bump `package.json` version, commit it, and make 
 The runtime smoke checks an explicitly selected online desktop through the backend:
 device discovery, controller authentication, `executeToolOperation` capability,
 workspace opening, and a successful `shell.exec` running `pwd`.
-It uses the existing `personal-agent-runtime` CLI and its `.env`; service tokens
+It uses the control plane's `personal-agent-runtime` CLI (repo `pi-studio-control-plane`) and its `.env`; service tokens
 stay out of command arguments and this repository.
 
 Configure the target in the current PowerShell session:
@@ -42,8 +42,8 @@ Configure the target in the current PowerShell session:
 ```powershell
 $env:PI_STUDIO_SMOKE_DEVICE_ID = 'pi-studio:<device-id>'
 $env:PI_STUDIO_SMOKE_WORKSPACE = 'D:\Works\personal-agent-runtime'
-# Optional when the runtime is not the sibling checkout:
-$env:PI_STUDIO_RUNTIME_PATH = 'D:\Works\personal-agent-runtime'
+# Optional when the control plane is not the sibling checkout (the script tries ../pi-studio-control-plane, then ../personal-agent-runtime):
+$env:PI_STUDIO_RUNTIME_PATH = 'D:\Works\pi-studio-control-plane'
 # Optional when Python is not in that checkout's .venv:
 # $env:PI_STUDIO_RUNTIME_PYTHON = 'C:\path\to\python.exe'
 
